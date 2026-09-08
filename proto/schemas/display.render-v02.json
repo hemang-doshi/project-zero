@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://projectzero.local/schemas/display.render-0.2.json",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "project": {
+      "type": "string",
+      "maxLength": 64
+    },
+    "state": {
+      "enum": [
+        "IDLE",
+        "RUNNING",
+        "PAUSED"
+      ]
+    },
+    "elapsed_ms": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "since_ms": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "revision": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "git": {
+      "type": "string",
+      "maxLength": 64
+    },
+    "agent": {
+      "type": "string",
+      "maxLength": 64
+    },
+    "track": {
+      "type": "string",
+      "maxLength": 64
+    },
+    "artist": {
+      "type": "string",
+      "maxLength": 64
+    },
+    "media": {
+      "type": "string",
+      "maxLength": 64
+    }
+  }
+}

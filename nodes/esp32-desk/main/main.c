@@ -137,9 +137,9 @@ static void handle(const char *message) {
       return;
     strcpy(session_id, s);
     welcomed = true;
-    send_message("node.register",
-                 "{\"firmware\":\"zero-desk-0.1.0\",\"capabilities\":["
-                 "\"display.render\",\"display.clear\"]}");
+    send_message("node.register", "{\"render_schema\":\"0.2\",\"firmware\":"
+                                  "\"zero-desk-0.2.0\",\"capabilities\":["
+                                  "\"display.render\",\"display.clear\"]}");
     printf("ZERO ONLINE heap=%lu\n", (unsigned long)esp_get_free_heap_size());
   } else if (!strcmp(type, "capability.invoke") && welcomed) {
     const char *id = str(body, "id"), *cap = str(body, "capability");
@@ -150,6 +150,7 @@ static void handle(const char *message) {
     bool ok = false;
     if (!strcmp(cap, "display.clear")) {
       memset(&view, 0, sizeof(view));
+      view.idle = true;
       ok = true;
     } else if (!strcmp(cap, "display.render")) {
       zero_view next;

@@ -60,8 +60,93 @@ func ServeUnix(ctx context.Context, r *runtime.Runtime, path string, ca *identit
 		w.WriteHeader(400)
 		json.NewEncoder(w).Encode(map[string]string{"error": e.Error()})
 	}
+	mux.HandleFunc("GET /v0.1/policies/report", func(w http.ResponseWriter, q *http.Request) {
+		v, e := r.DailyReport(q.Context())
+		if e != nil {
+			fail(w, e)
+			return
+		}
+		reply(w, v)
+	})
+	mux.HandleFunc("GET /v0.1/costs/today", func(w http.ResponseWriter, q *http.Request) {
+		reply(w, map[string]any{"version": "0.2", "model_adapter": "NOT_CONNECTED", "zero_model_calls": 0, "monetary_cost": nil, "account_usage": "unavailable"})
+	})
+	mux.HandleFunc("GET /v0.1/projects/{id}", func(w http.ResponseWriter, q *http.Request) {
+		ps, e := r.Projects(q.Context())
+		if e != nil {
+			fail(w, e)
+			return
+		}
+		for _, p := range ps {
+			if p.ID == q.PathValue("id") {
+				reply(w, map[string]any{"version": "0.2", "project": p})
+				return
+			}
+		}
+		fail(w, fmt.Errorf("VALIDATION: project not found"))
+	})
+	mux.HandleFunc("GET /v0.1/policies", func(w http.ResponseWriter, q *http.Request) {
+		v, e := r.Policies(q.Context())
+		if e != nil {
+			fail(w, e)
+			return
+		}
+		reply(w, map[string]any{"version": "0.2", "policies": v})
+	})
+	mux.HandleFunc("GET /v0.1/integrations", func(w http.ResponseWriter, q *http.Request) {
+		v, e := r.Integrations(q.Context())
+		if e != nil {
+			fail(w, e)
+			return
+		}
+		reply(w, map[string]any{"version": "0.2", "integrations": v})
+	})
+	mux.HandleFunc("POST /v0.1/integrations/sync", func(w http.ResponseWriter, q *http.Request) {
+		var b struct {
+			ID     string `json:"id"`
+			DryRun bool   `json:"dry_run"`
+		}
+		q.Body = http.MaxBytesReader(w, q.Body, 1024)
+		if e := json.NewDecoder(q.Body).Decode(&b); e != nil {
+			fail(w, e)
+			return
+		}
+		if b.DryRun {
+			reply(w, map[string]string{"version": "0.2", "status": "DRY_RUN"})
+			return
+		}
+		if e := r.SyncIntegration(q.Context(), b.ID); e != nil {
+			fail(w, e)
+			return
+		}
+		reply(w, map[string]string{"version": "0.2", "status": "SUCCEEDED"})
+	})
+	mux.HandleFunc("GET /v0.1/projects", func(w http.ResponseWriter, q *http.Request) {
+		v, e := r.Projects(q.Context())
+		if e != nil {
+			fail(w, e)
+			return
+		}
+		reply(w, map[string]any{"version": "0.2", "projects": v})
+	})
+	mux.HandleFunc("GET /v0.1/context/current", func(w http.ResponseWriter, q *http.Request) {
+		v, e := r.Context(q.Context())
+		if e != nil {
+			fail(w, e)
+			return
+		}
+		reply(w, map[string]any{"version": "0.2", "context": v})
+	})
+	mux.HandleFunc("GET /v0.1/intent/parse", func(w http.ResponseWriter, q *http.Request) {
+		v, e := r.ParseIntent(q.Context(), q.URL.Query().Get("text"))
+		if e != nil {
+			fail(w, e)
+			return
+		}
+		reply(w, v)
+	})
 	mux.HandleFunc("GET /v0.1/status", func(w http.ResponseWriter, q *http.Request) {
-		reply(w, map[string]any{"version": "0.1", "status": "RUNNING", "pid": os.Getpid()})
+		reply(w, map[string]any{"version": "0.1", "status": "RUNNING", "runtime_version": "0.2-dev", "pid": os.Getpid()})
 	})
 	mux.HandleFunc("GET /v0.1/doctor", func(w http.ResponseWriter, q *http.Request) {
 		if e := r.VerifyAudit(q.Context()); e != nil {

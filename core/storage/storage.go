@@ -27,6 +27,20 @@ func Open(path string) (*sql.DB, error) {
 			return nil, err
 		}
 	}
+	tx, err := db.Begin()
+	if err != nil {
+		db.Close()
+		return nil, err
+	}
+	if _, err = tx.Exec(`CREATE TABLE IF NOT EXISTS entities(kind TEXT NOT NULL,key TEXT NOT NULL,value BLOB NOT NULL,PRIMARY KEY(kind,key)); INSERT OR IGNORE INTO migrations VALUES(2);`); err != nil {
+		tx.Rollback()
+		db.Close()
+		return nil, err
+	}
+	if err = tx.Commit(); err != nil {
+		db.Close()
+		return nil, err
+	}
 	return db, nil
 }
 

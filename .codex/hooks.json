@@ -1,0 +1,38 @@
+{
+  "description": "Project Zero metadata-only lifecycle compatibility probe; no task content or behavioral changes.",
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/bin/python3 /Users/hemangdoshi/Developer/project-zero/tools/codex-status-hook.py",
+            "timeout": 2
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/bin/python3 /Users/hemangdoshi/Developer/project-zero/tools/codex-status-hook.py",
+            "timeout": 2
+          }
+        ]
+      }
+    ],
+    "Interrupt": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/bin/python3 /Users/hemangdoshi/Developer/project-zero/tools/codex-status-hook.py",
+            "timeout": 2
+          }
+        ]
+      }
+    ]
+  }
+}

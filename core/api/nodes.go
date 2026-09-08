@@ -113,7 +113,12 @@ func NewNodeHandler(r *runtime.Runtime) http.Handler {
 			}
 			r.Seen(ctx, id)
 			switch m.Type {
-			case "node.heartbeat", "node.register", "capability.advertise", "sync.request":
+			case "node.register", "capability.advertise":
+				e = r.Advertise(ctx, id, m.Body)
+				if e == nil {
+					e = send("ack", map[string]string{"id": m.ID})
+				}
+			case "node.heartbeat", "sync.request":
 				e = send("ack", map[string]string{"id": m.ID})
 			case "capability.result":
 				var b struct {

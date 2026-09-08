@@ -73,11 +73,12 @@ static void text(int x, int y, const char *s, int scale, uint16_t color) {
       x = 8;
       y += 9 * scale;
     }
-    if (idx < 0)
-      continue;
+    if (c == ' ') continue;
+    static const uint8_t fallback[5] = {0x02,0x01,0x51,0x09,0x06};
+    const uint8_t *shape = idx < 0 ? fallback : glyphs[idx];
     for (int a = 0; a < 5; a++)
       for (int b = 0; b < 7; b++)
-        if (glyphs[idx][a] & (1 << b))
+        if (shape[a] & (1 << b))
           for (int dx = 0; dx < scale; dx++)
             for (int dy = 0; dy < scale; dy++) {
               int px = x + a * scale + dx, py = y + b * scale + dy;
@@ -114,17 +115,36 @@ void display_init(void) {
   cmd(0x29, NULL, 0);
   vTaskDelay(pdMS_TO_TICKS(100));
 }
+static void line(int y, const char *s, uint16_t color) {
+  char visible[20];
+  size_t n = 0;
+  for (const unsigned char *p = (const unsigned char *)s; *p && n < 19; p++) {
+    if ((*p & 0xc0) == 0x80)
+      continue;
+    visible[n++] = (*p >= 32 && *p <= 126) ? (char)*p : '?';
+  }
+  visible[n] = 0;
+  text(6, y, visible, 1, color);
+}
 void display_status(const zero_view *v, bool online, int64_t elapsed) {
   memset(pixels, 0, sizeof(pixels));
-  text(8, 10, "ZERO", 2, 0x07ff);
-  text(8, 38, v->project[0] ? v->project : "WAITING", 1, 0xffff);
-  text(8, 70, v->running ? "RUNNING" : "PAUSED", 2,
+  line(6, "PROJECT ZERO", 0x07ff);
+  line(22, v->project[0] ? v->project : "NO FOCUS", 0xffff);
+  line(38,
+       v->idle      ? "IDLE"
+       : v->running ? "RUNNING"
+                    : "PAUSED",
        v->running ? 0x07e0 : 0xffe0);
   char b[32];
   snprintf(b, sizeof(b), "%lld MIN %02lld SEC", (long long)(elapsed / 60000),
            (long long)((elapsed / 1000) % 60));
-  text(8, 104, b, 1, 0xffff);
-  text(8, 142, online ? "CONNECTED" : "OFFLINE", 1, online ? 0x07e0 : 0xf800);
+  line(53, b, 0xffff);
+  line(72, v->git[0] ? v->git : "GIT UNAVAILABLE", 0x07ff);
+  line(86, "AGENT UNAVAILABLE", 0x8410);
+  line(104, v->track[0] ? v->track : "SPOTIFY UNAVAILABLE", 0xffff);
+  line(117, v->artist, 0x8410);
+  line(130, v->media, 0x07e0);
+  line(148, online ? "CONNECTED" : "OFFLINE", online ? 0x07e0 : 0xf800);
   flush();
 }
 void display_pairing(const char *fp) {

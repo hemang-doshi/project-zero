@@ -93,17 +93,46 @@ func (r *Runtime) apply(ctx context.Context, tx *sql.Tx, p string, q Request, v 
 		switch q.Op {
 		case "session.start":
 			var b struct {
-				Project string `json:"project"`
+				Project   string `json:"project"`
+				ProjectID string `json:"project_id"`
 			}
-			if e = json.Unmarshal(q.Body, &b); e != nil || len(b.Project) == 0 || len(b.Project) > 64 {
+			if e = json.Unmarshal(q.Body, &b); e != nil {
+				return e
+			}
+			if b.ProjectID != "" {
+				project, err := loadProject(ctx, tx, b.ProjectID)
+				if err != nil {
+					return err
+				}
+				b.Project = project.Name
+			}
+			if len(b.Project) == 0 || len(b.Project) > 64 {
 				return fmt.Errorf("VALIDATION: project must be 1..64 bytes")
 			}
 			if s.State != "IDLE" {
-				return fmt.Errorf("CONFLICT: session exists; pause or resume it")
+				if (b.ProjectID != "" && s.ProjectID == b.ProjectID) || (b.ProjectID == "" && s.Project == b.Project) {
+					v.Data = s
+					return nil
+				}
+				return fmt.Errorf("CONFLICT: end the current session before switching projects")
 			}
+			s.ID = q.ID
+			s.ProjectID = b.ProjectID
 			s.Project = b.Project
+			s.ElapsedMS = 0
 			s.State = "RUNNING"
 			s.SinceMS = now
+		case "session.end":
+			if s.State == "IDLE" {
+				v.Data = s
+				return nil
+			}
+			if s.State == "RUNNING" {
+				s.ElapsedMS += max(0, now-s.SinceMS)
+			}
+			s.State = "IDLE"
+			s.SinceMS = 0
+
 		case "session.pause", "session.resume", "session.toggle":
 			if s.State == "IDLE" {
 				return fmt.Errorf("CONFLICT: start a session first")
@@ -129,12 +158,28 @@ func (r *Runtime) apply(ctx context.Context, tx *sql.Tx, p string, q Request, v 
 			return e
 		}
 		v.Data = s
+		if e = r.sessionContext(ctx, tx, q.ID, s); e != nil {
+			return e
+		}
 		return r.queueSession(ctx, tx, q.ID, s)
+	}
+	if strings.HasPrefix(p, "integration:") && q.Op == "integration.observed" {
+		return r.integrationAction(ctx, tx, q, v)
 	}
 	if p != "owner" {
 		return fmt.Errorf("AUTHORIZATION: owner required")
 	}
 	switch q.Op {
+	case "integrations.connect", "integrations.disconnect":
+		return r.integrationAction(ctx, tx, q, v)
+	case "notifications.claim", "notifications.result":
+		return r.notificationAction(ctx, tx, q, v)
+	case "policies.apply", "policies.disable", "policies.review":
+		return r.policyAction(ctx, tx, q, v)
+	case "intent.run":
+		return r.runIntent(ctx, tx, q, v)
+	case "projects.add", "projects.remove", "context.assert", "context.clear":
+		return r.personal(ctx, tx, q, v)
 	case "state.set":
 		var b struct {
 			Key      string          `json:"key"`
@@ -256,6 +301,9 @@ func (r *Runtime) apply(ctx context.Context, tx *sql.Tx, p string, q Request, v 
 		_, e := tx.ExecContext(ctx, "DELETE FROM outbox WHERE id=?", b.ID)
 		return e
 	case "events.replay":
+		if e := replayEntities(ctx, tx); e != nil {
+			return e
+		}
 		if e := replayState(ctx, tx); e != nil {
 			return e
 		}
@@ -291,6 +339,11 @@ func (r *Runtime) invoke(ctx context.Context, tx *sql.Tx, p, id string, f effect
 	}
 	for k, value := range input {
 		switch k {
+		case "git", "agent", "track", "artist", "media":
+			value, ok := value.(string)
+			if !ok || len(value) > 64 || !hybrid(ctx, tx, f.Node) {
+				return fmt.Errorf("VALIDATION: extended display field requires negotiated schema")
+			}
 		case "project", "state":
 			s, ok := value.(string)
 			if !ok || len(s) > 64 {
@@ -369,7 +422,7 @@ func (r *Runtime) queueSession(ctx context.Context, tx *sql.Tx, id string, s Ses
 		nodes = append(nodes, n)
 	}
 	rows.Close()
-	b, _ := json.Marshal(s)
+
 	for _, n := range nodes {
 		d, e := r.decision(ctx, tx, "owner", "display.render", n)
 		if e != nil {
@@ -377,6 +430,10 @@ func (r *Runtime) queueSession(ctx context.Context, tx *sql.Tx, id string, s Ses
 		}
 		if d != "ALWAYS_ALLOWED" && d != "SESSION_ALLOWED" {
 			continue
+		}
+		b, e := r.displayPayload(ctx, tx, n, s)
+		if e != nil {
+			return e
 		}
 		v := Response{}
 		if e = r.invoke(ctx, tx, "owner", id+":"+n, effect{n, "display.render", b}, &v); e != nil {

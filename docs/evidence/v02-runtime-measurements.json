@@ -1,0 +1,7 @@
+{
+  "status_samples": 200,
+  "status_p95_ms": 0.18291702144779265,
+  "status_median_ms": 0.0906249915715307,
+  "rss_mib": 21.859375,
+  "measured_at": 1788911059.294859
+}

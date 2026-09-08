@@ -4,7 +4,8 @@
 #include <stdint.h>
 typedef struct {
   char project[65];
-  bool running;
+  bool running, idle;
+  char git[65], agent[65], track[65], artist[65], media[65];
   int64_t elapsed_ms, since_ms, revision;
 } zero_view;
 typedef struct {

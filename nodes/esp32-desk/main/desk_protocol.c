@@ -52,15 +52,28 @@ bool zero_view_object(const cJSON *o, zero_view *v) {
   if (!cJSON_IsObject(o))
     return false;
   zero_view next = {0};
+  next.idle = true;
   const cJSON *p;
   cJSON_ArrayForEach(p, o) {
     if (!strcmp(p->string, "project")) {
       if (!cJSON_IsString(p) || strlen(p->valuestring) > 64)
         return false;
       strcpy(next.project, p->valuestring);
+    } else if (!strcmp(p->string, "git") || !strcmp(p->string, "agent") ||
+               !strcmp(p->string, "track") || !strcmp(p->string, "artist") ||
+               !strcmp(p->string, "media")) {
+      if (!cJSON_IsString(p) || strlen(p->valuestring) > 64)
+        return false;
+      char *dest = !strcmp(p->string, "git")      ? next.git
+                   : !strcmp(p->string, "agent")  ? next.agent
+                   : !strcmp(p->string, "track")  ? next.track
+                   : !strcmp(p->string, "artist") ? next.artist
+                                                  : next.media;
+      strcpy(dest, p->valuestring);
     } else if (!strcmp(p->string, "state")) {
       if (!cJSON_IsString(p))
         return false;
+      next.idle = !strcmp(p->valuestring, "IDLE");
       if (!strcmp(p->valuestring, "RUNNING"))
         next.running = true;
       else if (strcmp(p->valuestring, "PAUSED") &&
