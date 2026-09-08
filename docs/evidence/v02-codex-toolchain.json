@@ -1,0 +1,7 @@
+{
+  "codex_version": "0.153.4",
+  "binary_sha256": "a30ec314bbd0e3721632234d07db7c99855db3b9f1e32dbe8c791947f07e7629",
+  "schema_files": 304,
+  "schema_bundle_sha256": "2bcdf66801b3d139fcda1a381e59aba6de0d223ec40c186e938ad3f487b4dbec",
+  "schema_generator": "codex app-server generate-json-schema (non-experimental)"
+}
