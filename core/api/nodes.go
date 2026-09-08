@@ -66,6 +66,9 @@ func NewNodeHandler(r *runtime.Runtime) http.Handler {
 		if e != nil || hello.Type != "session.hello" {
 			return
 		}
+		if protocol.Negotiate(hello.Body) != nil {
+			return
+		}
 		sessionID := protocol.ID()
 		if e = send("session.welcome", map[string]any{"session_id": sessionID, "heartbeat_ms": 30000, "lease_ms": 90000, "max_frame": protocol.MaxFrame}); e != nil {
 			return

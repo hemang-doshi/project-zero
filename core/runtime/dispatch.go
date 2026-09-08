@@ -93,7 +93,10 @@ func (r *Runtime) Pending(ctx context.Context, node string) ([]Invocation, error
 		if e = r.audit(ctx, tx, x.p, x.v.Capability, node, "DISPATCHED", x.v.ID); e != nil {
 			return nil, e
 		}
-		if _, e = tx.ExecContext(ctx, "INSERT INTO desired VALUES(?,?,?,?) ON CONFLICT(node,capability) DO UPDATE SET input=excluded.input,principal=excluded.principal", node, x.v.Capability, []byte(x.v.Input), x.p); e != nil {
+		if _, e = tx.ExecContext(ctx, "DELETE FROM desired WHERE node=?", node); e != nil {
+			return nil, e
+		}
+		if _, e = tx.ExecContext(ctx, "INSERT INTO desired VALUES(?,?,?,?)", node, x.v.Capability, []byte(x.v.Input), x.p); e != nil {
 			return nil, e
 		}
 		out = append(out, x.v)

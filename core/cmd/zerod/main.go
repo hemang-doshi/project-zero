@@ -8,11 +8,13 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"projectzero.local/zero/core/api"
 	"projectzero.local/zero/core/identity"
 	"projectzero.local/zero/core/runtime"
+	"strings"
 	"syscall"
 	"time"
 )
@@ -63,6 +65,14 @@ func run() error {
 		network := &http.Server{Handler: api.NewNodeHandler(r), ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 90 * time.Second}
 		defer network.Close()
 		go network.Serve(tls.NewListener(l, cfg))
+		_, port, splitErr := net.SplitHostPort(l.Addr().String())
+		if splitErr == nil && !strings.HasPrefix(*listen, "127.0.0.1:") {
+			advertisement := exec.CommandContext(ctx, "/usr/bin/dns-sd", "-R", "Zero", "_zero._tcp", "local", port, "zero=0.1", "pairing=closed", "class=runtime")
+			if err := advertisement.Start(); err != nil {
+				return fmt.Errorf("Bonjour advertisement: %w", err)
+			}
+			go advertisement.Wait()
+		}
 	}
 	fmt.Fprintln(os.Stderr, "zerod ready")
 	<-ctx.Done()

@@ -131,7 +131,7 @@ func (a *Authority) ServerTLS() (*tls.Config, error) {
 	if e != nil {
 		return nil, e
 	}
-	tpl := &x509.Certificate{SerialNumber: serial(), Subject: pkix.Name{CommonName: "zero.local"}, DNSNames: []string{"zero.local"}, NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().AddDate(1, 0, 0), KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}}
+	tpl := &x509.Certificate{SerialNumber: serial(), Subject: pkix.Name{CommonName: "zero.local"}, DNSNames: []string{"zero.local"}, NotBefore: ca.NotBefore, NotAfter: time.Now().AddDate(1, 0, 0), KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}}
 	der, e := x509.CreateCertificate(rand.Reader, tpl, ca, &key.PublicKey, signer)
 	if e != nil {
 		return nil, e

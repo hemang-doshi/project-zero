@@ -104,10 +104,3 @@ The physical manual session loop is working and user-confirmed. The 24-hour
 hardware soak is in progress; this is not yet an accepted v0.1 release.
 See [acceptance evidence](docs/evidence/2026-09-08-acceptance.md) for verified
 results and remaining work.
-
-## v0.2 development preview
-
-Independent project/context, local intents, Git status, native menu bar and
-focus-reminder development now proceeds while Codex observation remains
-unavailable. See [development setup](docs/runbooks/v02-development.md). The
-preview uses separate data and does not replace the physical v0.1 runtime.
