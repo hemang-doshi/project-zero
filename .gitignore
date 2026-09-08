@@ -1,0 +1,10 @@
+.runtime/
+bin/
+.DS_Store
+.worktrees/
+build/
+managed_components/
+sdkconfig.old
+*.pem
+*.key
+!proto/fixtures/*.pem
