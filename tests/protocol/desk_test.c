@@ -12,6 +12,13 @@ int main(void) {
   assert(!zero_parse_view("{\"project\":42}", &v));
   assert(!zero_parse_view("{\"elapsed_ms\":-1}", &v));
   assert(!zero_parse_view("{\"state\":\"HACKED\"}", &v));
+  assert(
+      zero_parse_view("{\"project\":\"Zero\",\"state\":\"IDLE\",\"git\":"
+                      "\"MAIN\",\"agent\":\"UNAVAILABLE\",\"track\":\"Song\","
+                      "\"artist\":\"Artist\",\"media\":\"playing\"}",
+                      &v));
+  assert(!strcmp(v.track, "Song") && v.idle);
+  assert(!zero_parse_view("{\"track\":42}", &v));
   zero_button b = {0};
   assert(!zero_button_update(&b, 0, 0));
   assert(!zero_button_update(&b, 1, 10));

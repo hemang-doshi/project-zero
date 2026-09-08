@@ -33,6 +33,7 @@ func run() error {
 	data := flag.String("data", filepath.Join(home, "ProjectZero"), "owner-controlled runtime directory")
 	listen := flag.String("listen", "127.0.0.1:7443", "TLS node listener; use :7443 for LAN")
 	local := flag.Bool("local-only", false, "Unix API only, no node identity or listener")
+	observer := flag.String("mac-observer", "", "absolute native Spotify helper path (opt-in)")
 	flag.Parse()
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
@@ -41,6 +42,8 @@ func run() error {
 		return e
 	}
 	defer r.Close()
+	r.MacObserver = *observer
+	go r.RunIntegrations(ctx)
 	var ca *identity.Authority
 	if !*local {
 		ca, e = identity.Load("project-zero.runtime-authority")

@@ -122,8 +122,7 @@ func (r *Runtime) Policies(ctx context.Context) ([]Policy, error) {
 }
 func (r *Runtime) TickAutomations(ctx context.Context) error {
 	r.mu.Lock()
-	committed := false
-	defer r.unlockAndPublish(&committed, "firings", "events", "audit")
+	defer r.mu.Unlock()
 	tx, e := r.db.BeginTx(ctx, nil)
 	if e != nil {
 		return e
@@ -159,14 +158,11 @@ func (r *Runtime) TickAutomations(ctx context.Context) error {
 	if e = r.audit(ctx, tx, "policy:focus-break", "notification.propose", "owner", "ALLOW", id); e != nil {
 		return e
 	}
-	e = tx.Commit()
-	committed = e == nil
-	return e
+	return tx.Commit()
 }
 func (r *Runtime) recordGitFiring(ctx context.Context, result error) {
 	r.mu.Lock()
-	committed := false
-	defer r.unlockAndPublish(&committed, "firings", "events", "audit")
+	defer r.mu.Unlock()
 	tx, e := r.db.BeginTx(ctx, nil)
 	if e != nil {
 		return
@@ -186,18 +182,6 @@ func (r *Runtime) recordGitFiring(ctx context.Context, result error) {
 		message = "Repository refresh unavailable"
 		state = "FAILED"
 	}
-	// The 15s poll is a heartbeat, not history: record only the first outcome
-	// and later transitions. A steady state re-records nothing, so idle polls
-	// stop bumping the revision and growing the firings table every 15s.
-	var raw []byte
-	if e := tx.QueryRowContext(ctx, "SELECT value FROM entities WHERE kind='firing' AND json_extract(value,'$.policy')='git-refresh' ORDER BY rowid DESC LIMIT 1").Scan(&raw); e == nil {
-		var last Firing
-		if json.Unmarshal(raw, &last) == nil && last.State == state {
-			return
-		}
-	} else if e != sql.ErrNoRows {
-		return
-	}
 	f := Firing{ID: id, Policy: "git-refresh", SessionID: s.ID, At: r.Now().UTC(), Message: message, Review: "unreviewed", State: state}
 	if saveEntity(ctx, tx, id, "firing", id, f, r.Now()) != nil {
 		return
@@ -205,7 +189,7 @@ func (r *Runtime) recordGitFiring(ctx context.Context, result error) {
 	if r.audit(ctx, tx, "policy:git-refresh", "repo.status", s.ProjectID, state, id) != nil {
 		return
 	}
-	committed = tx.Commit() == nil
+	tx.Commit()
 }
 
 func (r *Runtime) notificationAction(ctx context.Context, tx *sql.Tx, q Request, v *Response) error {

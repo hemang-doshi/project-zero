@@ -8,14 +8,16 @@ import (
 	"encoding/json"
 	"fmt"
 	"projectzero.local/zero/core/storage"
+	"strings"
 	"sync"
 	"time"
 )
 
 type Runtime struct {
-	db  *sql.DB
-	mu  sync.Mutex
-	Now func() time.Time
+	MacObserver string
+	db          *sql.DB
+	mu          sync.Mutex
+	Now         func() time.Time
 }
 type Request struct {
 	ID       string          `json:"id"`
@@ -31,6 +33,8 @@ type Response struct {
 	Data    any    `json:"data,omitempty"`
 }
 type Session struct {
+	ID        string `json:"id,omitempty"`
+	ProjectID string `json:"project_id,omitempty"`
 	Project   string `json:"project"`
 	State     string `json:"state"`
 	ElapsedMS int64  `json:"elapsed_ms"`
@@ -62,6 +66,9 @@ func readSession(ctx context.Context, tx *sql.Tx) (Session, error) {
 		return s, e
 	}
 	e = json.Unmarshal(b, &s)
+	if s.ID == "" && s.State != "IDLE" {
+		s.ID = "legacy-session"
+	}
 	return s, e
 }
 func (r *Runtime) Session(ctx context.Context) (Session, error) {
@@ -167,7 +174,17 @@ func (r *Runtime) Execute(ctx context.Context, principal string, q Request) (Res
 	if e != sql.ErrNoRows {
 		return v, e
 	}
-	if principal != "owner" {
+	if strings.HasPrefix(principal, "integration:") {
+		id := integrationPrincipal(principal)
+		var b Integration
+		if q.Op != "integration.observed" || json.Unmarshal(q.Body, &b) != nil || b.ID != id {
+			return v, fmt.Errorf("AUTHORIZATION: integration capability ceiling")
+		}
+		old, err := readIntegration(ctx, tx, id)
+		if err != nil || !old.Enabled {
+			return v, fmt.Errorf("AUTHORIZATION: integration disabled")
+		}
+	} else if principal != "owner" {
 		var revoked int
 		e = tx.QueryRowContext(ctx, "SELECT revoked FROM nodes WHERE 'node:'||id=?", principal).Scan(&revoked)
 		if e != nil || revoked != 0 {
@@ -216,7 +233,7 @@ func (r *Runtime) validate(ctx context.Context, tx *sql.Tx, p string, q Request)
 }
 
 func (r *Runtime) List(ctx context.Context, kind string) ([]map[string]any, error) {
-	queries := map[string]string{"nodes": "SELECT id,revoked,capabilities,last_seen FROM nodes", "events": "SELECT * FROM events ORDER BY seq DESC LIMIT 500", "audit": "SELECT * FROM audit_entries ORDER BY seq DESC LIMIT 500", "grants": "SELECT * FROM grants", "approvals": "SELECT id,node,capability,input,hash,status,deadline FROM invocations WHERE status='WAITING_APPROVAL'", "invocations": "SELECT * FROM invocations ORDER BY rowid DESC LIMIT 500", "state": "SELECT * FROM state_values"}
+	queries := map[string]string{"nodes": "SELECT id,revoked,capabilities,last_seen FROM nodes", "events": "SELECT * FROM events ORDER BY seq DESC LIMIT 500", "audit": "SELECT * FROM audit_entries ORDER BY seq DESC LIMIT 500", "grants": "SELECT * FROM grants", "approvals": "SELECT id,node,capability,input,hash,status,deadline FROM invocations WHERE status='WAITING_APPROVAL'", "invocations": "SELECT * FROM invocations ORDER BY rowid DESC LIMIT 500", "firings": "SELECT key AS id,value FROM entities WHERE kind='firing' ORDER BY rowid DESC LIMIT 500", "state": "SELECT * FROM state_values", "projects": "SELECT key AS id,value FROM entities WHERE kind='project'", "context": "SELECT key,value FROM entities WHERE kind='context'"}
 	query, ok := queries[kind]
 	if !ok {
 		return nil, fmt.Errorf("VALIDATION: unknown collection")

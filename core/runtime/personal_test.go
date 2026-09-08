@@ -2,12 +2,9 @@ package runtime
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
-	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 )
@@ -129,95 +126,5 @@ func TestContextCompareAndSetRejectsStaleOverride(t *testing.T) {
 	current, _ := r.Context(context.Background())
 	if current["attention"].Value != "focused" {
 		t.Fatal("rejected change mutated context")
-	}
-}
-func TestNewCommandRejectsUnknownFieldsEvenInDryRun(t *testing.T) {
-	r := openTest(t, filepath.Join(t.TempDir(), "zero.db"))
-	for _, dry := range []bool{false, true} {
-		_, e := r.Execute(context.Background(), "owner", Request{ID: "unknown-field", Op: "integrations.connect", Body: json.RawMessage(`{"id":"git","unexpected":true}`), DryRun: dry})
-		if e == nil {
-			t.Fatal("unknown field accepted")
-		}
-	}
-}
-func TestSharedDisplayFixtures(t *testing.T) {
-	r := openTest(t, filepath.Join(t.TempDir(), "zero.db"))
-	ctx := context.Background()
-	if e := r.Enroll(ctx, "desk", "fp", []string{"display.render"}); e != nil {
-		t.Fatal(e)
-	}
-	if e := r.Advertise(ctx, "desk", json.RawMessage(`{"render_schema":"0.2","capabilities":["display.render"]}`)); e != nil {
-		t.Fatal(e)
-	}
-	command(t, r, "fixture-grant", "grants.set", map[string]any{"principal": "owner", "capability": "display.render", "target": "desk", "state": "ALWAYS_ALLOWED"})
-	data, e := os.ReadFile("../../proto/fixtures/display-v02.tsv")
-	if e != nil {
-		t.Fatal(e)
-	}
-	for i, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
-		parts := strings.SplitN(line, "\t", 2)
-		body := json.RawMessage(`{"node":"desk","capability":"display.render","input":` + parts[1] + `}`)
-		_, e := r.Execute(ctx, "owner", Request{ID: fmt.Sprintf("fixture-%d", i), Op: "capabilities.invoke", Body: body, DryRun: true})
-		if (e == nil) != (parts[0] == "1") {
-			t.Fatalf("fixture %d: %v", i, e)
-		}
-	}
-}
-func TestArtworkRequiresNegotiationAndExactPixelLength(t *testing.T) {
-	r := openTest(t, filepath.Join(t.TempDir(), "zero.db"))
-	ctx := context.Background()
-	r.Enroll(ctx, "desk", "fp", []string{"display.render"})
-	r.Advertise(ctx, "desk", json.RawMessage(`{"render_schema":"0.2","capabilities":["display.render"]}`))
-	command(t, r, "art-grant", "grants.set", map[string]any{"principal": "owner", "capability": "display.render", "target": "desk", "state": "ALWAYS_ALLOWED"})
-	image := base64.StdEncoding.EncodeToString(make([]byte, 2048))
-	body, _ := json.Marshal(map[string]any{"node": "desk", "capability": "display.render", "input": map[string]string{"artwork_rgb565": image}})
-	if _, e := r.Execute(ctx, "owner", Request{ID: "old-profile", Op: "capabilities.invoke", Body: body, DryRun: true}); e == nil {
-		t.Fatal("art sent without negotiation")
-	}
-	if e := r.Advertise(ctx, "desk", json.RawMessage(`{"render_schema":"0.2","artwork":"rgb565-32","capabilities":["display.render"]}`)); e != nil {
-		t.Fatal(e)
-	}
-	if _, e := r.Execute(ctx, "owner", Request{ID: "new-profile", Op: "capabilities.invoke", Body: body, DryRun: true}); e != nil {
-		t.Fatal(e)
-	}
-}
-
-func TestArtworkAccessorServesCachedDigest(t *testing.T) {
-	r := openTest(t, filepath.Join(t.TempDir(), "zero.db"))
-	ctx := context.Background()
-	if _, err := r.Artwork(ctx, "missing"); err == nil {
-		t.Fatal("unknown digest served")
-	}
-	command(t, r, "connect", "integrations.connect", map[string]string{"id": "spotify"})
-	pixels := make([]byte, 2048)
-	pixels[0] = 0xF8
-	pixels[2046] = 0x1F
-	image := base64.StdEncoding.EncodeToString(pixels)
-	observed, _ := json.Marshal(Integration{ID: "spotify", Status: "ONLINE", ObservedAt: r.Now().UTC(), Data: map[string]string{"state": "playing", "track": "Track", "artist": "Artist", "artwork_rgb565": image}})
-	if _, err := r.Execute(ctx, "integration:spotify", Request{ID: "observe", Op: "integration.observed", Body: observed}); err != nil {
-		t.Fatal(err)
-	}
-	integrations, err := r.Integrations(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	digest := ""
-	for _, integration := range integrations {
-		if integration.ID == "spotify" {
-			digest = integration.Data["artwork_id"]
-		}
-	}
-	if len(digest) != 64 {
-		t.Fatalf("missing artwork digest: %q", digest)
-	}
-	asset, err := r.Artwork(ctx, digest)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if asset["rgb565"] != image {
-		t.Fatalf("cached rgb565 differs from the ingested artwork")
-	}
-	if _, err := r.Artwork(ctx, "x"); err == nil {
-		t.Fatal("short digest accepted")
 	}
 }

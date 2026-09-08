@@ -4,10 +4,8 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"maps"
 	"os/exec"
 	"projectzero.local/zero/core/protocol"
 	gitadapter "projectzero.local/zero/integrations/git"
@@ -79,12 +77,6 @@ func (r *Runtime) integrationAction(ctx context.Context, tx *sql.Tx, q Request, 
 			return fmt.Errorf("VALIDATION: observation fields")
 		}
 		for k, val := range b.Data {
-			if k == "artwork_rgb565" && b.ID == "spotify" {
-				if !validArtwork(val) {
-					return fmt.Errorf("VALIDATION: artwork bounds")
-				}
-				continue
-			}
 			if len(k) > 32 || len(val) > 256 {
 				return fmt.Errorf("VALIDATION: observation bounds")
 			}
@@ -97,20 +89,6 @@ func (r *Runtime) integrationAction(ctx context.Context, tx *sql.Tx, q Request, 
 			if s.ProjectID != b.ProjectID {
 				return fmt.Errorf("CONFLICT: focus project changed")
 			}
-		}
-		if image := b.Data["artwork_rgb565"]; image != "" {
-			digest := hash(image)
-			var exists int
-			if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM entities WHERE kind='artwork' AND key=?", digest).Scan(&exists); err != nil {
-				return err
-			}
-			if exists == 0 {
-				if err := saveEntity(ctx, tx, q.ID+":art", "artwork", digest, map[string]string{"rgb565": image}, r.Now()); err != nil {
-					return err
-				}
-			}
-			delete(b.Data, "artwork_rgb565")
-			b.Data["artwork_id"] = digest
 		}
 		old = b
 		old.Enabled = true
@@ -133,22 +111,6 @@ func (r *Runtime) integrationAction(ctx context.Context, tx *sql.Tx, q Request, 
 	if e = saveEntity(ctx, tx, q.ID, "integration", b.ID, old, r.Now()); e != nil {
 		return e
 	}
-	if b.ID == "spotify" && (q.Op == "integration.observed" || q.Op == "integrations.disconnect") {
-		previous, err := readListening(ctx, tx)
-		if err != nil {
-			return err
-		}
-		state := old.Data["state"]
-		if q.Op == "integrations.disconnect" {
-			state = "stopped"
-		}
-		next := listeningFromObservation(previous, state, old.Data, r.Now().UTC())
-		if next.ID != "" && next.LastObservedAt.After(previous.LastObservedAt) {
-			if err := saveEntity(ctx, tx, q.ID+":listening", "listening_session", "current", next, r.Now()); err != nil {
-				return err
-			}
-		}
-	}
 	if q.Op == "integration.observed" || q.Op == "integrations.disconnect" {
 		s, e := readSession(ctx, tx)
 		if e != nil {
@@ -169,12 +131,6 @@ func (r *Runtime) Integrations(ctx context.Context) ([]Integration, error) {
 		v, e := readIntegration(ctx, tx, id)
 		if e != nil {
 			return nil, e
-		}
-		if id == "spotify" {
-			if v.Data == nil {
-				v.Data = map[string]string{}
-			}
-			v.Data["audio_capture"] = r.audioHealth()
 		}
 		if id == "codex" {
 			v.Status = "UNAVAILABLE"
@@ -206,11 +162,9 @@ func (r *Runtime) SyncIntegration(ctx context.Context, id string) error {
 		return e
 	}
 	enabled := false
-	var stored Integration
 	for _, v := range all {
 		if v.ID == id {
 			enabled = v.Enabled
-			stored = v
 		}
 	}
 	if !enabled {
@@ -271,23 +225,6 @@ func (r *Runtime) SyncIntegration(ctx context.Context, id string) error {
 	default:
 		return fmt.Errorf("VALIDATION: integration unavailable")
 	}
-	// The poll cadence stays fixed, but a byte-identical observation must not
-	// commit: the entity/event/audit/invocation cascade plus the revision bump
-	// invalidates the snapshot cache and wakes every UI for zero new content.
-	// Liveness still advances via a single unpublished row touch so the
-	// ONLINE/STALE derivation keeps reading a fresh timestamp.
-	if sameObservation(stored, v) && (id != "spotify" || stamp.Sub(stored.ObservedAt) <= listeningGap) {
-		if e := r.touchIntegrationObserved(ctx, id, stamp); e != nil {
-			return e
-		}
-		// A steady UNAVAILABLE keeps the old SyncIntegration contract: the
-		// manual sync endpoint still reports the outage even though nothing
-		// new was committed.
-		if v.Status == "UNAVAILABLE" {
-			return fmt.Errorf("UNAVAILABLE: %s", v.Message)
-		}
-		return nil
-	}
 	b, _ := json.Marshal(v)
 	_, e = r.Execute(ctx, "integration:"+id, Request{ID: protocol.ID(), Op: "integration.observed", Body: b})
 	if e == nil && v.Status == "UNAVAILABLE" {
@@ -295,107 +232,33 @@ func (r *Runtime) SyncIntegration(ctx context.Context, id string) error {
 	}
 	return e
 }
-
-// sameObservation reports whether a fresh poll carries any display-relevant
-// change over the stored integration. ObservedAt always differs and is
-// excluded; audio_capture is an in-memory overlay, never committed state;
-// re-sent artwork bytes are hashed back to the stored content digest.
-func sameObservation(stored, fresh Integration) bool {
-	if stored.Status != fresh.Status || stored.Message != fresh.Message || stored.ProjectID != fresh.ProjectID {
-		return false
-	}
-	oldData := maps.Clone(stored.Data)
-	newData := maps.Clone(fresh.Data)
-	delete(oldData, "audio_capture")
-	delete(newData, "audio_capture")
-	if image, ok := newData["artwork_rgb565"]; ok {
-		if !validArtwork(image) {
-			return false
-		}
-		if oldData["artwork_id"] != hash(image) {
-			return false
-		}
-		delete(oldData, "artwork_id")
-		delete(newData, "artwork_rgb565")
-	}
-	return maps.Equal(oldData, newData)
-}
-
-// touchIntegrationObserved refreshes only the stored observation timestamp.
-// It writes one indexed row, inserts no events/audit/invocations, queues no
-// display work, and publishes no revision: every display-relevant field is
-// already identical, so cached snapshots and quiet subscribers stay correct
-// while the next rebuild still derives ONLINE from a fresh timestamp.
-func (r *Runtime) touchIntegrationObserved(ctx context.Context, id string, at time.Time) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	tx, e := r.db.BeginTx(ctx, nil)
-	if e != nil {
-		return e
-	}
-	defer tx.Rollback()
-	var raw []byte
-	if e = tx.QueryRowContext(ctx, "SELECT value FROM entities WHERE kind='integration' AND key=?", id).Scan(&raw); e != nil {
-		return e
-	}
-	var stored Integration
-	if e = json.Unmarshal(raw, &stored); e != nil {
-		return e
-	}
-	stored.ObservedAt = at
-	b, e := json.Marshal(stored)
-	if e != nil {
-		return e
-	}
-	if _, e = tx.ExecContext(ctx, "UPDATE entities SET value=? WHERE kind='integration' AND key=?", b, id); e != nil {
-		return e
-	}
-	if id == "spotify" {
-		listening, err := readListening(ctx, tx)
-		if err != nil {
-			return err
-		}
-		if listening.ID != "" && listening.EndedAt == nil {
-			listening.LastObservedAt = at
-			raw, err := json.Marshal(listening)
-			if err != nil {
-				return err
-			}
-			if _, err = tx.ExecContext(ctx, "UPDATE entities SET value=? WHERE kind='listening_session' AND key='current'", raw); err != nil {
-				return err
-			}
-		}
-	}
-	return tx.Commit()
-}
 func (r *Runtime) RunIntegrations(ctx context.Context) {
-	jobs := []periodicWorker{
-		{time.Second, func(ctx context.Context) { _ = r.TickAutomations(ctx) }},
-		{2 * time.Second, func(ctx context.Context) { _ = r.SyncIntegration(ctx, "spotify") }},
-		{15 * time.Second, func(ctx context.Context) {
-			policies, _ := r.Policies(ctx)
-			for _, p := range policies {
-				if p.ID == "git-refresh" && p.Enabled {
-					s, _ := r.Session(ctx)
-					if s.State == "RUNNING" && s.ProjectID != "" {
-						result := r.SyncIntegration(ctx, "git")
-						r.recordGitFiring(ctx, result)
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+	var tick int
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			tick++
+			_ = r.TickAutomations(ctx)
+			if tick%15 == 0 {
+				policies, _ := r.Policies(ctx)
+				for _, p := range policies {
+					if p.ID == "git-refresh" && p.Enabled {
+						s, _ := r.Session(ctx)
+						if s.State == "RUNNING" && s.ProjectID != "" {
+							result := r.SyncIntegration(ctx, "git")
+							r.recordGitFiring(ctx, result)
+						}
 					}
 				}
 			}
-		}},
+			if tick%2 == 0 {
+				_ = r.SyncIntegration(ctx, "spotify")
+			}
+		}
 	}
-	runWorkers(ctx, jobs)
 }
 func integrationPrincipal(p string) string { return strings.TrimPrefix(p, "integration:") }
-
-func validArtwork(encoded string) bool {
-	if encoded == "" {
-		return true
-	}
-	if len(encoded) != 2732 {
-		return false
-	}
-	pixels, err := base64.StdEncoding.Strict().DecodeString(encoded)
-	return err == nil && len(pixels) == 2048
-}
