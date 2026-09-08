@@ -8,14 +8,11 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"projectzero.local/zero/core/api"
 	"projectzero.local/zero/core/identity"
-	"projectzero.local/zero/core/processlock"
 	"projectzero.local/zero/core/runtime"
-	"strings"
 	"syscall"
 	"time"
 )
@@ -34,32 +31,14 @@ func run() error {
 	data := flag.String("data", filepath.Join(home, "ProjectZero"), "owner-controlled runtime directory")
 	listen := flag.String("listen", "127.0.0.1:7443", "TLS node listener; use :7443 for LAN")
 	local := flag.Bool("local-only", false, "Unix API only, no node identity or listener")
-	audio := flag.String("mac-audio", "", "signed Spotify-only audio level helper")
-	observer := flag.String("mac-observer", "", "absolute native Spotify helper path (opt-in)")
-	checkIdentity := flag.Bool("check-identity", false, "verify existing Keychain identity without starting a runtime")
 	flag.Parse()
-	if *checkIdentity {
-		return identity.CheckExisting("project-zero.runtime-authority")
-	}
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
-	if e := os.MkdirAll(*data, 0700); e != nil {
-		return e
-	}
-	lock, e := processlock.Acquire(filepath.Join(*data, "runtime.lock"))
-	if e != nil {
-		return e
-	}
-	defer lock.Close()
 	r, e := runtime.Open(filepath.Join(*data, "zero.db"))
 	if e != nil {
 		return e
 	}
 	defer r.Close()
-	r.MacObserver = *observer
-	r.MacAudio = *audio
-	go r.RunAudio(ctx)
-	go r.RunIntegrations(ctx)
 	var ca *identity.Authority
 	if !*local {
 		ca, e = identity.Load("project-zero.runtime-authority")
@@ -84,14 +63,6 @@ func run() error {
 		network := &http.Server{Handler: api.NewNodeHandler(r), ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 90 * time.Second}
 		defer network.Close()
 		go network.Serve(tls.NewListener(l, cfg))
-		_, port, splitErr := net.SplitHostPort(l.Addr().String())
-		if splitErr == nil && !strings.HasPrefix(*listen, "127.0.0.1:") {
-			advertisement := exec.CommandContext(ctx, "/usr/bin/dns-sd", "-R", "Zero", "_zero._tcp", "local", port, "zero=0.1", "pairing=closed", "class=runtime")
-			if err := advertisement.Start(); err != nil {
-				return fmt.Errorf("Bonjour advertisement: %w", err)
-			}
-			go advertisement.Wait()
-		}
 	}
 	fmt.Fprintln(os.Stderr, "zerod ready")
 	<-ctx.Done()

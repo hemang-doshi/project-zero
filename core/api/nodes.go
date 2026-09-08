@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/coder/websocket"
-	"log"
 	"net/http"
 	"projectzero.local/zero/core/identity"
 	"projectzero.local/zero/core/protocol"
@@ -13,17 +12,6 @@ import (
 	"sync"
 	"time"
 )
-
-// pollDue reports whether a connection poll must run its full Known/Pending
-// work: any committed write advanced the revision, or the fallback interval
-// elapsed for Pending's time-based transitions (dispatch backoff, deadlines)
-// which need no writer. Revocation always commits (nodes.revoke, re-enroll,
-// grants.set all publish), so a static revision also means no revocation;
-// lease-expiry is derived read-only state that never touches the revoked bit
-// Known reads, so it needs no poll either.
-func pollDue(lastRev, rev uint64, lastFull, now time.Time) bool {
-	return rev != lastRev || now.Sub(lastFull) >= time.Second
-}
 
 func NewNodeHandler(r *runtime.Runtime) http.Handler {
 	var mu sync.Mutex
@@ -60,7 +48,6 @@ func NewNodeHandler(r *runtime.Runtime) http.Handler {
 			defer done()
 			kind, b, e := c.Read(rc)
 			if e != nil {
-				log.Printf("node %s: receive failed: %v", id, e)
 				return protocol.Envelope{}, e
 			}
 			if kind != websocket.MessageText {
@@ -70,23 +57,13 @@ func NewNodeHandler(r *runtime.Runtime) http.Handler {
 		}
 		send := func(kind string, body any) error {
 			e := protocol.New(kind, "runtime", "node:"+id, body)
-			if kind == "display.telemetry" {
-				e.TTL = 500
-			}
 			b, _ := json.Marshal(e)
-			wc, done := context.WithTimeout(ctx, 10*time.Second)
+			wc, done := context.WithTimeout(ctx, 3*time.Second)
 			defer done()
-			err := c.Write(wc, websocket.MessageText, b)
-			if err != nil {
-				log.Printf("node %s: send %s failed: %v", id, kind, err)
-			}
-			return err
+			return c.Write(wc, websocket.MessageText, b)
 		}
 		hello, e := read(5 * time.Second)
 		if e != nil || hello.Type != "session.hello" {
-			return
-		}
-		if protocol.Negotiate(hello.Body) != nil {
 			return
 		}
 		sessionID := protocol.ID()
@@ -97,46 +74,14 @@ func NewNodeHandler(r *runtime.Runtime) http.Handler {
 		if e = r.Restore(ctx, id, sessionID); e != nil {
 			send("session.error", map[string]string{"error": "restore rejected"})
 		}
-		var audioWindow telemetryWindow
 		go func() {
-			ticker := time.NewTicker(100 * time.Millisecond)
-			var audioSequence uint64
-			var audioRev uint64
-			var lastRev uint64
-			var lastFull time.Time
+			ticker := time.NewTicker(250 * time.Millisecond)
 			defer ticker.Stop()
 			for {
 				select {
 				case <-ctx.Done():
 					return
 				case <-ticker.C:
-					now := time.Now()
-					rev := r.Updates.Revision()
-					// Audio frames never bump the revision, so a new sequence is
-					// its own wake signal; a revision advance re-checks gates
-					// that may have changed (grants, profiles, spotify state).
-					// A static sequence with a static revision can deliver
-					// nothing new, so the database is left untouched.
-					if r.AudioSequence() != audioSequence || rev != audioRev {
-						audioRev = rev
-						if frame, ok := r.AudioLevels(ctx, id); ok && frame.Sequence != audioSequence && audioWindow.start(frame.Sequence) {
-							if e := send("display.telemetry", map[string]any{"session_id": sessionID, "sequence": frame.Sequence, "level": frame.Level, "bass": frame.Bass}); e != nil {
-								cancel()
-								return
-							}
-							audioSequence = frame.Sequence
-						}
-					}
-					// Commits are the only writers, so a static revision means
-					// Known and Pending would repeat their last answer. The 1s
-					// fallback covers Pending's time-based transitions
-					// (dispatch backoff, deadlines) without any writer.
-					// Lease-expiry flips no Known answer (revoked bit only),
-					// so it is covered by the same reasoning.
-					if !pollDue(lastRev, rev, lastFull, now) {
-						continue
-					}
-					lastRev, lastFull = rev, now
 					if !r.Known(ctx, id, fp) {
 						cancel()
 						return
@@ -165,21 +110,7 @@ func NewNodeHandler(r *runtime.Runtime) http.Handler {
 			}
 			r.Seen(ctx, id)
 			switch m.Type {
-			case "display.telemetry.ack":
-				var receipt struct {
-					SessionID string `json:"session_id"`
-					Sequence  uint64 `json:"sequence"`
-				}
-				if e = json.Unmarshal(m.Body, &receipt); e == nil && receipt.SessionID == sessionID {
-					audioWindow.ack(receipt.Sequence)
-				}
-
-			case "node.register", "capability.advertise":
-				e = r.Advertise(ctx, id, m.Body)
-				if e == nil {
-					e = send("ack", map[string]string{"id": m.ID})
-				}
-			case "node.heartbeat", "sync.request":
+			case "node.heartbeat", "node.register", "capability.advertise", "sync.request":
 				e = send("ack", map[string]string{"id": m.ID})
 			case "capability.result":
 				var b struct {

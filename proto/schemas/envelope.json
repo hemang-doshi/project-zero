@@ -1,79 +1,20 @@
 {
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "zero://schemas/envelope/0.1",
-  "type": "object",
-  "required": [
-    "zero",
-    "type",
-    "id",
-    "time",
-    "source",
-    "body"
-  ],
-  "properties": {
-    "zero": {
-      "const": "0.1"
-    },
-    "type": {
-      "enum": [
-        "session.hello",
-        "session.welcome",
-        "node.register",
-        "node.heartbeat",
-        "capability.advertise",
-        "capability.invoke",
-        "capability.accepted",
-        "capability.result",
-        "event.publish",
-        "state.result",
-        "sync.request",
-        "ack",
-        "session.error",
-        "display.telemetry",
-        "display.telemetry.ack"
-      ]
-    },
-    "id": {
-      "type": "string",
-      "minLength": 1,
-      "maxLength": 128
-    },
-    "time": {
-      "type": "string",
-      "format": "date-time"
-    },
-    "source": {
-      "type": "string",
-      "minLength": 1,
-      "maxLength": 128
-    },
-    "target": {
-      "type": "string",
-      "maxLength": 128
-    },
-    "correlation_id": {
-      "type": "string"
-    },
-    "causation_id": {
-      "type": "string"
-    },
-    "trace_id": {
-      "type": "string"
-    },
-    "ttl_ms": {
-      "type": "integer",
-      "minimum": 1,
-      "maximum": 86400000
-    },
-    "classification": {
-      "enum": [
-        "PUBLIC",
-        "INTERNAL",
-        "PRIVATE"
-      ]
-    },
-    "body": {
-      "type": "object"
-    }
-  }
+ "$schema":"https://json-schema.org/draft/2020-12/schema",
+ "$id":"zero://schemas/envelope/0.1",
+ "type":"object",
+ "required":["zero","type","id","time","source","body"],
+ "properties":{
+  "zero":{"const":"0.1"},
+  "type":{"enum":["session.hello","session.welcome","node.register","node.heartbeat","capability.advertise","capability.invoke","capability.accepted","capability.result","event.publish","state.result","sync.request","ack","session.error"]},
+  "id":{"type":"string","minLength":1,"maxLength":128},
+  "time":{"type":"string","format":"date-time"},
+  "source":{"type":"string","minLength":1,"maxLength":128},
+  "target":{"type":"string","maxLength":128},
+  "correlation_id":{"type":"string"},
+  "causation_id":{"type":"string"},
+  "trace_id":{"type":"string"},
+  "ttl_ms":{"type":"integer","minimum":1,"maximum":86400000},
+  "classification":{"enum":["PUBLIC","INTERNAL","PRIVATE"]},
+  "body":{"type":"object"}
+ }
 }

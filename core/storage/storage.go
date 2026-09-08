@@ -2,11 +2,9 @@ package storage
 
 import (
 	"database/sql"
-	"fmt"
 	_ "modernc.org/sqlite"
 	"os"
 	"path/filepath"
-	"projectzero.local/zero/core/release"
 )
 
 func Open(path string) (*sql.DB, error) {
@@ -23,42 +21,11 @@ func Open(path string) (*sql.DB, error) {
 		return nil, err
 	}
 	db.SetMaxOpenConns(1)
-	var exists int
-	if err = db.QueryRow("SELECT count(*) FROM sqlite_master WHERE type='table' AND name='migrations'").Scan(&exists); err != nil {
-		db.Close()
-		return nil, err
-	}
-	if exists != 0 {
-		var current int
-		if err = db.QueryRow("SELECT COALESCE(MAX(version),0) FROM migrations").Scan(&current); err != nil {
-			db.Close()
-			return nil, err
-		}
-		if current > release.Current().DatabaseVersion {
-			db.Close()
-			return nil, fmt.Errorf("CONFLICT: database schema %d is newer than supported %d; use a compatible release", current, release.Current().DatabaseVersion)
-		}
-	}
-
 	for _, q := range []string{"PRAGMA journal_mode=WAL", "PRAGMA synchronous=FULL", "PRAGMA foreign_keys=ON", "PRAGMA busy_timeout=5000", schema} {
 		if _, err = db.Exec(q); err != nil {
 			db.Close()
 			return nil, err
 		}
-	}
-	tx, err := db.Begin()
-	if err != nil {
-		db.Close()
-		return nil, err
-	}
-	if _, err = tx.Exec(`CREATE TABLE IF NOT EXISTS entities(kind TEXT NOT NULL,key TEXT NOT NULL,value BLOB NOT NULL,PRIMARY KEY(kind,key)); INSERT OR IGNORE INTO migrations VALUES(2);`); err != nil {
-		tx.Rollback()
-		db.Close()
-		return nil, err
-	}
-	if err = tx.Commit(); err != nil {
-		db.Close()
-		return nil, err
 	}
 	return db, nil
 }

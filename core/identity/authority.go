@@ -131,7 +131,7 @@ func (a *Authority) ServerTLS() (*tls.Config, error) {
 	if e != nil {
 		return nil, e
 	}
-	tpl := &x509.Certificate{SerialNumber: serial(), Subject: pkix.Name{CommonName: "zero.local"}, DNSNames: []string{"zero.local"}, NotBefore: ca.NotBefore, NotAfter: time.Now().AddDate(1, 0, 0), KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}}
+	tpl := &x509.Certificate{SerialNumber: serial(), Subject: pkix.Name{CommonName: "zero.local"}, DNSNames: []string{"zero.local"}, NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().AddDate(1, 0, 0), KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}}
 	der, e := x509.CreateCertificate(rand.Reader, tpl, ca, &key.PublicKey, signer)
 	if e != nil {
 		return nil, e
@@ -168,16 +168,4 @@ func Load(service string) (*Authority, error) {
 		return nil, e
 	}
 	return a, nil
-}
-
-// CheckExisting verifies access without generating or replacing signing material.
-func CheckExisting(service string) error {
-	_, found, e := keychainRead(service)
-	if e != nil {
-		return e
-	}
-	if !found {
-		return fmt.Errorf("runtime identity is missing; restore pairing identity before installation")
-	}
-	return nil
 }

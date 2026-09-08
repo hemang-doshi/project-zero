@@ -6,10 +6,3 @@ build:
 	go build -o bin/zero-simulator ./nodes/simulator
 test:
 	GOPROXY=off GOSUMDB=off go test -race ./...
-	python3 -m unittest discover -s tests -p 'test_*.py'
-
-.PHONY: firmware-test generate
-firmware-test:
-	bash tools/test-firmware.sh
-generate:
-	python3 tools/schema-gen.py

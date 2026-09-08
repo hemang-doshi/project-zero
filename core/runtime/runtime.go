@@ -7,32 +7,21 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"projectzero.local/zero/core/protocol"
 	"projectzero.local/zero/core/storage"
-	"strings"
 	"sync"
 	"time"
 )
 
-const nodeOfflineAfter = 90 * time.Second
-
 type Runtime struct {
-	Updates     *Updates
-	MacObserver string
-	MacAudio    string
-	audioMu     sync.Mutex
-	audio       AudioFrame
-	audioStatus string
-	db          *sql.DB
-	mu          sync.Mutex
-	Now         func() time.Time
+	db  *sql.DB
+	mu  sync.Mutex
+	Now func() time.Time
 }
 type Request struct {
-	ID       string          `json:"id"`
-	Op       string          `json:"op"`
-	Body     json.RawMessage `json:"body"`
-	DryRun   bool            `json:"dry_run,omitempty"`
-	approved bool
+	ID     string          `json:"id"`
+	Op     string          `json:"op"`
+	Body   json.RawMessage `json:"body"`
+	DryRun bool            `json:"dry_run,omitempty"`
 }
 type Response struct {
 	Version string `json:"version"`
@@ -41,8 +30,6 @@ type Response struct {
 	Data    any    `json:"data,omitempty"`
 }
 type Session struct {
-	ID        string `json:"id,omitempty"`
-	ProjectID string `json:"project_id,omitempty"`
 	Project   string `json:"project"`
 	State     string `json:"state"`
 	ElapsedMS int64  `json:"elapsed_ms"`
@@ -55,7 +42,7 @@ func Open(path string) (*Runtime, error) {
 	if e != nil {
 		return nil, e
 	}
-	return &Runtime{db: db, Now: time.Now, Updates: NewUpdates()}, nil
+	return &Runtime{db: db, Now: time.Now}, nil
 }
 func (r *Runtime) Close() error { return r.db.Close() }
 func hash(v any) string {
@@ -74,9 +61,6 @@ func readSession(ctx context.Context, tx *sql.Tx) (Session, error) {
 		return s, e
 	}
 	e = json.Unmarshal(b, &s)
-	if s.ID == "" && s.State != "IDLE" {
-		s.ID = "legacy-session"
-	}
 	return s, e
 }
 func (r *Runtime) Session(ctx context.Context) (Session, error) {
@@ -106,8 +90,7 @@ func (r *Runtime) audit(ctx context.Context, tx *sql.Tx, p, a, target, d, id str
 }
 func (r *Runtime) Enroll(ctx context.Context, id, fp string, caps []string) error {
 	r.mu.Lock()
-	committed := false
-	defer r.unlockAndPublish(&committed, "nodes", "audit")
+	defer r.mu.Unlock()
 	if id == "" || len(id) > 64 || fp == "" {
 		return fmt.Errorf("VALIDATION: identity")
 	}
@@ -117,23 +100,6 @@ func (r *Runtime) Enroll(ctx context.Context, id, fp string, caps []string) erro
 		return e
 	}
 	defer tx.Rollback()
-	var revoked int
-	if err := tx.QueryRowContext(ctx, "SELECT revoked FROM nodes WHERE id=?", id).Scan(&revoked); err == nil {
-		if revoked == 0 {
-			return fmt.Errorf("CONFLICT: node already enrolled")
-		}
-		if _, e = tx.ExecContext(ctx, "DELETE FROM nodes WHERE id=?", id); e != nil {
-			return e
-		}
-		if _, e = tx.ExecContext(ctx, "DELETE FROM grants WHERE principal=? OR target=?", "node:"+id, id); e != nil {
-			return e
-		}
-		if _, e = tx.ExecContext(ctx, "DELETE FROM desired WHERE node=?", id); e != nil {
-			return e
-		}
-	} else if err != sql.ErrNoRows {
-		return err
-	}
 	_, e = tx.ExecContext(ctx, "INSERT INTO nodes(id,fingerprint,capabilities) VALUES(?,?,?)", id, fp, b)
 	if e != nil {
 		return e
@@ -141,9 +107,7 @@ func (r *Runtime) Enroll(ctx context.Context, id, fp string, caps []string) erro
 	if e = r.audit(ctx, tx, "owner", "nodes.pair", id, "ALLOW", id); e != nil {
 		return e
 	}
-	e = tx.Commit()
-	committed = e == nil
-	return e
+	return tx.Commit()
 }
 func (r *Runtime) Known(ctx context.Context, node, fp string) bool {
 	var n int
@@ -152,23 +116,16 @@ func (r *Runtime) Known(ctx context.Context, node, fp string) bool {
 
 func (r *Runtime) Execute(ctx context.Context, principal string, q Request) (Response, error) {
 	r.mu.Lock()
-	committed := false
-	defer r.unlockAndPublish(&committed, commandDomains(q.Op)...)
+	defer r.mu.Unlock()
 	v := Response{Version: "0.1", ID: q.ID, Status: "SUCCEEDED"}
 	if len(q.ID) == 0 || len(q.ID) > 128 || len(q.Body) > 4096 {
 		return v, fmt.Errorf("VALIDATION: request bounds")
 	}
 	var body map[string]json.RawMessage
 	if len(q.Body) > 0 {
-		if e := protocol.ValidateJSON(q.Body); e != nil {
-			return v, fmt.Errorf("VALIDATION: %w", e)
-		}
 		if e := json.Unmarshal(q.Body, &body); e != nil {
 			return v, fmt.Errorf("VALIDATION: body")
 		}
-	}
-	if e := validatePersonalFields(q.Op, body); e != nil {
-		return v, e
 	}
 	signature := hash(struct {
 		P, O string
@@ -192,17 +149,7 @@ func (r *Runtime) Execute(ctx context.Context, principal string, q Request) (Res
 	if e != sql.ErrNoRows {
 		return v, e
 	}
-	if strings.HasPrefix(principal, "integration:") {
-		id := integrationPrincipal(principal)
-		var b Integration
-		if q.Op != "integration.observed" || json.Unmarshal(q.Body, &b) != nil || b.ID != id {
-			return v, fmt.Errorf("AUTHORIZATION: integration capability ceiling")
-		}
-		old, err := readIntegration(ctx, tx, id)
-		if err != nil || !old.Enabled {
-			return v, fmt.Errorf("AUTHORIZATION: integration disabled")
-		}
-	} else if principal != "owner" {
+	if principal != "owner" {
 		var revoked int
 		e = tx.QueryRowContext(ctx, "SELECT revoked FROM nodes WHERE 'node:'||id=?", principal).Scan(&revoked)
 		if e != nil || revoked != 0 {
@@ -220,18 +167,6 @@ func (r *Runtime) Execute(ctx context.Context, principal string, q Request) (Res
 		return v, nil
 	}
 	if e = r.apply(ctx, tx, principal, q, &v); e != nil {
-		tx.Rollback()
-		at, auditErr := r.db.BeginTx(ctx, nil)
-		if auditErr != nil {
-			return v, auditErr
-		}
-		if auditErr = r.audit(ctx, at, principal, q.Op, "runtime", "REJECTED", q.ID); auditErr != nil {
-			at.Rollback()
-			return v, auditErr
-		}
-		if auditErr = at.Commit(); auditErr != nil {
-			return v, auditErr
-		}
 		return v, e
 	}
 	if e = r.audit(ctx, tx, principal, q.Op, "runtime", v.Status, q.ID); e != nil {
@@ -241,9 +176,7 @@ func (r *Runtime) Execute(ctx context.Context, principal string, q Request) (Res
 	if _, e = tx.ExecContext(ctx, "INSERT INTO commands VALUES(?,?,?,?)", q.ID, principal, signature, b); e != nil {
 		return v, e
 	}
-	e = tx.Commit()
-	committed = e == nil
-	return v, e
+	return v, tx.Commit()
 }
 
 func (r *Runtime) validate(ctx context.Context, tx *sql.Tx, p string, q Request) error {
@@ -253,15 +186,11 @@ func (r *Runtime) validate(ctx context.Context, tx *sql.Tx, p string, q Request)
 }
 
 func (r *Runtime) List(ctx context.Context, kind string) ([]map[string]any, error) {
-	queries := map[string]string{"node_profiles": "SELECT key AS id,value FROM entities WHERE kind='node_profile'", "nodes": "SELECT id,revoked,capabilities,last_seen FROM nodes", "events": "SELECT * FROM events ORDER BY seq DESC LIMIT 500", "audit": "SELECT * FROM audit_entries ORDER BY seq DESC LIMIT 500", "grants": "SELECT * FROM grants", "approvals": "SELECT id,node,capability,input,hash,status,deadline FROM invocations WHERE status='WAITING_APPROVAL'", "invocations": "SELECT * FROM invocations ORDER BY rowid DESC LIMIT 500", "firings": "SELECT key AS id,value FROM entities WHERE kind='firing' ORDER BY rowid DESC LIMIT 500", "state": "SELECT * FROM state_values", "projects": "SELECT key AS id,value FROM entities WHERE kind='project'", "context": "SELECT key,value FROM entities WHERE kind='context'"}
+	queries := map[string]string{"nodes": "SELECT id,revoked,capabilities,last_seen FROM nodes", "events": "SELECT * FROM events ORDER BY seq DESC LIMIT 500", "audit": "SELECT * FROM audit_entries ORDER BY seq DESC LIMIT 500", "grants": "SELECT * FROM grants", "approvals": "SELECT id,node,capability,input,hash,status,deadline FROM invocations WHERE status='WAITING_APPROVAL'", "invocations": "SELECT * FROM invocations ORDER BY rowid DESC LIMIT 500", "state": "SELECT * FROM state_values"}
 	query, ok := queries[kind]
 	if !ok {
 		return nil, fmt.Errorf("VALIDATION: unknown collection")
 	}
-	return r.queryList(ctx, kind, query)
-}
-
-func (r *Runtime) queryList(ctx context.Context, kind, query string) ([]map[string]any, error) {
 	rows, e := r.db.QueryContext(ctx, query)
 	if e != nil {
 		return nil, e
@@ -292,24 +221,6 @@ func (r *Runtime) queryList(ctx context.Context, kind, query string) ([]map[stri
 			} else {
 				m[k] = v[i]
 			}
-		}
-		if kind == "nodes" {
-			status := "PAIRED"
-			if m["revoked"] == int64(1) {
-				status = "REVOKED"
-			} else if stamp, ok := m["last_seen"].(string); ok {
-				at, err := time.Parse(time.RFC3339Nano, stamp)
-				if err == nil {
-					age := r.Now().Sub(at)
-					status = "ONLINE"
-					if age >= nodeOfflineAfter {
-						status = "OFFLINE"
-					} else if age >= 60*time.Second {
-						status = "SUSPECT"
-					}
-				}
-			}
-			m["status"] = status
 		}
 		out = append(out, m)
 	}

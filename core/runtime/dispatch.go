@@ -17,8 +17,7 @@ type Invocation struct {
 
 func (r *Runtime) Pending(ctx context.Context, node string) ([]Invocation, error) {
 	r.mu.Lock()
-	committed := false
-	defer r.unlockAndPublish(&committed, "invocations", "approvals", "audit")
+	defer r.mu.Unlock()
 	tx, e := r.db.BeginTx(ctx, nil)
 	if e != nil {
 		return nil, e
@@ -54,7 +53,6 @@ func (r *Runtime) Pending(ctx context.Context, node string) ([]Invocation, error
 		return nil, e
 	}
 	out := []Invocation{}
-	changed := false
 	for _, x := range records {
 		expiry, _ := time.Parse(time.RFC3339Nano, x.deadline)
 		next, _ := time.Parse(time.RFC3339Nano, x.next)
@@ -71,7 +69,6 @@ func (r *Runtime) Pending(ctx context.Context, node string) ([]Invocation, error
 			status = "TIMED_OUT"
 		}
 		if status != "" {
-			changed = true
 			if _, e = tx.ExecContext(ctx, "UPDATE invocations SET status=? WHERE id=?", status, x.v.ID); e != nil {
 				return nil, e
 			}
@@ -87,7 +84,6 @@ func (r *Runtime) Pending(ctx context.Context, node string) ([]Invocation, error
 			continue
 		}
 		x.v.Attempt++
-		changed = true
 		if _, e = tx.ExecContext(ctx, "UPDATE invocations SET status='DISPATCHED',attempts=? WHERE id=?", x.v.Attempt, x.v.ID); e != nil {
 			return nil, e
 		}
@@ -97,17 +93,12 @@ func (r *Runtime) Pending(ctx context.Context, node string) ([]Invocation, error
 		if e = r.audit(ctx, tx, x.p, x.v.Capability, node, "DISPATCHED", x.v.ID); e != nil {
 			return nil, e
 		}
-		if _, e = tx.ExecContext(ctx, "DELETE FROM desired WHERE node=?", node); e != nil {
-			return nil, e
-		}
-		if _, e = tx.ExecContext(ctx, "INSERT INTO desired VALUES(?,?,?,?)", node, x.v.Capability, []byte(x.v.Input), x.p); e != nil {
+		if _, e = tx.ExecContext(ctx, "INSERT INTO desired VALUES(?,?,?,?) ON CONFLICT(node,capability) DO UPDATE SET input=excluded.input,principal=excluded.principal", node, x.v.Capability, []byte(x.v.Input), x.p); e != nil {
 			return nil, e
 		}
 		out = append(out, x.v)
 	}
-	e = tx.Commit()
-	committed = e == nil && changed
-	return out, e
+	return out, tx.Commit()
 }
 
 func (r *Runtime) Result(ctx context.Context, node, id, status string, output json.RawMessage) error {
@@ -118,8 +109,7 @@ func (r *Runtime) Result(ctx context.Context, node, id, status string, output js
 		return fmt.Errorf("VALIDATION: result")
 	}
 	r.mu.Lock()
-	committed := false
-	defer r.unlockAndPublish(&committed, "invocations", "audit")
+	defer r.mu.Unlock()
 	tx, e := r.db.BeginTx(ctx, nil)
 	if e != nil {
 		return e
@@ -144,9 +134,7 @@ func (r *Runtime) Result(ctx context.Context, node, id, status string, output js
 	if e = r.audit(ctx, tx, "node:"+node, "capability.result", node, status, id); e != nil {
 		return e
 	}
-	e = tx.Commit()
-	committed = e == nil
-	return e
+	return tx.Commit()
 }
 
 func (r *Runtime) Restore(ctx context.Context, node, sessionID string) error {
@@ -179,14 +167,6 @@ func (r *Runtime) Restore(ctx context.Context, node, sessionID string) error {
 	return nil
 }
 func (r *Runtime) Seen(ctx context.Context, node string) error {
-	r.mu.Lock()
-	committed := false
-	defer r.unlockAndPublish(&committed, "nodes")
-	result, e := r.db.ExecContext(ctx, "UPDATE nodes SET last_seen=? WHERE id=? AND revoked=0", r.Now().UTC().Format(time.RFC3339Nano), node)
-	if e != nil {
-		return e
-	}
-	n, e := result.RowsAffected()
-	committed = e == nil && n > 0
+	_, e := r.db.ExecContext(ctx, "UPDATE nodes SET last_seen=? WHERE id=? AND revoked=0", r.Now().UTC().Format(time.RFC3339Nano), node)
 	return e
 }
