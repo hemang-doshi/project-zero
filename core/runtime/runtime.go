@@ -18,10 +18,11 @@ type Runtime struct {
 	Now func() time.Time
 }
 type Request struct {
-	ID     string          `json:"id"`
-	Op     string          `json:"op"`
-	Body   json.RawMessage `json:"body"`
-	DryRun bool            `json:"dry_run,omitempty"`
+	ID       string          `json:"id"`
+	Op       string          `json:"op"`
+	Body     json.RawMessage `json:"body"`
+	DryRun   bool            `json:"dry_run,omitempty"`
+	approved bool
 }
 type Response struct {
 	Version string `json:"version"`
@@ -100,6 +101,23 @@ func (r *Runtime) Enroll(ctx context.Context, id, fp string, caps []string) erro
 		return e
 	}
 	defer tx.Rollback()
+	var revoked int
+	if err := tx.QueryRowContext(ctx, "SELECT revoked FROM nodes WHERE id=?", id).Scan(&revoked); err == nil {
+		if revoked == 0 {
+			return fmt.Errorf("CONFLICT: node already enrolled")
+		}
+		if _, e = tx.ExecContext(ctx, "DELETE FROM nodes WHERE id=?", id); e != nil {
+			return e
+		}
+		if _, e = tx.ExecContext(ctx, "DELETE FROM grants WHERE principal=? OR target=?", "node:"+id, id); e != nil {
+			return e
+		}
+		if _, e = tx.ExecContext(ctx, "DELETE FROM desired WHERE node=?", id); e != nil {
+			return e
+		}
+	} else if err != sql.ErrNoRows {
+		return err
+	}
 	_, e = tx.ExecContext(ctx, "INSERT INTO nodes(id,fingerprint,capabilities) VALUES(?,?,?)", id, fp, b)
 	if e != nil {
 		return e
@@ -167,6 +185,18 @@ func (r *Runtime) Execute(ctx context.Context, principal string, q Request) (Res
 		return v, nil
 	}
 	if e = r.apply(ctx, tx, principal, q, &v); e != nil {
+		tx.Rollback()
+		at, auditErr := r.db.BeginTx(ctx, nil)
+		if auditErr != nil {
+			return v, auditErr
+		}
+		if auditErr = r.audit(ctx, at, principal, q.Op, "runtime", "REJECTED", q.ID); auditErr != nil {
+			at.Rollback()
+			return v, auditErr
+		}
+		if auditErr = at.Commit(); auditErr != nil {
+			return v, auditErr
+		}
 		return v, e
 	}
 	if e = r.audit(ctx, tx, principal, q.Op, "runtime", v.Status, q.ID); e != nil {
@@ -221,6 +251,24 @@ func (r *Runtime) List(ctx context.Context, kind string) ([]map[string]any, erro
 			} else {
 				m[k] = v[i]
 			}
+		}
+		if kind == "nodes" {
+			status := "PAIRED"
+			if m["revoked"] == int64(1) {
+				status = "REVOKED"
+			} else if stamp, ok := m["last_seen"].(string); ok {
+				at, err := time.Parse(time.RFC3339Nano, stamp)
+				if err == nil {
+					age := r.Now().Sub(at)
+					status = "ONLINE"
+					if age >= 90*time.Second {
+						status = "OFFLINE"
+					} else if age >= 60*time.Second {
+						status = "SUSPECT"
+					}
+				}
+			}
+			m["status"] = status
 		}
 		out = append(out, m)
 	}

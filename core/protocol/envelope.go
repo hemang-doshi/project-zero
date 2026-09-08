@@ -11,21 +11,6 @@ import (
 
 const MaxFrame = 8192
 
-type Envelope struct {
-	Zero           string          `json:"zero"`
-	Type           string          `json:"type"`
-	ID             string          `json:"id"`
-	Time           time.Time       `json:"time"`
-	Source         string          `json:"source"`
-	Target         string          `json:"target,omitempty"`
-	CorrelationID  string          `json:"correlation_id,omitempty"`
-	CausationID    string          `json:"causation_id,omitempty"`
-	TraceID        string          `json:"trace_id,omitempty"`
-	TTL            int64           `json:"ttl_ms,omitempty"`
-	Classification string          `json:"classification,omitempty"`
-	Body           json.RawMessage `json:"body"`
-}
-
 func ID() string {
 	var b [12]byte
 	if _, err := rand.Read(b[:]); err != nil {
@@ -45,8 +30,8 @@ func Decode(b []byte, source string, now time.Time) (Envelope, error) {
 	if err := json.Unmarshal(b, &e); err != nil {
 		return e, fmt.Errorf("VALIDATION: invalid JSON")
 	}
-	allowed := map[string]bool{"session.hello": true, "session.welcome": true, "node.register": true, "node.heartbeat": true, "capability.advertise": true, "capability.invoke": true, "capability.accepted": true, "capability.result": true, "event.publish": true, "state.result": true, "sync.request": true, "ack": true, "session.error": true}
-	if e.Zero != "0.1" || !allowed[e.Type] || len(e.ID) == 0 || len(e.ID) > 128 || e.Time.IsZero() || e.Source != source {
+
+	if e.Zero != "0.1" || !messageTypes[e.Type] || len(e.ID) == 0 || len(e.ID) > 128 || e.Time.IsZero() || e.Source != source {
 		return e, fmt.Errorf("VALIDATION: envelope or source mismatch")
 	}
 	body := bytes.TrimSpace(e.Body)

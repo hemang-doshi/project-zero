@@ -17,8 +17,16 @@ import (
 func main() {
 	if e := run(); e != nil {
 		fmt.Fprintln(os.Stderr, e)
-		os.Exit(1)
+		os.Exit(exitCode(e))
 	}
+}
+func exitCode(e error) int {
+	for prefix, code := range map[string]int{"VALIDATION:": 2, "AUTHORIZATION:": 3, "CONFLICT:": 4, "DEADLINE:": 5} {
+		if strings.HasPrefix(e.Error(), prefix) {
+			return code
+		}
+	}
+	return 1
 }
 func print(v any) { b, _ := json.MarshalIndent(v, "", "  "); fmt.Println(string(b)) }
 func run() error {
@@ -65,8 +73,10 @@ func run() error {
 		return nil
 	}
 	switch args[0] {
-	case "status", "doctor":
+	case "status":
 		return get("status")
+	case "doctor":
+		return get("doctor")
 	}
 	if len(args) < 2 {
 		return fmt.Errorf("subcommand required")
@@ -87,9 +97,6 @@ func run() error {
 		return nil
 	}
 	if group == "nodes" && sub == "pair" {
-		if *dry {
-			return fmt.Errorf("pairing requires explicit fingerprint verification; use CSR inspection before opening a window")
-		}
 		if len(rest) != 3 {
 			return fmt.Errorf("usage: zero nodes pair NODE CSR_FILE VERIFIED_SHA256_FINGERPRINT")
 		}
@@ -103,6 +110,10 @@ func run() error {
 		}
 		if !strings.EqualFold(fp, rest[2]) {
 			return fmt.Errorf("fingerprint mismatch")
+		}
+		if *dry {
+			print(map[string]any{"version": "0.1", "status": "DRY_RUN", "node": rest[0], "fingerprint": fp})
+			return nil
 		}
 		var window map[string]string
 		if e = c.Call(ctx, "POST", "pairing/window", map[string]any{}, &window); e != nil {
@@ -134,7 +145,7 @@ func run() error {
 			return fmt.Errorf("invocation ID required")
 		}
 		body = map[string]string{"id": rest[0]}
-	case "grants.set":
+	case "grants.set", "state.set":
 		if len(rest) != 1 {
 			return fmt.Errorf("grant JSON required")
 		}

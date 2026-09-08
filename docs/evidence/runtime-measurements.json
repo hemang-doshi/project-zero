@@ -1,0 +1,9 @@
+{
+  "status_samples": 200,
+  "status_p95_ms": 0.14283301425166428,
+  "status_median_ms": 0.09333351044915617,
+  "rss_mib": 22.890625,
+  "measured_at": 1788880379.953022,
+  "process_crash_recovery_seconds": 0.21579037499031983,
+  "session_revision_preserved": 3
+}

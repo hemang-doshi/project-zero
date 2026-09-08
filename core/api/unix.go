@@ -63,6 +63,13 @@ func ServeUnix(ctx context.Context, r *runtime.Runtime, path string, ca *identit
 	mux.HandleFunc("GET /v0.1/status", func(w http.ResponseWriter, q *http.Request) {
 		reply(w, map[string]any{"version": "0.1", "status": "RUNNING", "pid": os.Getpid()})
 	})
+	mux.HandleFunc("GET /v0.1/doctor", func(w http.ResponseWriter, q *http.Request) {
+		if e := r.VerifyAudit(q.Context()); e != nil {
+			fail(w, e)
+			return
+		}
+		reply(w, map[string]any{"version": "0.1", "audit_chain": "VALID", "status": "RUNNING"})
+	})
 	mux.HandleFunc("GET /v0.1/session", func(w http.ResponseWriter, q *http.Request) {
 		v, e := r.Session(q.Context())
 		if e != nil {

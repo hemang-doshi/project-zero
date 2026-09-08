@@ -5,6 +5,7 @@ bin/
 build/
 managed_components/
 sdkconfig.old
+__pycache__/
 *.pem
 *.key
 !proto/fixtures/*.pem
