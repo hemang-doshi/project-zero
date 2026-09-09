@@ -46,9 +46,25 @@ struct AirlockApprovalItem: Identifiable, Equatable, Sendable {
     let inputOmitted: Bool
     let displayTruncated: Bool
     let freshness: AirlockEvidenceFreshness
+    let isExpired: Bool
     let allowsApprove: Bool
     let allowsDeny: Bool
     let responseUnavailableReason: String?
+
+    var accessibilitySummary: String {
+        var parts = [
+            "\(origin.rawValue) approval \(requestID)",
+            "action \(action)",
+            "target \(target)"
+        ]
+        if isExpired {
+            parts.append("deadline expired")
+        }
+        if freshness == .retained {
+            parts.append(origin == .runtime ? "retained cached evidence" : "retained in-memory evidence")
+        }
+        return parts.joined(separator: ", ")
+    }
 }
 
 struct AirlockAuditEntry: Identifiable, Equatable, Sendable {
@@ -224,6 +240,7 @@ struct AirlockProjection {
                 inputOmitted: omitted,
                 displayTruncated: false,
                 freshness: freshness,
+                isExpired: expired,
                 allowsApprove: identityIsComplete && !expired,
                 allowsDeny: identityIsComplete,
                 responseUnavailableReason: identityIsComplete
@@ -309,6 +326,7 @@ struct AirlockProjection {
                 inputOmitted: false,
                 displayTruncated: truncated,
                 freshness: connection == .connected ? .live : .retained,
+                isExpired: false,
                 allowsApprove: canAnswer && advertised.approve,
                 allowsDeny: canAnswer && advertised.deny,
                 responseUnavailableReason: unavailableReason
@@ -345,11 +363,14 @@ struct AirlockProjection {
         expired: Bool,
         omitted: Bool
     ) -> String {
+        if expired, connection != .live {
+            return "The approval deadline has passed. This is retained snapshot evidence while \(runtimeConnectionDescription(connection)). Runtime actions are disabled until a fresh live snapshot arrives; the retained WAITING_APPROVAL row is not treated as a terminal denial."
+        }
         if connection != .live {
             return "This is retained snapshot evidence while \(runtimeConnectionDescription(connection)). Runtime actions are disabled until a fresh live snapshot arrives."
         }
         if expired {
-            return "The approval deadline has passed. Approval is disabled; the daemon's exact deny operation remains available for this retained pending row."
+            return "The approval deadline has passed. Approval is disabled; the daemon's exact deny operation remains available for this retained WAITING_APPROVAL row, which is not treated as a terminal denial."
         }
         if omitted {
             return "The live daemon retained the full invocation. This bounded display projection omits one or more input fields; actions route only the exact request ID."
@@ -836,6 +857,9 @@ public struct AirlockView: View {
                 VStack(alignment: .trailing, spacing: 5) {
                     ZeroStatusBadge(item.origin.rawValue, tone: item.origin == .runtime ? .authority : .attention)
                     ZeroStatusBadge(freshnessLabel(item), tone: freshnessTone(item))
+                    if item.isExpired, item.freshness != .expired {
+                        ZeroStatusBadge("EXPIRED", tone: .error)
+                    }
                 }
             }
 
@@ -879,7 +903,7 @@ public struct AirlockView: View {
                               lineWidth: model.selection.inspectionID == item.id ? 2 : 1)
         }
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("\(item.origin.rawValue) approval \(item.requestID), action \(item.action), target \(item.target)")
+        .accessibilityLabel(item.accessibilitySummary)
     }
 
     @ViewBuilder
