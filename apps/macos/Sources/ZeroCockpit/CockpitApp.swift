@@ -1,17 +1,17 @@
 import AppKit
 import SwiftUI
 
+private let cockpitWindowID = "project-zero-cockpit"
+
 public struct CockpitAppRoot: Scene {
     public init() {}
 
     public var body: some Scene {
-        WindowGroup("Project Zero") {
+        WindowGroup("Project Zero", id: cockpitWindowID) {
             CockpitWindow()
         }
         MenuBarExtra("Project Zero", systemImage: "circle.dotted") {
-            Button("Open Project Zero") {
-                NSApplication.shared.activate(ignoringOtherApps: true)
-            }
+            OpenCockpitWindowButton()
             Divider()
             Button("Quit Zero") {
                 NSApplication.shared.terminate(nil)
@@ -21,12 +21,30 @@ public struct CockpitAppRoot: Scene {
             CockpitSettings()
         }
         .commands {
-            CommandGroup(replacing: .newItem) {
-                Button("Activate Project Zero") {
-                    NSApplication.shared.activate(ignoringOtherApps: true)
-                }
-                .keyboardShortcut("n", modifiers: .command)
+            CockpitCommands()
+        }
+    }
+}
+
+private struct OpenCockpitWindowButton: View {
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some View {
+        Button("Open Project Zero") {
+            openWindow(id: cockpitWindowID)
+        }
+    }
+}
+
+private struct CockpitCommands: Commands {
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some Commands {
+        CommandGroup(replacing: .newItem) {
+            Button("Open Project Zero") {
+                openWindow(id: cockpitWindowID)
             }
+            .keyboardShortcut("n", modifiers: .command)
         }
     }
 }
