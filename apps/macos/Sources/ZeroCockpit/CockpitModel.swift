@@ -115,10 +115,15 @@ public final class CockpitModel: ObservableObject {
     public let runtime: CockpitClient
     public let codex: CodexAppServer
 
-    private struct DeliveryBaseline: Sendable {
+    private struct DeliveryBaseline: Codable, Sendable {
         let commandID: String
         let snapshotRevision: UInt64
         let displayInvocationIDs: Set<String>
+    }
+
+    private struct PersistedPendingCommand: Codable, Sendable {
+        let request: RuntimeCommandRequest
+        let deliveryBaseline: DeliveryBaseline?
     }
 
     private let sendCommand: @Sendable (RuntimeCommandRequest) async throws -> RuntimeCommandResponse
@@ -128,6 +133,7 @@ public final class CockpitModel: ObservableObject {
     private var pendingCommand: RuntimeCommandRequest?
     private var pendingDeliveryBaseline: DeliveryBaseline?
     private var committedDeliveryBaseline: DeliveryBaseline?
+    private var approvalDeliveryBaseline: DeliveryBaseline?
     private var activeSubmissionID: UUID?
     private var clockTask: Task<Void, Never>?
     private var subscriptions: Set<AnyCancellable> = []
@@ -246,12 +252,24 @@ public final class CockpitModel: ObservableObject {
             $0["capability"].string == "display.render" || $0["capability"].string == "display.clear"
         }
         let latest: RuntimeRecord?
-        if let baseline = committedDeliveryBaseline {
+        if let baseline = approvalDeliveryBaseline {
+            if let invocation = matchingDisplayInvocation(for: baseline, in: displayInvocations) {
+                latest = invocation
+            } else if let proposal = snapshot.invocations.first(where: {
+                $0["id"].string == baseline.commandID && $0["capability"].string?.hasPrefix("session.") == true
+            }) {
+                switch proposal["status"].string?.uppercased() {
+                case "WAITING_APPROVAL", "QUEUED": return .queued
+                case "SUCCEEDED": return .committedLocally
+                case "FAILED", "REJECTED", "EXPIRED", "TIMED_OUT", "CANCELLED": return .stale
+                default: return .stale
+                }
+            } else {
+                return .queued
+            }
+        } else if let baseline = committedDeliveryBaseline {
             guard snapshot.revision > baseline.snapshotRevision else { return .committedLocally }
-            latest = displayInvocations.first(where: { invocation in
-                guard let id = invocation["id"].string else { return false }
-                return id.hasPrefix(baseline.commandID + ":") && !baseline.displayInvocationIDs.contains(id)
-            })
+            latest = matchingDisplayInvocation(for: baseline, in: displayInvocations)
             guard latest != nil else { return .committedLocally }
         } else {
             latest = displayInvocations.first
@@ -277,7 +295,8 @@ public final class CockpitModel: ObservableObject {
         let runtimeApprovals = snapshot?.approvals.count ?? 0
         let pendingFirings = snapshot?.firings.filter { $0["state"].string == "PENDING" }.count ?? 0
         let uncertain = pendingCommand == nil ? 0 : 1
-        return runtimeApprovals + pendingFirings + codex.store.approvals.count + uncertain
+        let proposed = approvalProposalNeedsAttention && !approvalProposalIsInSnapshot ? 1 : 0
+        return runtimeApprovals + pendingFirings + codex.store.approvals.count + uncertain + proposed
     }
 
     /// A bounded snapshot with a truncated approval or firing collection can
@@ -508,13 +527,21 @@ public final class CockpitModel: ObservableObject {
         do {
             let response = try await sendCommand(request)
             guard activeSubmissionID == submissionID, pendingCommand?.id == id else { return false }
-            guard response.version == "0.1", response.id == id, !response.status.isEmpty else {
+            guard response.version == "0.1", response.id == id else {
                 throw ZeroError("Runtime returned a mismatched command response")
             }
-            activeSubmissionID = nil
-            if operation.hasPrefix("session.") {
-                committedDeliveryBaseline = pendingDeliveryBaseline ?? deliveryBaseline(commandID: id)
+            switch response.status.uppercased() {
+            case "SUCCEEDED":
+                if operation.hasPrefix("session.") {
+                    approvalDeliveryBaseline = nil
+                    committedDeliveryBaseline = pendingDeliveryBaseline ?? deliveryBaseline(commandID: id)
+                }
+            case "WAITING_APPROVAL" where operation.hasPrefix("session."):
+                approvalDeliveryBaseline = pendingDeliveryBaseline ?? deliveryBaseline(commandID: id)
+            default:
+                throw ZeroError("Runtime returned an unsupported command status: \(response.status)")
             }
+            activeSubmissionID = nil
             pendingCommand = nil
             pendingDeliveryBaseline = nil
             clearPersistedCommand()
@@ -552,20 +579,63 @@ public final class CockpitModel: ObservableObject {
     }
 
     private func restorePendingCommand() {
-        guard let data = userDefaults?.data(forKey: pendingDefaultsKey),
-              let value = try? JSONDecoder().decode(RuntimeCommandRequest.self, from: data),
-              !value.id.isEmpty,
-              !value.op.isEmpty else {
+        guard let data = userDefaults?.data(forKey: pendingDefaultsKey) else {
             return
         }
-        pendingCommand = value
-        commandState = .uncertain(id: value.id, operation: value.op, message: "A prior action needs an explicit retry.")
+        let decoder = JSONDecoder()
+        let persisted: PersistedPendingCommand
+        if let value = try? decoder.decode(PersistedPendingCommand.self, from: data) {
+            persisted = value
+        } else if let legacy = try? decoder.decode(RuntimeCommandRequest.self, from: data) {
+            persisted = PersistedPendingCommand(request: legacy, deliveryBaseline: nil)
+        } else {
+            return
+        }
+        guard !persisted.request.id.isEmpty, !persisted.request.op.isEmpty else { return }
+        pendingCommand = persisted.request
+        pendingDeliveryBaseline = persisted.deliveryBaseline
+        commandState = .uncertain(
+            id: persisted.request.id,
+            operation: persisted.request.op,
+            message: "A prior action needs an explicit retry."
+        )
     }
 
     private func persistPendingCommand() {
         guard let pendingCommand,
-              let data = try? JSONEncoder().encode(pendingCommand) else { return }
+              let data = try? JSONEncoder().encode(PersistedPendingCommand(
+                  request: pendingCommand,
+                  deliveryBaseline: pendingDeliveryBaseline
+              )) else { return }
         userDefaults?.set(data, forKey: pendingDefaultsKey)
+    }
+
+    private var approvalProposalIsInSnapshot: Bool {
+        guard let commandID = approvalDeliveryBaseline?.commandID else { return false }
+        return snapshot?.approvals.contains(where: { $0["id"].string == commandID }) == true
+    }
+
+    private var approvalProposalNeedsAttention: Bool {
+        guard let commandID = approvalDeliveryBaseline?.commandID else { return false }
+        guard let invocation = snapshot?.invocations.first(where: {
+            $0["id"].string == commandID && $0["capability"].string?.hasPrefix("session.") == true
+        }) else {
+            return true
+        }
+        switch invocation["status"].string?.uppercased() {
+        case "SUCCEEDED", "FAILED", "REJECTED", "EXPIRED", "TIMED_OUT", "CANCELLED": return false
+        default: return true
+        }
+    }
+
+    private func matchingDisplayInvocation(
+        for baseline: DeliveryBaseline,
+        in invocations: [RuntimeRecord]
+    ) -> RuntimeRecord? {
+        invocations.first(where: { invocation in
+            guard let id = invocation["id"].string else { return false }
+            return id.hasPrefix(baseline.commandID + ":") && !baseline.displayInvocationIDs.contains(id)
+        })
     }
 
     private func deliveryBaseline(commandID: String) -> DeliveryBaseline? {
