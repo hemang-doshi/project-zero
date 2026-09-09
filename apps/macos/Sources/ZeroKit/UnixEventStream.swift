@@ -224,9 +224,6 @@ public final class CockpitClient: ObservableObject {
     private var refreshPending = false
     private var streamReady = false
     private var generation = UUID()
-    private var snapshotEpoch = UUID()
-    private var refreshID: UUID?
-    private var ageTaskID: UUID?
 
     public init(socketPath: String, reconnectDelay: TimeInterval = 1, maximumSnapshotAge: TimeInterval = 5,
                 fetchSnapshot: (@Sendable () async throws -> CockpitSnapshot)? = nil,
@@ -252,12 +249,9 @@ public final class CockpitClient: ObservableObject {
                 do {
                     for try await change in stream {
                         guard let self, self.generation == token, !Task.isCancelled else { return }
-                        if change.name == "ready" {
-                            self.beginReadyEpoch(generation: token)
-                        } else {
-                            self.streamReady = true
-                            self.refresh()
-                        }
+                        self.streamReady = true
+                        if change.name == "ready" { self.state = .connecting }
+                        self.refresh()
                     }
                 } catch {
                     guard !Task.isCancelled, let self, self.generation == token else { return }
@@ -267,6 +261,14 @@ public final class CockpitClient: ObservableObject {
                 do { try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000)) } catch { return }
             }
         }
+        ageTask = Task { [weak self] in
+            while !Task.isCancelled {
+                guard let age = self?.maximumSnapshotAge else { return }
+                do { try await Task.sleep(nanoseconds: UInt64(age * 1_000_000_000)) } catch { return }
+                guard let self, self.generation == token else { return }
+                if self.streamReady && (self.receivedAt.map { Date().timeIntervalSince($0) >= age } ?? true) { self.refresh() }
+            }
+        }
     }
 
     public func stop() {
@@ -274,8 +276,6 @@ public final class CockpitClient: ObservableObject {
         streamTask?.cancel(); streamTask = nil
         refreshTask?.cancel(); refreshTask = nil
         ageTask?.cancel(); ageTask = nil
-        refreshID = nil; ageTaskID = nil
-        snapshotEpoch = UUID()
         refreshPending = false; streamReady = false; state = .offline
     }
 
@@ -285,72 +285,27 @@ public final class CockpitClient: ObservableObject {
         guard streamTask != nil else { return }
         if refreshTask != nil { refreshPending = true; return }
         let token = generation
-        let epoch = snapshotEpoch
-        let taskID = UUID()
-        refreshID = taskID
         refreshTask = Task { [weak self] in
             while !Task.isCancelled {
                 guard let fetch = self?.fetchSnapshot else { return }
                 do {
                     let value = try await fetch()
-                    guard let self, self.generation == token, self.snapshotEpoch == epoch,
-                          self.refreshID == taskID, !Task.isCancelled else { return }
-                    let receivedAt = Date()
-                    self.snapshot = value; self.receivedAt = receivedAt; self.lastError = nil
+                    guard let self, self.generation == token, !Task.isCancelled else { return }
+                    self.snapshot = value; self.receivedAt = Date(); self.lastError = nil
                     self.state = self.streamReady ? .live : .reconnecting
-                    self.scheduleAgeRefresh(generation: token, from: receivedAt)
                 } catch {
-                    guard let self, self.generation == token, self.snapshotEpoch == epoch,
-                          self.refreshID == taskID, !Task.isCancelled else { return }
+                    guard let self, self.generation == token, !Task.isCancelled else { return }
                     self.lastError = error.localizedDescription; self.state = .offline
-                    self.scheduleAgeRefresh(generation: token, from: Date())
                 }
-                guard let self, self.generation == token, self.snapshotEpoch == epoch,
-                      self.refreshID == taskID else { return }
+                guard let self, self.generation == token else { return }
                 if self.refreshPending { self.refreshPending = false }
-                else { self.refreshTask = nil; self.refreshID = nil; return }
+                else { self.refreshTask = nil; return }
             }
-        }
-    }
-
-    private func beginReadyEpoch(generation: UUID) {
-        guard self.generation == generation else { return }
-        invalidateSnapshotEpoch()
-        streamReady = true
-        state = .connecting
-        refresh()
-    }
-
-    private func invalidateSnapshotEpoch() {
-        snapshotEpoch = UUID()
-        refreshTask?.cancel(); refreshTask = nil
-        refreshID = nil
-        refreshPending = false
-        ageTask?.cancel(); ageTask = nil
-        ageTaskID = nil
-    }
-
-    private func scheduleAgeRefresh(generation: UUID, from receivedAt: Date) {
-        ageTask?.cancel()
-        let taskID = UUID()
-        ageTaskID = taskID
-        let deadline = receivedAt.addingTimeInterval(maximumSnapshotAge)
-        ageTask = Task { [weak self] in
-            let remaining = max(0, deadline.timeIntervalSinceNow)
-            if remaining > 0 {
-                do { try await Task.sleep(nanoseconds: UInt64(remaining * 1_000_000_000)) } catch { return }
-            }
-            guard let self, self.generation == generation, self.ageTaskID == taskID,
-                  !Task.isCancelled else { return }
-            self.ageTask = nil
-            self.ageTaskID = nil
-            if self.streamReady { self.refresh() }
         }
     }
 
     private func disconnected(generation: UUID) -> TimeInterval? {
         guard self.generation == generation else { return nil }
-        invalidateSnapshotEpoch()
         streamReady = false; state = .reconnecting
         return reconnectDelay
     }
