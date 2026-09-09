@@ -1,37 +1,31 @@
 import AppKit
 import SwiftUI
+import ZeroKit
 
-private let cockpitWindowID = "project-zero-cockpit"
+enum CockpitSceneID {
+    static let main = "project-zero-cockpit"
+}
 
+@MainActor
 public struct CockpitAppRoot: Scene {
+    @StateObject private var model = CockpitModel()
+
     public init() {}
 
     public var body: some Scene {
-        WindowGroup("Project Zero", id: cockpitWindowID) {
-            CockpitWindow()
+        WindowGroup("Project Zero", id: CockpitSceneID.main) {
+            CockpitWindow(model: model)
         }
+        .defaultSize(width: 1450, height: 900)
         MenuBarExtra("Project Zero", systemImage: "circle.dotted") {
-            OpenCockpitWindowButton()
-            Divider()
-            Button("Quit Zero") {
-                NSApplication.shared.terminate(nil)
-            }
+            MenuCompanion(model: model)
         }
+        .menuBarExtraStyle(.window)
         Settings {
             CockpitSettings()
         }
         .commands {
             CockpitCommands()
-        }
-    }
-}
-
-private struct OpenCockpitWindowButton: View {
-    @Environment(\.openWindow) private var openWindow
-
-    var body: some View {
-        Button("Open Project Zero") {
-            openWindow(id: cockpitWindowID)
         }
     }
 }
@@ -42,7 +36,7 @@ private struct CockpitCommands: Commands {
     var body: some Commands {
         CommandGroup(replacing: .newItem) {
             Button("Open Project Zero") {
-                openWindow(id: cockpitWindowID)
+                openWindow(id: CockpitSceneID.main)
             }
             .keyboardShortcut("n", modifiers: .command)
         }
@@ -50,16 +44,44 @@ private struct CockpitCommands: Commands {
 }
 
 private struct CockpitWindow: View {
+    @ObservedObject var model: CockpitModel
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Project Zero")
-                .font(.title.bold())
-            Text("Cockpit controls are loading.")
-                .foregroundStyle(.secondary)
+        CockpitShell(
+            selection: $model.selection,
+            status: model.runtimeStatusLabel,
+            version: "v\(ZeroRelease.version) · \(ZeroRelease.build)"
+        ) {
+            CockpitRoutePlaceholder(model: model)
         }
-        .padding(32)
-        .frame(minWidth: 720, minHeight: 480)
-        .background(ZeroTheme.environment)
+        .frame(minWidth: 900, minHeight: 640)
+        .onAppear { model.windowDidAppear() }
+        .onDisappear { model.windowDidDisappear() }
+    }
+}
+
+private struct CockpitRoutePlaceholder: View {
+    @ObservedObject var model: CockpitModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text(model.selection.route.title)
+                .font(.system(size: 28, weight: .black))
+            ZeroStatusBadge(
+                model.runtimeStatusLabel,
+                symbol: model.runtimeConnection == .live ? "checkmark.circle.fill" : "wifi.slash",
+                tone: model.runtimeStatusTone
+            )
+            Text("No durable \(model.selection.route.title.lowercased()) view is attached yet.")
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(ZeroTheme.secondaryInk)
+            Text("Project Zero shows only committed runtime and explicitly connected Codex state.")
+                .font(.system(size: 11, design: .monospaced))
+                .foregroundStyle(ZeroTheme.secondaryInk)
+        }
+        .padding(28)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background(ZeroTheme.workstation)
     }
 }
 
