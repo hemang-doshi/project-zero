@@ -19,6 +19,9 @@ public struct CodexItem: Identifiable, Equatable, Sendable {
     public var text = ""
     public var output = ""
     public var metadata: CodexJSON = .null
+    public var textTruncated = false
+    public var outputTruncated = false
+    public var metadataTruncated = false
 }
 
 public struct CodexPlanStep: Equatable, Sendable {
@@ -33,6 +36,7 @@ public struct CodexTurn: Identifiable, Equatable, Sendable {
     public var explanation: String?
     public var plan: [CodexPlanStep] = []
     public var error: CodexJSON = .null
+    public var contentTruncated = false
 }
 
 public struct CodexThread: Identifiable, Equatable, Sendable {
@@ -42,6 +46,8 @@ public struct CodexThread: Identifiable, Equatable, Sendable {
     public var turns: [String: CodexTurn] = [:]
     public var items: [CodexItem] = []
     public var tokenUsage: CodexJSON = .null
+    public var contentTruncated = false
+    fileprivate var turnOrder: [String] = []
     public func item(id: String) -> CodexItem? { items.first { $0.id == id } }
 }
 
@@ -51,23 +57,52 @@ public struct CodexApproval: Identifiable, Equatable, Sendable {
     public let params: CodexJSON
 }
 
+public struct CodexRetentionLimits: Equatable, Sendable {
+    public let threads: Int, turnsPerThread: Int, itemsPerThread: Int, textBytes: Int, metadataBytes: Int
+    public init(threads: Int = 8, turnsPerThread: Int = 32, itemsPerThread: Int = 128,
+                textBytes: Int = 32_768, metadataBytes: Int = 8_192) {
+        self.threads = max(1, threads)
+        self.turnsPerThread = max(1, turnsPerThread)
+        self.itemsPerThread = max(1, itemsPerThread)
+        self.textBytes = max(1, textBytes)
+        self.metadataBytes = max(32, metadataBytes)
+    }
+}
+
+public struct CodexHistoryTruncation: Equatable, Sendable {
+    public fileprivate(set) var threads = 0
+    public fileprivate(set) var turns = 0
+    public fileprivate(set) var items = 0
+    public fileprivate(set) var unknownEvents = 0
+    public fileprivate(set) var metadata = false
+}
+
 /// Unknown notifications remain inspectable, but never trigger an action.
 public struct CodexEventStore: Equatable, Sendable {
     public private(set) var threads: [String: CodexThread] = [:]
     public private(set) var approvals: [CodexApproval] = []
     public private(set) var unknownEvents: [CodexEvent] = []
     public private(set) var lastError: CodexJSON = .null
+    public private(set) var truncation = CodexHistoryTruncation()
     private let maximumUnknownEvents: Int
-    public init(maximumUnknownEvents: Int = 100) { self.maximumUnknownEvents = max(0, maximumUnknownEvents) }
+    private let limits: CodexRetentionLimits
+    private var threadOrder: [String] = []
+    public init(maximumUnknownEvents: Int = 100, limits: CodexRetentionLimits = CodexRetentionLimits()) {
+        self.maximumUnknownEvents = max(0, maximumUnknownEvents)
+        self.limits = limits
+    }
     public func thread(id: String) -> CodexThread? { threads[id] }
 
-    public mutating func resolve(_ id: CodexRequestID) { approvals.removeAll { $0.id == id } }
+    public mutating func resolve(_ id: CodexRequestID) {
+        approvals.removeAll { $0.id == id }
+        trimHistory()
+    }
 
     public mutating func reduce(_ event: CodexEvent) {
         let p = event.params
         if case .request(let id, let method, let params) = event {
             if method.hasSuffix("/requestApproval") || method == "item/tool/requestUserInput" {
-                resolve(id)
+                approvals.removeAll { $0.id == id }
                 approvals.append(CodexApproval(id: id, method: method, params: params))
             } else { retain(event) }
             return
@@ -76,7 +111,7 @@ public struct CodexEventStore: Equatable, Sendable {
             resolve(id)
             return
         }
-        if event.method == "error" { lastError = p; return }
+        if event.method == "error" { lastError = boundedJSON(p, truncated: &truncation.metadata); return }
         guard let threadID = p["threadId"].string ?? p["thread"]["id"].string else { retain(event); return }
         var thread = threads[threadID] ?? CodexThread(id: threadID)
         switch event.method {
@@ -97,7 +132,15 @@ public struct CodexEventStore: Equatable, Sendable {
                 turn.status = p["turn"]["status"].string ?? (event.method == "turn/started" ? "inProgress" : "unknown")
                 turn.error = p["turn"]["error"]
             }
+            turn.diff = boundedText(turn.diff, truncated: &turn.contentTruncated)
+            if let explanation = turn.explanation { turn.explanation = boundedText(explanation, truncated: &turn.contentTruncated) }
+            turn.error = boundedJSON(turn.error, truncated: &turn.contentTruncated)
+            // The complete plan shares the metadata budget rather than retaining many large steps.
+            let plan = boundedJSON(.array(turn.plan.map { .object(["step": .string($0.step), "status": .string($0.status)]) }), truncated: &turn.contentTruncated)
+            turn.plan = plan.array.map { CodexPlanStep(step: $0["step"].string ?? "", status: $0["status"].string ?? "unknown") }
             thread.turns[id] = turn
+            thread.turnOrder.removeAll { $0 == id }
+            thread.turnOrder.append(id)
         case "item/started", "item/completed", "item/agentMessage/delta", "item/reasoning/textDelta",
              "item/reasoning/summaryTextDelta", "item/plan/delta", "item/commandExecution/outputDelta", "item/fileChange/outputDelta":
             guard let id = p["itemId"].string ?? p["item"]["id"].string else { retain(event); return }
@@ -111,15 +154,82 @@ public struct CodexEventStore: Equatable, Sendable {
                 item.metadata = p["item"]
             } else if event.method.hasSuffix("/outputDelta") { item.output += p["delta"].string ?? "" }
             else { item.text += p["delta"].string ?? "" }
-            if let index { thread.items[index] = item } else { thread.items.append(item) }
+            item.text = boundedText(item.text, truncated: &item.textTruncated)
+            item.output = boundedText(item.output, truncated: &item.outputTruncated)
+            item.metadata = boundedJSON(item.metadata, truncated: &item.metadataTruncated)
+            if let index { thread.items.remove(at: index) }
+            thread.items.append(item)
         default: retain(event); return
         }
+        thread.title = boundedText(thread.title, truncated: &thread.contentTruncated)
+        thread.status = boundedJSON(thread.status, truncated: &thread.contentTruncated)
+        thread.tokenUsage = boundedJSON(thread.tokenUsage, truncated: &thread.contentTruncated)
         threads[threadID] = thread
+        threadOrder.removeAll { $0 == threadID }
+        threadOrder.append(threadID)
+        trimHistory()
+    }
+
+    /// Pending approvals are never discarded or clipped. Their context may exceed
+    /// history counts by the client's bounded pending-request limit (64 by default).
+    private mutating func trimHistory() {
+        let pinnedThreads = Set(approvals.compactMap { $0.params["threadId"].string })
+        while threadOrder.count > limits.threads,
+              let index = threadOrder.firstIndex(where: { !pinnedThreads.contains($0) }) {
+            // Always keep the newest history entry as well as pending approvals.
+            if index == threadOrder.count - 1 { break }
+            threads.removeValue(forKey: threadOrder.remove(at: index))
+            truncation.threads += 1
+        }
+        for id in threadOrder {
+            guard var thread = threads[id] else { continue }
+            let requests = approvals.filter { $0.params["threadId"].string == id }
+            let pinnedTurns = Set(requests.compactMap { $0.params["turnId"].string })
+            let pinnedItems = Set(requests.compactMap { $0.params["itemId"].string })
+            while thread.turnOrder.count > limits.turnsPerThread,
+                  let index = thread.turnOrder.firstIndex(where: { !pinnedTurns.contains($0) }) {
+                if index == thread.turnOrder.count - 1 { break }
+                thread.turns.removeValue(forKey: thread.turnOrder.remove(at: index))
+                truncation.turns += 1
+            }
+            while thread.items.count > limits.itemsPerThread,
+                  let index = thread.items.firstIndex(where: { !pinnedItems.contains($0.id) }) {
+                if index == thread.items.count - 1 { break }
+                thread.items.remove(at: index)
+                truncation.items += 1
+            }
+            threads[id] = thread
+        }
+    }
+
+    private func boundedText(_ value: String, truncated: inout Bool) -> String {
+        guard value.utf8.count > limits.textBytes else { return value }
+        truncated = true
+        var bytes = value.utf8.suffix(limits.textBytes)
+        // Do not retain half of a UTF-8 scalar at the beginning of the tail.
+        while let first = bytes.first, first & 0xC0 == 0x80 { bytes = bytes.dropFirst() }
+        return String(decoding: bytes, as: UTF8.self)
+    }
+
+    private func boundedJSON(_ value: CodexJSON, truncated: inout Bool) -> CodexJSON {
+        guard let size = try? JSONEncoder().encode(value).count, size <= limits.metadataBytes else {
+            truncated = true
+            return .object(["_truncated": .bool(true)])
+        }
+        return value
     }
 
     private mutating func retain(_ event: CodexEvent) {
-        guard maximumUnknownEvents > 0 else { return }
-        unknownEvents.append(event)
-        if unknownEvents.count > maximumUnknownEvents { unknownEvents.removeFirst(unknownEvents.count - maximumUnknownEvents) }
+        guard maximumUnknownEvents > 0 else { truncation.unknownEvents += 1; return }
+        let params = boundedJSON(event.params, truncated: &truncation.metadata)
+        switch event {
+        case .notification(let method, _): unknownEvents.append(.notification(method: method, params: params))
+        case .request(let id, let method, _): unknownEvents.append(.request(id: id, method: method, params: params))
+        }
+        if unknownEvents.count > maximumUnknownEvents {
+            let count = unknownEvents.count - maximumUnknownEvents
+            unknownEvents.removeFirst(count)
+            truncation.unknownEvents += count
+        }
     }
 }
