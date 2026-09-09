@@ -7,9 +7,11 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"projectzero.local/zero/core/identity"
 	"projectzero.local/zero/core/protocol"
+	"projectzero.local/zero/core/release"
 	"projectzero.local/zero/core/runtime"
 	"projectzero.local/zero/sdk/go/client"
 	"strings"
@@ -63,6 +65,28 @@ func run() error {
 	if len(args) == 0 {
 		return fmt.Errorf("usage: zero status | session start|pause|resume|show | nodes list|pair|revoke | capabilities list|describe|invoke | events query|replay | approvals list|approve|deny | grants set|list | privacy audit | doctor")
 	}
+	if args[0] == "install" || args[0] == "upgrade" || args[0] == "rollback" {
+		executable, err := os.Executable()
+		if err != nil {
+			return err
+		}
+		executable, err = filepath.EvalSymlinks(executable)
+		if err != nil {
+			return err
+		}
+		script := filepath.Join(filepath.Dir(executable), "../Resources/install-release.py")
+		if _, err = os.Stat(script); err != nil {
+			return fmt.Errorf("VALIDATION: use the CLI bundled in Zero.app for installation")
+		}
+		parameters := []string{script, args[0], "--source", filepath.Clean(filepath.Join(filepath.Dir(executable), "../.."))}
+		if *dry {
+			parameters = append(parameters, "--dry-run")
+		}
+		command := exec.Command("/usr/bin/python3", parameters...)
+		command.Stdout = os.Stdout
+		command.Stderr = os.Stderr
+		return command.Run()
+	}
 	c := client.New(*socket)
 	ctx := context.Background()
 	get := func(path string) error {
@@ -74,6 +98,9 @@ func run() error {
 		return nil
 	}
 	switch args[0] {
+	case "version":
+		print(release.Current())
+		return nil
 	case "status":
 		return get("status")
 	case "doctor":

@@ -1,12 +1,1 @@
-{
-  "version": "0.2.0",
-  "build": "0.2.0-7",
-  "protocols": [
-    "0.1"
-  ],
-  "render_schemas": [
-    "0.1",
-    "0.2"
-  ],
-  "database_version": 2
-}
+{"version":"0.2.0","build":"0.2.0-1","protocols":["0.1"],"render_schemas":["0.1","0.2"],"database_version":2}

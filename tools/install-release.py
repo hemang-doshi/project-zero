@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Owner-local release installation. Database snapshots use SQLite backup, never raw WAL copies."""
-import argparse,json,os,plistlib,shutil,sqlite3,subprocess,time,signal
+import argparse,json,os,plistlib,shutil,sqlite3,subprocess,time
 from contextlib import closing
 from pathlib import Path
 
@@ -13,14 +13,6 @@ def backup_database(source,target):
  os.chmod(target,0o600)
 
 def run(args,check=True):return subprocess.run([str(x) for x in args],check=check,capture_output=True,text=True)
-def bootstrap(domain,plist):
- # launchd can briefly retain a booted-out service; retry only the same definition.
- for attempt in range(20):
-  result=run(['launchctl','bootstrap',domain,plist],False)
-  if result.returncode==0:return
-  time.sleep(.25)
- raise RuntimeError('launchd could not load '+str(plist)+': '+result.stderr)
-
 def main():
  p=argparse.ArgumentParser();p.add_argument('action',choices=['install','upgrade','rollback']);p.add_argument('--dry-run',action='store_true');p.add_argument('--source',type=Path);p.add_argument('--source-data',type=Path);a=p.parse_args()
  home=Path.home();app=home/'Applications/Zero.app';data=home/'Library/Application Support/ProjectZero';agents=home/'Library/LaunchAgents';label='dev.projectzero.zerod';plist=agents/(label+'.plist');domain=f'gui/{os.getuid()}';recovery=data/'recovery';previous=recovery/'previous';receipt=data/'installation.json'
@@ -32,7 +24,6 @@ def main():
   for name in ['ZeroMenu','zerod','zero']:
    if not (source/'Contents/MacOS'/name).is_file():raise RuntimeError('Incomplete release bundle: '+name)
   run(['codesign','--verify','--deep','--strict',source])
-  run([source/'Contents/MacOS/zerod','--check-identity'])
   if a.source_data and (data/'zero.db').exists():raise RuntimeError('Production data exists; refusing import')
  else:
   if not (previous/'Zero.app').exists() or not (previous/'zero.db').exists():raise RuntimeError('No complete rollback snapshot')
@@ -60,10 +51,6 @@ def main():
  run(['codesign','--verify','--deep','--strict',staging])
  db_changed=False;app_changed=False
  try:
-  # Stop the installed menu process so an upgrade opens the replacement executable.
-  for line in run(['ps','-U',str(os.getuid()),'-o','pid=,comm=']).stdout.splitlines():
-   parts=line.strip().split(None,1)
-   if len(parts)==2 and parts[1]==str(app/'Contents/MacOS/ZeroMenu'):os.kill(int(parts[0]),signal.SIGTERM)
   for service in [label,'dev.projectzero.v02-development']:
    if run(['launchctl','print',domain+'/'+service],False).returncode==0:run(['launchctl','bootout',domain+'/'+service])
   if (current_data/'zero.db').exists():backup_database(current_data/'zero.db',stamp/'zero.db')
@@ -76,9 +63,9 @@ def main():
   app_changed=True
   if app.exists():shutil.rmtree(app)
   staging.rename(app)
-  config={'Label':label,'ProgramArguments':[str(app/'Contents/MacOS/zerod'),'--data',str(data),'--listen',':7443','--mac-observer',str(app/'Contents/Helpers/Zero Observer.app/Contents/MacOS/ZeroMacObserve'),'--mac-audio',str(app/'Contents/Helpers/Zero Audio.app/Contents/MacOS/ZeroAudio')],'WorkingDirectory':str(data),'RunAtLoad':True,'KeepAlive':True,'ThrottleInterval':5,'Umask':0o077,'StandardOutPath':str(data/'daemon.log'),'StandardErrorPath':str(data/'daemon.log')}
+  config={'Label':label,'ProgramArguments':[str(app/'Contents/MacOS/zerod'),'--data',str(data),'--listen',':7443','--mac-observer',str(app/'Contents/Helpers/Zero Observer.app/Contents/MacOS/ZeroMacObserve')],'RunAtLoad':True,'KeepAlive':True,'ThrottleInterval':5,'Umask':0o077,'StandardOutPath':str(data/'daemon.log'),'StandardErrorPath':str(data/'daemon.log')}
   with plist.open('wb') as f:plistlib.dump(config,f)
-  os.chmod(plist,0o600);db_changed=True;bootstrap(domain,plist)
+  os.chmod(plist,0o600);db_changed=True;run(['launchctl','bootstrap',domain,plist])
   healthy=False
   for _ in range(20):
    result=run([app/'Contents/MacOS/zero','doctor'],False)
@@ -94,19 +81,10 @@ def main():
    for suffix in ['','-wal','-shm']:(data/('zero.db'+suffix)).unlink(missing_ok=True)
    if had_db and (stamp/'zero.db').exists():backup_database(stamp/'zero.db',data/'zero.db')
   if (stamp/'daemon.plist').exists():
-   shutil.copy2(stamp/'daemon.plist',plist);bootstrap(domain,plist)
+   shutil.copy2(stamp/'daemon.plist',plist);run(['launchctl','bootstrap',domain,plist])
   raise
  if a.action!='rollback':
   previous.unlink(missing_ok=True);previous.symlink_to(stamp.name)
- cli_dir=Path('/opt/homebrew/bin')
- if not cli_dir.is_dir() or not os.access(cli_dir,os.W_OK):cli_dir=home/'.local/bin'
- cli_dir.mkdir(parents=True,exist_ok=True);cli=cli_dir/'zero';cli_target=app/'Contents/MacOS/zero'
- if not cli.exists() and not cli.is_symlink():cli.symlink_to(cli_target)
- elif not cli.is_symlink() or cli.resolve()!=cli_target.resolve():print('CLI path occupied; retained existing command: '+str(cli))
- menu_plist=agents/'dev.projectzero.menu.plist'
- with menu_plist.open('wb') as f:plistlib.dump({'Label':'dev.projectzero.menu','ProgramArguments':['/usr/bin/open',str(app)],'RunAtLoad':True},f)
- if run(['launchctl','print',domain+'/dev.projectzero.menu'],False).returncode==0:run(['launchctl','bootout',domain+'/dev.projectzero.menu'],False)
- bootstrap(domain,menu_plist)
  receipt.write_text(json.dumps({'app':str(app),'data':str(data),'backup':str(stamp)},indent=2));os.chmod(receipt,0o600)
  print('Installed and health checked. Snapshot: '+str(stamp))
 if __name__=='__main__':main()

@@ -1,3 +1,4 @@
+#include "zero_release.h"
 #include "bootloader_random.h"
 #include "desk_protocol.h"
 #include "device_identity.h"
@@ -138,7 +139,7 @@ static void handle(const char *message) {
     strcpy(session_id, s);
     welcomed = true;
     send_message("node.register", "{\"render_schema\":\"0.2\",\"firmware\":"
-                                  "\"zero-desk-0.2.0\",\"capabilities\":["
+                                  "\"" ZERO_VERSION "\",\"build\":\"" ZERO_BUILD "\",\"capabilities\":["
                                   "\"display.render\",\"display.clear\"]}");
     printf("ZERO ONLINE heap=%lu\n", (unsigned long)esp_get_free_heap_size());
   } else if (!strcmp(type, "capability.invoke") && welcomed) {
