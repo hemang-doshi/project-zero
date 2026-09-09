@@ -136,6 +136,44 @@ final class AirlockInspectorViewTests: XCTestCase {
         }
     }
 
+    func testExpiredRuntimeApprovalKeepsExpiryVisibleAcrossRetainedTransportStates() throws {
+        let snapshot = try CockpitSnapshot.decode(Data(snapshotJSON.utf8))
+        let states: [(RuntimeConnectionState, String)] = [
+            (.connecting, "zerod is connecting"),
+            (.reconnecting, "zerod is reconnecting"),
+            (.offline, "zerod is offline")
+        ]
+        let expiredInstants = [
+            "2026-09-10T03:00:00Z",
+            "2026-09-10T03:00:01Z"
+        ]
+
+        for (state, transportDescription) in states {
+            for now in expiredInstants {
+                let projection = AirlockProjection(
+                    snapshot: snapshot,
+                    runtimeConnection: state,
+                    codexStore: CodexEventStore(),
+                    codexConnection: .disconnected,
+                    now: try XCTUnwrap(ISO8601DateFormatter().date(from: now))
+                )
+                let approval = try XCTUnwrap(projection.approvals.first)
+
+                XCTAssertEqual(approval.freshness, .retained, "\(state) at \(now)")
+                XCTAssertTrue(approval.isExpired, "\(state) at \(now)")
+                XCTAssertFalse(projection.canApprove(approval), "\(state) at \(now)")
+                XCTAssertFalse(projection.canDeny(approval), "\(state) at \(now)")
+                XCTAssertTrue(approval.detail.contains("approval deadline has passed"), "\(state) at \(now)")
+                XCTAssertTrue(approval.detail.contains("retained snapshot evidence"), "\(state) at \(now)")
+                XCTAssertTrue(approval.detail.contains(transportDescription), "\(state) at \(now)")
+                XCTAssertTrue(approval.detail.contains("actions are disabled"), "\(state) at \(now)")
+                XCTAssertTrue(approval.accessibilitySummary.contains("deadline expired"), "\(state) at \(now)")
+                XCTAssertTrue(approval.accessibilitySummary.contains("retained cached evidence"), "\(state) at \(now)")
+                XCTAssertEqual(approval.decision, "WAITING_APPROVAL", "\(state) at \(now)")
+            }
+        }
+    }
+
     func testCodexApprovalShowsFullPermissionContextAndGatesAdvertisedDecisions() throws {
         let snapshot = try CockpitSnapshot.decode(Data(snapshotJSON.utf8))
         var codex = CodexEventStore()
