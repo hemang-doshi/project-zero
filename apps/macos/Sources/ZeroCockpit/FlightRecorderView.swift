@@ -1,9 +1,16 @@
 import SwiftUI
 import ZeroKit
 
-enum FlightOrigin: String, Equatable {
-    case runtime = "ZEROD DURABLE"
-    case codex = "CODEX LIVE MEMORY"
+enum FlightOrigin: Equatable {
+    case runtime
+    case codex
+
+    var defaultLabel: String {
+        switch self {
+        case .runtime: "ZEROD DURABLE"
+        case .codex: "CODEX MEMORY"
+        }
+    }
 }
 
 enum FlightCategory: String, CaseIterable, Hashable {
@@ -27,6 +34,7 @@ enum FlightClassification: Equatable {
 struct FlightRecord: Identifiable {
     let id: String
     let origin: FlightOrigin
+    let originLabel: String
     let category: FlightCategory
     let timestamp: String
     let channel: String
@@ -37,8 +45,26 @@ struct FlightRecord: Identifiable {
     let fields: [(String, String)]
     let classification: FlightClassification
 
+    init(id: String, origin: FlightOrigin, originLabel: String? = nil,
+         category: FlightCategory, timestamp: String, channel: String,
+         actor: String, evidence: String, outcome: String, reference: String,
+         fields: [(String, String)], classification: FlightClassification) {
+        self.id = id
+        self.origin = origin
+        self.originLabel = originLabel ?? origin.defaultLabel
+        self.category = category
+        self.timestamp = timestamp
+        self.channel = channel
+        self.actor = actor
+        self.evidence = evidence
+        self.outcome = outcome
+        self.reference = reference
+        self.fields = fields
+        self.classification = classification
+    }
+
     var searchableText: String {
-        ([id, origin.rawValue, category.rawValue, timestamp, channel, actor, evidence, outcome, reference]
+        ([id, originLabel, category.rawValue, timestamp, channel, actor, evidence, outcome, reference]
             + fields.flatMap { [$0.0, $0.1] }).joined(separator: " ").lowercased()
     }
 }
@@ -56,7 +82,9 @@ struct FlightProjection {
         self.runtimeConnection = runtimeConnection
         self.codexConnection = codexConnection
         self.codexStore = codexStore
-        records = Self.orderByProjectedTime(Self.runtimeRecords(snapshot) + Self.codexRecords(codexStore))
+        records = Self.orderByProjectedTime(
+            Self.runtimeRecords(snapshot) + Self.codexRecords(codexStore, connection: codexConnection)
+        )
     }
 
     @MainActor
@@ -76,6 +104,23 @@ struct FlightProjection {
         let incomplete = ["audit", "invocations"].contains { snapshot?.truncated[$0] == true }
         return "\(count)\(incomplete ? "+" : "")"
     }
+    var codexEvidenceLabel: String {
+        codexOriginLabel(for: codexConnection)
+    }
+    var codexConnectionNotice: String {
+        switch codexConnection {
+        case .connected:
+            "Codex rows are live bounded memory; they are not durable runtime evidence."
+        case .connecting:
+            "Codex is connecting; any visible rows are retained bounded memory, not live evidence yet."
+        case .disconnected:
+            "Codex is disconnected; visible Codex rows are retained bounded memory, not live evidence."
+        case .exited(let status):
+            "Codex exited with status \(status); visible Codex rows are retained bounded memory, not live evidence."
+        case .failed:
+            "Codex failed; visible Codex rows are retained bounded memory, not live evidence."
+        }
+    }
     var historyNotice: String {
         var notices: [String] = []
         if let snapshot {
@@ -90,10 +135,9 @@ struct FlightProjection {
         }
         let codexDrops = codexStore.truncation.threads + codexStore.truncation.turns + codexStore.truncation.items + codexStore.truncation.unknownEvents
         if codexDrops > 0 || codexStore.truncation.metadata {
-            notices.append("Codex memory history is bounded and has dropped or clipped content.")
-        } else {
-            notices.append("Codex rows are bounded in memory; they are not durable runtime evidence.")
+            notices.append("Codex memory history has dropped or clipped content.")
         }
+        notices.append(codexConnectionNotice)
         return notices.joined(separator: " ")
     }
 
@@ -159,12 +203,13 @@ struct FlightProjection {
         return events + audit + invocations
     }
 
-    private static func codexRecords(_ store: CodexEventStore) -> [FlightRecord] {
+    private static func codexRecords(_ store: CodexEventStore, connection: CodexConnectionState) -> [FlightRecord] {
         var rows: [FlightRecord] = []
+        let originLabel = codexOriginLabel(for: connection)
         for thread in store.threads.values.sorted(by: { $0.id < $1.id }) {
             let status = codexScalar(thread.status) ?? "STATE AVAILABLE"
             rows.append(FlightRecord(
-                id: "codex-thread-\(thread.id)", origin: .codex, category: .codex,
+                id: "codex-thread-\(thread.id)", origin: .codex, originLabel: originLabel, category: .codex,
                 timestamp: "Not projected", channel: "thread/state", actor: "Codex app-server",
                 evidence: thread.id, outcome: status,
                 reference: thread.title.isEmpty ? "Untitled thread" : thread.title,
@@ -173,7 +218,7 @@ struct FlightProjection {
             ))
             for turn in thread.turns.values.sorted(by: { $0.id < $1.id }) {
                 rows.append(FlightRecord(
-                    id: "codex-turn-\(thread.id)-\(turn.id)", origin: .codex, category: .codex,
+                    id: "codex-turn-\(thread.id)-\(turn.id)", origin: .codex, originLabel: originLabel, category: .codex,
                     timestamp: "Not projected", channel: "turn/state", actor: "Codex app-server",
                     evidence: turn.id, outcome: turn.status, reference: thread.id,
                     fields: [("thread id", thread.id), ("turn id", turn.id), ("status", turn.status),
@@ -183,7 +228,7 @@ struct FlightProjection {
             }
             for item in thread.items {
                 rows.append(FlightRecord(
-                    id: "codex-item-\(thread.id)-\(item.id)", origin: .codex, category: .codex,
+                    id: "codex-item-\(thread.id)-\(item.id)", origin: .codex, originLabel: originLabel, category: .codex,
                     timestamp: "Not projected", channel: "item/\(item.kind)", actor: "Codex app-server",
                     evidence: item.id, outcome: item.status, reference: item.turnID,
                     fields: [("thread id", thread.id), ("turn id", item.turnID), ("item id", item.id),
@@ -201,11 +246,13 @@ struct FlightProjection {
                 if let value = codexScalar(params[key]) { fields.append((key, value)) }
             }
             if case .request(let id, _, _) = event { fields.append(("request id", codexRequestIDLabel(id))) }
+            let sequence = store.truncation.unknownEvents + index
             rows.append(FlightRecord(
-                id: "codex-unknown-\(index)-\(event.method)", origin: .codex, category: .codex,
+                id: codexUnknownRecordID(event, sequence: sequence),
+                origin: .codex, originLabel: originLabel, category: .codex,
                 timestamp: "Not projected", channel: event.method, actor: "Codex app-server",
                 evidence: fields.first(where: { $0.0 == "itemId" || $0.0 == "turnId" || $0.0 == "threadId" })?.1 ?? "Redacted metadata",
-                outcome: status, reference: "UNHANDLED PROTOCOL EVENT", fields: fields,
+                outcome: status, reference: "UNHANDLED PROTOCOL EVENT · SEQ \(sequence)", fields: fields,
                 classification: classify(status)
             ))
         }
@@ -231,12 +278,42 @@ struct FlightProjection {
     }
 }
 
+enum FlightSelectionState: Equatable {
+    case none
+    case visible(String)
+    case filtered(String)
+    case unavailable(String)
+
+    static func resolve(selectionID: String?, all: [FlightRecord], visible: [FlightRecord]) -> Self {
+        guard let selectionID else { return .none }
+        if visible.contains(where: { $0.id == selectionID }) { return .visible(selectionID) }
+        if all.contains(where: { $0.id == selectionID }) { return .filtered(selectionID) }
+        return .unavailable(selectionID)
+    }
+}
+
+struct FlightRowPresentation: Equatable {
+    let isSelected: Bool
+    let isFocused: Bool
+
+    var hasCustomFocusRing: Bool { isFocused }
+    var focusRingWidth: CGFloat { isFocused ? 2 : 0 }
+    var accessibilityValue: String {
+        switch (isSelected, isFocused) {
+        case (true, true): "Selected, keyboard focused"
+        case (true, false): "Selected"
+        case (false, true): "Keyboard focused"
+        case (false, false): "Not selected"
+        }
+    }
+}
+
 public struct FlightRecorderView: View {
     @ObservedObject private var model: CockpitModel
     @State private var category: FlightCategory = .all
     @State private var outcome: FlightOutcomeFilter = .all
     @State private var query = ""
-    @State private var selectedID: String?
+    @FocusState private var focusedRecordID: String?
 
     public init(model: CockpitModel) { self.model = model }
 
@@ -261,9 +338,16 @@ public struct FlightRecorderView: View {
 
     private var projection: FlightProjection { FlightProjection(model: model) }
     private var visibleRecords: [FlightRecord] { projection.filtered(category: category, outcome: outcome, query: query) }
+    private var selectionState: FlightSelectionState {
+        FlightSelectionState.resolve(
+            selectionID: model.selection.inspectionID,
+            all: projection.records,
+            visible: visibleRecords
+        )
+    }
     private var selectedRecord: FlightRecord? {
-        if let selectedID, let selected = visibleRecords.first(where: { $0.id == selectedID }) { return selected }
-        return visibleRecords.first
+        guard case .visible(let id) = selectionState else { return nil }
+        return visibleRecords.first { $0.id == id }
     }
 
     @ViewBuilder
@@ -323,7 +407,7 @@ public struct FlightRecorderView: View {
             )
             NetworkFlightMetricCard(
                 label: "Attention outcomes", value: projection.interceptedCountLabel,
-                detail: "Denied, failed, queued, or approval-waiting runtime rows", badge: "PROJECTED", tone: .attention
+                detail: "Denied, failed, dispatched, queued, or approval-waiting runtime rows", badge: "PROJECTED", tone: .attention
             )
             NetworkFlightMetricCard(
                 label: "Causal verification", value: "Unavailable",
@@ -429,28 +513,38 @@ public struct FlightRecorderView: View {
     }
 
     private func flightRow(_ record: FlightRecord) -> some View {
-        let selected = selectedRecord?.id == record.id
-        return Button { selectedID = record.id } label: {
+        let presentation = FlightRowPresentation(
+            isSelected: model.selection.inspectionID == record.id,
+            isFocused: focusedRecordID == record.id
+        )
+        return Button { model.selection.inspectionID = record.id } label: {
             HStack(spacing: 0) {
                 flightCell(record.timestamp, width: 170)
-                flightCell("\(record.origin.rawValue)\n\(record.channel)", width: 210, lines: 2)
+                flightCell("\(record.originLabel)\n\(record.channel)", width: 210, lines: 3)
                 flightCell(record.actor, width: 150)
                 flightCell(record.evidence, width: 170)
                 flightCell(record.outcome, width: 120, tone: flightTone(record.classification))
             }
             .contentShape(Rectangle())
-            .background(selected ? ZeroTheme.orange.opacity(0.085) : Color.clear)
+            .background(presentation.isSelected ? ZeroTheme.orange.opacity(0.085) : Color.clear)
             .overlay(alignment: .leading) {
-                if selected { ZeroTheme.orange.frame(width: 3) }
+                if presentation.isSelected { ZeroTheme.orange.frame(width: 3) }
             }
             .overlay(alignment: .bottom) { ZeroTheme.line.opacity(0.7).frame(height: 1) }
+            .overlay {
+                RoundedRectangle(cornerRadius: 4)
+                    .strokeBorder(ZeroTheme.orange, lineWidth: presentation.focusRingWidth)
+                    .opacity(presentation.hasCustomFocusRing ? 1 : 0)
+            }
         }
         .buttonStyle(.plain)
+        .focusable(true)
+        .focused($focusedRecordID, equals: record.id)
         .focusEffectDisabled()
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(record.channel), \(record.outcome), \(record.origin.rawValue)")
-        .accessibilityValue(selected ? "Selected" : "Not selected")
-        .accessibilityAddTraits(selected ? .isSelected : [])
+        .accessibilityLabel("\(record.channel), \(record.outcome), \(record.originLabel)")
+        .accessibilityValue(presentation.accessibilityValue)
+        .accessibilityAddTraits(presentation.isSelected ? .isSelected : [])
     }
 
     private func flightCell(_ value: String, width: CGFloat, header: Bool = false, lines: Int = 1, tone: ZeroTone? = nil) -> some View {
@@ -484,7 +578,7 @@ public struct FlightRecorderView: View {
                         ZeroStatusBadge(record.outcome, tone: flightTone(record.classification))
                     }
                     HStack(spacing: 7) {
-                        ZeroStatusBadge(record.origin.rawValue,
+                        ZeroStatusBadge(record.originLabel,
                                         symbol: record.origin == .runtime ? "externaldrive.badge.checkmark" : "memorychip",
                                         tone: record.origin == .runtime ? .authority : .attention)
                         ZeroStatusBadge(record.category.rawValue.uppercased(), tone: .neutral)
@@ -516,9 +610,36 @@ public struct FlightRecorderView: View {
                         .foregroundStyle(ZeroTheme.secondaryInk)
                         .fixedSize(horizontal: false, vertical: true)
                 }
+            } else if case .filtered(let id) = selectionState {
+                staleOrFilteredSelection(
+                    id: id,
+                    title: "Selected record hidden by filters",
+                    detail: "The exact shared selection is preserved. Change the filters or clear the selection; another row was not selected automatically."
+                )
+            } else if case .unavailable(let id) = selectionState {
+                staleOrFilteredSelection(
+                    id: id,
+                    title: "Selected evidence is no longer retained",
+                    detail: "The bounded source no longer contains this exact identity. Clear it explicitly; the inspector will not retarget to a different record."
+                )
             } else {
                 NetworkFlightEmptyState(symbol: "cursorarrow.click.2", title: "No record selected", detail: "Select a visible evidence row to inspect its bounded fields.")
             }
+        }
+    }
+
+    private func staleOrFilteredSelection(id: String, title: String, detail: String) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            NetworkFlightEmptyState(symbol: "scope", title: title, detail: detail)
+            Text(id)
+                .font(.system(size: 9, weight: .medium, design: .monospaced))
+                .foregroundStyle(ZeroTheme.secondaryInk)
+                .textSelection(.enabled)
+                .accessibilityLabel("Selected evidence identity")
+                .accessibilityValue(id)
+            Button("Clear exact selection") { model.selection.inspectionID = nil }
+                .buttonStyle(ZeroButtonStyle(.quiet))
+                .focusEffectDisabled()
         }
     }
 }
@@ -557,4 +678,33 @@ private func codexRequestIDLabel(_ id: CodexRequestID) -> String {
     case .string(let value): value
     case .integer(let value): String(value)
     }
+}
+
+private func codexOriginLabel(for connection: CodexConnectionState) -> String {
+    switch connection {
+    case .connected: "CODEX LIVE MEMORY"
+    case .connecting: "CODEX RETAINED MEMORY · CONNECTING"
+    case .disconnected: "CODEX RETAINED MEMORY · DISCONNECTED"
+    case .exited(let status): "CODEX RETAINED MEMORY · EXITED \(status)"
+    case .failed: "CODEX RETAINED MEMORY · FAILED"
+    }
+}
+
+private func codexUnknownRecordID(_ event: CodexEvent, sequence: Int) -> String {
+    var identity = [event.method]
+    if case .request(let id, _, _) = event {
+        identity.append("request=\(codexRequestIDLabel(id))")
+    }
+    for key in ["threadId", "turnId", "itemId", "status", "type", "model"] {
+        if let value = codexScalar(event.params[key]) {
+            identity.append("\(key)=\(value)")
+        }
+    }
+
+    var digest: UInt64 = 14_695_981_039_346_656_037
+    for byte in identity.joined(separator: "\u{1f}").utf8 {
+        digest ^= UInt64(byte)
+        digest &*= 1_099_511_628_211
+    }
+    return "codex-event-\(String(digest, radix: 16))-\(sequence)"
 }
