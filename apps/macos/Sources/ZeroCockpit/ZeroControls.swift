@@ -49,6 +49,17 @@ enum ZeroControlMotion {
     }
 }
 
+struct ZeroAuthorityPresentation {
+    let isPressed: Bool
+    let contrast: ColorSchemeContrast
+
+    var foreground: Color {
+        if isPressed { return .white }
+        return contrast == .increased ? .black : ZeroTheme.ink
+    }
+    var background: Color { isPressed ? ZeroTheme.orangePressed : ZeroTheme.orange }
+}
+
 public struct ZeroButtonStyle: ButtonStyle {
     public enum Kind { case standard, authority, quiet }
     private let kind: Kind
@@ -73,9 +84,13 @@ public struct ZeroButtonStyle: ButtonStyle {
         @Environment(\.colorSchemeContrast) private var contrast
         @State private var hovered = false
 
+        private var authority: ZeroAuthorityPresentation {
+            ZeroAuthorityPresentation(isPressed: configuration.isPressed, contrast: contrast)
+        }
+
         private var fill: Color {
             if !enabled { return ZeroTheme.navigation }
-            if kind == .authority { return configuration.isPressed ? ZeroTheme.orangePressed : ZeroTheme.orange }
+            if kind == .authority { return authority.background }
             if selected { return ZeroTheme.frameBand }
             if configuration.isPressed || hovered { return ZeroTheme.navigation }
             return kind == .quiet ? .clear : ZeroTheme.workstation
@@ -84,7 +99,7 @@ public struct ZeroButtonStyle: ButtonStyle {
         var body: some View {
             configuration.label
                 .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(kind == .authority && enabled ? Color.white : ZeroTheme.ink)
+                .foregroundStyle(kind == .authority && enabled ? authority.foreground : ZeroTheme.ink)
                 .padding(.horizontal, 12)
                 .frame(minHeight: 32)
                 .background(fill, in: RoundedRectangle(cornerRadius: 5))
