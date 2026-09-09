@@ -1,7 +1,7 @@
 import SwiftUI
 
 public enum CockpitRoute: String, CaseIterable, Identifiable, Sendable {
-    case desk, runtime, network, flightRecorder, airlock, zeroBot, skillLab
+    case desk, runtime, network, flightRecorder, airlock, zeroBot
 
     public var id: Self { self }
     public var title: String {
@@ -12,7 +12,6 @@ public enum CockpitRoute: String, CaseIterable, Identifiable, Sendable {
         case .flightRecorder: "Flight Recorder"
         case .airlock: "Airlock"
         case .zeroBot: "Zero Bot"
-        case .skillLab: "Skill Lab"
         }
     }
     public var symbol: String {
@@ -23,7 +22,6 @@ public enum CockpitRoute: String, CaseIterable, Identifiable, Sendable {
         case .flightRecorder: "list.bullet.rectangle"
         case .airlock: "lock.shield"
         case .zeroBot: "terminal"
-        case .skillLab: "square.stack.3d.up"
         }
     }
     public var shortcut: KeyEquivalent {
@@ -34,7 +32,6 @@ public enum CockpitRoute: String, CaseIterable, Identifiable, Sendable {
         case .flightRecorder: "4"
         case .airlock: "5"
         case .zeroBot: "6"
-        case .skillLab: "7"
         }
     }
 }
@@ -63,16 +60,15 @@ public struct ZeroRailItem: View {
     }
 
     public var body: some View {
-        let presentation = ZeroRailPresentation(selected: selected)
-        return Button(action: action) {
+        Button(action: action) {
             VStack(spacing: 6) {
                 Image(systemName: route.symbol)
-                    .font(.zero(size: 22, weight: .medium))
+                    .font(.system(size: 22, weight: .medium))
                     .frame(width: 44, height: 44)
-                    .background(presentation.background, in: RoundedRectangle(cornerRadius: 10))
-                    .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(presentation.border))
+                    .background(selected ? ZeroTheme.navigation : ZeroTheme.workstation.opacity(0.85), in: RoundedRectangle(cornerRadius: 10))
+                    .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(selected ? ZeroTheme.orangePressed : Color.white.opacity(0.6)))
                 Text(route.title)
-                    .font(.zero(size: 10, weight: .semibold))
+                    .font(.system(size: 10, weight: .semibold))
                     .multilineTextAlignment(.center)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -115,49 +111,6 @@ public struct ZeroTabStrip: View {
     }
 }
 
-/// Value-stable shell chrome: status text only changes on connection
-/// transitions, so an unchanged header skips layout on each invalidation.
-struct CockpitGlobalHeader: View, Equatable {
-    let status: String
-
-    var body: some View {
-        HStack(spacing: 12) {
-            Text("Z0")
-                .font(.zeroMono(size: 16, weight: .black))
-                .foregroundStyle(ZeroTheme.navigation)
-                .padding(6)
-                .background(ZeroTheme.ink, in: RoundedRectangle(cornerRadius: 5))
-                .accessibilityHidden(true)
-            Text("Project Zero").font(.zero(size: 16, weight: .bold))
-            Spacer(minLength: 16)
-            Text(status)
-                .font(.zeroMono(size: 10, weight: .medium))
-                .foregroundStyle(ZeroTheme.secondaryInk)
-                .lineLimit(2)
-        }
-        .padding(.horizontal, 20)
-        .padding(.vertical, 8)
-        .background(ZeroTheme.workstation)
-        .overlay(alignment: .bottom) { ZeroTheme.line.frame(height: 1) }
-    }
-}
-
-/// Value-stable shell chrome: only the route title varies, on navigation.
-struct CockpitFooter: View, Equatable {
-    let routeTitle: String
-
-    var body: some View {
-        HStack {
-            Text("Project Zero / Personal local runtime")
-            Spacer()
-            Text(routeTitle)
-        }
-        .font(.zeroMono(size: 9, weight: .medium))
-        .padding(.horizontal, 20)
-        .padding(.vertical, 6)
-        .background(ZeroTheme.navigation)
-    }
-}
 /// The system owns the real titlebar. This frame is the Stitch workstation inside it.
 public struct CockpitShell<Content: View, Instruments: View>: View {
     @Binding private var selection: CockpitSelection
@@ -165,19 +118,13 @@ public struct CockpitShell<Content: View, Instruments: View>: View {
     private let version: String
     private let content: () -> Content
     private let instruments: () -> Instruments
-    /// When true, skips the opaque dot-wallpaper backing so an outer
-    /// `DesktopCanvas` wallpaper shows through the shell padding. Defaults to
-    /// false: every existing call site renders exactly as before.
-    private let transparentBackground: Bool
 
     public init(selection: Binding<CockpitSelection>, status: String, version: String,
-                transparentBackground: Bool = false,
                 @ViewBuilder content: @escaping () -> Content,
                 @ViewBuilder instruments: @escaping () -> Instruments) {
         _selection = selection
         self.status = status
         self.version = version
-        self.transparentBackground = transparentBackground
         self.content = content
         self.instruments = instruments
     }
@@ -185,7 +132,7 @@ public struct CockpitShell<Content: View, Instruments: View>: View {
     public var body: some View {
         GeometryReader { geometry in
             VStack(spacing: 0) {
-                CockpitGlobalHeader(status: status).equatable()
+                globalHeader
                 HStack(alignment: .top, spacing: 16) {
                     if geometry.size.width >= 1000 { environmentRail }
                     workstation
@@ -197,15 +144,34 @@ public struct CockpitShell<Content: View, Instruments: View>: View {
                     }
                 }
                 .padding(geometry.size.width >= 1000 ? 20 : 12)
-                CockpitFooter(routeTitle: selection.route.title).equatable()
+                footer
             }
         }
-        .background {
-            if !transparentBackground { DotWallpaper() }
-        }
+        .background { DotWallpaper() }
         .foregroundStyle(ZeroTheme.ink)
         .tint(ZeroTheme.orange)
         .preferredColorScheme(.light)
+    }
+
+    private var globalHeader: some View {
+        HStack(spacing: 12) {
+            Text("Z0")
+                .font(.system(size: 16, weight: .black, design: .monospaced))
+                .foregroundStyle(ZeroTheme.navigation)
+                .padding(6)
+                .background(ZeroTheme.ink, in: RoundedRectangle(cornerRadius: 5))
+                .accessibilityHidden(true)
+            Text("Project Zero").font(.system(size: 16, weight: .bold))
+            Spacer(minLength: 16)
+            Text(status)
+                .font(.system(size: 10, weight: .medium, design: .monospaced))
+                .foregroundStyle(ZeroTheme.secondaryInk)
+                .lineLimit(2)
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 8)
+        .background(ZeroTheme.workstation)
+        .overlay(alignment: .bottom) { ZeroTheme.line.frame(height: 1) }
     }
 
     private var environmentRail: some View {
@@ -231,7 +197,7 @@ public struct CockpitShell<Content: View, Instruments: View>: View {
                 Spacer()
                 Text(version)
             }
-            .font(.zeroMono(size: 10, weight: .medium))
+            .font(.system(size: 10, weight: .medium, design: .monospaced))
             .foregroundStyle(ZeroTheme.secondaryInk)
             .padding(.horizontal, 14)
             .padding(.vertical, 8)
@@ -245,13 +211,24 @@ public struct CockpitShell<Content: View, Instruments: View>: View {
         .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(ZeroTheme.ink.opacity(0.2)))
         .shadow(color: .black.opacity(0.18), radius: 18, x: 0, y: 10)
     }
+
+    private var footer: some View {
+        HStack {
+            Text("Project Zero / Personal local runtime")
+            Spacer()
+            Text(selection.route.title)
+        }
+        .font(.system(size: 9, weight: .medium, design: .monospaced))
+        .padding(.horizontal, 20)
+        .padding(.vertical, 6)
+        .background(ZeroTheme.navigation)
+    }
 }
 
 public extension CockpitShell where Instruments == EmptyView {
     init(selection: Binding<CockpitSelection>, status: String, version: String,
-         transparentBackground: Bool = false,
          @ViewBuilder content: @escaping () -> Content) {
-        self.init(selection: selection, status: status, version: version, transparentBackground: transparentBackground, content: content, instruments: { EmptyView() })
+        self.init(selection: selection, status: status, version: version, content: content, instruments: { EmptyView() })
     }
 }
 

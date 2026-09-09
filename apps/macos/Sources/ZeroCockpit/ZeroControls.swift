@@ -2,7 +2,7 @@ import SwiftUI
 
 public extension ZeroTheme {
     static let wallpaper = Color(red: 140 / 255, green: 158 / 255, blue: 130 / 255)
-    static let wallpaperDot = Color(red: 122 / 255, green: 140 / 255, blue: 112 / 255)
+    static let wallpaperDot = Color(red: 108 / 255, green: 126 / 255, blue: 99 / 255)
     static let workstation = Color(red: 250 / 255, green: 248 / 255, blue: 245 / 255)
     static let navigation = Color(red: 243 / 255, green: 236 / 255, blue: 223 / 255)
     static let frameBand = Color(red: 206 / 255, green: 216 / 255, blue: 196 / 255)
@@ -11,10 +11,9 @@ public extension ZeroTheme {
     static let line = Color(red: 222 / 255, green: 215 / 255, blue: 202 / 255)
     static let orange = Color(red: 245 / 255, green: 78 / 255, blue: 0)
     static let orangePressed = Color(red: 168 / 255, green: 51 / 255, blue: 0)
-    static let authorityOrange = orange
 }
 
-public enum ZeroTone: Sendable, Equatable {
+public enum ZeroTone: Sendable {
     case neutral, healthy, attention, error, authority
 
     public var color: Color {
@@ -50,48 +49,6 @@ enum ZeroControlMotion {
     }
 }
 
-enum ZeroControlTypography {
-    static let buttonTextStyle = Font.TextStyle.callout
-    static let statusTextStyle = Font.TextStyle.caption2
-
-    static let button = Font.zero(buttonTextStyle).weight(.semibold)
-    static let status = Font.zeroMono(statusTextStyle).weight(.semibold)
-}
-
-struct ZeroAuthorityPresentation {
-    let isPressed: Bool
-    let contrast: ColorSchemeContrast
-
-    var foreground: Color {
-        if isPressed { return .white }
-        return contrast == .increased ? .black : ZeroTheme.ink
-    }
-    var background: Color { isPressed ? ZeroTheme.orangePressed : ZeroTheme.orange }
-}
-
-// Rail tiles read as glyphs on the green desktop: unselected tiles are fully
-// transparent, and selection keeps the reviewed pressed-orange edge plus the
-// authority-orange continuity token. Selected fill is unchanged.
-struct ZeroRailPresentation {
-    let selected: Bool
-
-    init(selected: Bool) {
-        self.selected = selected
-    }
-
-    var background: Color {
-        selected ? ZeroTheme.navigation : .clear
-    }
-
-    var border: Color {
-        selected ? ZeroTheme.orangePressed : .clear
-    }
-
-    var accent: Color {
-        ZeroTheme.authorityOrange
-    }
-}
-
 public struct ZeroButtonStyle: ButtonStyle {
     public enum Kind { case standard, authority, quiet }
     private let kind: Kind
@@ -116,13 +73,9 @@ public struct ZeroButtonStyle: ButtonStyle {
         @Environment(\.colorSchemeContrast) private var contrast
         @State private var hovered = false
 
-        private var authority: ZeroAuthorityPresentation {
-            ZeroAuthorityPresentation(isPressed: configuration.isPressed, contrast: contrast)
-        }
-
         private var fill: Color {
             if !enabled { return ZeroTheme.navigation }
-            if kind == .authority { return authority.background }
+            if kind == .authority { return configuration.isPressed ? ZeroTheme.orangePressed : ZeroTheme.orange }
             if selected { return ZeroTheme.frameBand }
             if configuration.isPressed || hovered { return ZeroTheme.navigation }
             return kind == .quiet ? .clear : ZeroTheme.workstation
@@ -130,8 +83,8 @@ public struct ZeroButtonStyle: ButtonStyle {
 
         var body: some View {
             configuration.label
-                .font(ZeroControlTypography.button)
-                .foregroundStyle(kind == .authority && enabled ? authority.foreground : ZeroTheme.ink)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(kind == .authority && enabled ? Color.white : ZeroTheme.ink)
                 .padding(.horizontal, 12)
                 .frame(minHeight: 32)
                 .background(fill, in: RoundedRectangle(cornerRadius: 5))
@@ -157,7 +110,7 @@ public struct ZeroButtonStyle: ButtonStyle {
     }
 }
 
-public struct ZeroStatusBadge: View, Equatable {
+public struct ZeroStatusBadge: View {
     private let label: String
     private let symbol: String
     private let tone: ZeroTone
@@ -170,7 +123,7 @@ public struct ZeroStatusBadge: View, Equatable {
 
     public var body: some View {
         Label(label, systemImage: symbol)
-            .font(ZeroControlTypography.status)
+            .font(.system(size: 10, weight: .semibold, design: .monospaced))
             .foregroundStyle(tone.color)
             .padding(.horizontal, 7)
             .padding(.vertical, 4)
