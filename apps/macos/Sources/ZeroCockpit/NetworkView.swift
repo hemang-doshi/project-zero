@@ -37,6 +37,13 @@ struct NetworkDelivery {
     let tone: ZeroTone
 }
 
+struct NetworkTargetPresentation {
+    static let width: CGFloat = 280
+    static let wrapsFullIdentity = true
+
+    static func accessibilityValue(_ target: String) -> String { target }
+}
+
 struct NetworkFacts {
     let snapshot: CockpitSnapshot?
     let connection: RuntimeConnectionState
@@ -46,7 +53,7 @@ struct NetworkFacts {
     init(snapshot: CockpitSnapshot?, connection: RuntimeConnectionState) {
         self.snapshot = snapshot
         self.connection = connection
-        nodes = snapshot?.nodes.filter { !$0.revoked } ?? []
+        nodes = snapshot?.nodes ?? []
         evidenceRows = snapshot?.invocations.compactMap { record in
             guard let id = networkRuntimeText(record, keys: ["id"]),
                   let target = networkRuntimeText(record, keys: ["node"]),
@@ -69,7 +76,9 @@ struct NetworkFacts {
     }
 
     var isLive: Bool { connection == .live && snapshot != nil }
-    var onlineNodeCount: Int { nodes.filter { $0.status == "ONLINE" }.count }
+    var activeNodeCount: Int { nodes.filter { !$0.revoked }.count }
+    var revokedNodeCount: Int { nodes.filter(\.revoked).count }
+    var onlineNodeCount: Int { nodes.filter { !$0.revoked && $0.status == "ONLINE" }.count }
     var capabilityCount: Int { Set(nodes.flatMap(\.capabilities)).count }
     var registeredNodeCountLabel: String {
         guard snapshot != nil else { return "Unavailable" }
@@ -81,10 +90,11 @@ struct NetworkFacts {
     }
     var topologyNotice: String {
         guard let snapshot else { return "Topology is unavailable until the owner-local runtime provides a snapshot." }
+        let lifecycle = "including \(revokedNodeCount) revoked"
         if snapshot.truncated["nodes"] == true {
-            return "Showing \(nodes.count) registered nodes as a lower bound from the bounded snapshot."
+            return "Showing \(nodes.count) registered nodes, \(lifecycle), as a lower bound from the bounded snapshot."
         }
-        return "Showing all \(nodes.count) registered nodes in the current bounded snapshot."
+        return "Showing all \(nodes.count) registered nodes, \(lifecycle), in the current bounded snapshot."
     }
     var evidenceNotice: String {
         guard let snapshot else { return "Capability evidence is unavailable." }
@@ -98,7 +108,18 @@ struct NetworkFacts {
         snapshot?.nodeProfiles.first { networkRuntimeText($0, keys: ["id"]) == node.id }
     }
 
+    func lifecycleStatus(for node: CockpitNode) -> String {
+        node.revoked ? "REVOKED" : node.status
+    }
+
     func delivery(for node: CockpitNode) -> NetworkDelivery {
+        if node.revoked {
+            return NetworkDelivery(
+                label: "Revoked",
+                detail: "Registration is retained as lifecycle evidence; this node has no active delivery authority.",
+                tone: .error
+            )
+        }
         guard isLive else {
             return NetworkDelivery(label: "Stale or uncertain", detail: "Snapshot retained while the stream is not live.", tone: .attention)
         }
@@ -210,7 +231,7 @@ public struct NetworkView: View {
             NetworkFlightMetricCard(
                 label: "Registered nodes",
                 value: facts.registeredNodeCountLabel,
-                detail: facts.snapshot == nil ? "No node projection" : "\(facts.onlineNodeCount) online",
+                detail: facts.snapshot == nil ? "No node projection" : "\(facts.activeNodeCount) active · \(facts.onlineNodeCount) online · \(facts.revokedNodeCount) revoked",
                 badge: facts.isLive ? "LIVE" : "CACHED",
                 tone: facts.isLive ? .healthy : .attention
             )
@@ -231,7 +252,7 @@ public struct NetworkView: View {
             NetworkFlightMetricCard(
                 label: "Capabilities",
                 value: facts.snapshot == nil ? "Unavailable" : "\(facts.capabilityCount) projected",
-                detail: "Enrollment ceilings, not active lease count",
+                detail: "Across active and revoked registrations; not lease count",
                 badge: "BOUNDED",
                 tone: .neutral
             )
@@ -309,6 +330,7 @@ public struct NetworkView: View {
     private func nodeCard(_ node: CockpitNode) -> some View {
         let delivery = facts.delivery(for: node)
         let profile = facts.profile(for: node)
+        let lifecycleStatus = facts.lifecycleStatus(for: node)
         return VStack(alignment: .leading, spacing: 11) {
             HStack(alignment: .top, spacing: 8) {
                 Image(systemName: node.capabilities.contains(where: { $0.hasPrefix("display.") }) ? "display" : "point.3.connected.trianglepath.dotted")
@@ -324,9 +346,11 @@ public struct NetworkView: View {
                         .lineLimit(2)
                 }
                 Spacer(minLength: 4)
-                ZeroStatusBadge(node.status, tone: networkTone(node.status))
+                ZeroStatusBadge(lifecycleStatus, tone: networkTone(lifecycleStatus))
             }
             NetworkFlightEvidenceRows(rows: [
+                ("Lifecycle", lifecycleStatus),
+                ("Daemon status", node.status),
                 ("Last seen", node.lastSeen ?? "Unavailable"),
                 ("Delivery", delivery.label)
             ])
@@ -345,7 +369,10 @@ public struct NetworkView: View {
         .padding(13)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color.white, in: RoundedRectangle(cornerRadius: 8))
-        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(networkTone(node.status).color.opacity(0.28)))
+        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(networkTone(lifecycleStatus).color.opacity(0.28)))
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Node \(node.id), lifecycle \(lifecycleStatus)")
+        .accessibilityValue("Daemon status \(node.status); \(node.capabilities.count) projected capabilities; last seen \(node.lastSeen ?? "unavailable"); delivery \(delivery.label)")
     }
 
     private var capabilityEvidence: some View {
@@ -377,7 +404,7 @@ public struct NetworkView: View {
     private var networkEvidenceHeader: some View {
         HStack(spacing: 0) {
             networkCell("SOURCE", width: 130, header: true)
-            networkCell("TARGET NODE", width: 160, header: true)
+            networkTargetCell("TARGET NODE", header: true)
             networkCell("CAPABILITY SCOPE", width: 210, header: true)
             networkCell("DEADLINE", width: 210, header: true)
             networkCell("STATUS", width: 130, header: true)
@@ -390,7 +417,7 @@ public struct NetworkView: View {
     private func networkEvidenceRow(_ row: NetworkEvidenceRow) -> some View {
         HStack(spacing: 0) {
             networkCell(row.source, width: 130)
-            networkCell(row.target, width: 160)
+            networkTargetCell(row.target)
             networkCell(row.capability, width: 210)
             networkCell(row.deadline, width: 210)
             networkCell(row.status, width: 130, tone: invocationTone(row.status))
@@ -398,6 +425,25 @@ public struct NetworkView: View {
             networkCell(row.evidenceID, width: 190)
         }
         .overlay(alignment: .bottom) { ZeroTheme.line.opacity(0.7).frame(height: 1) }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Invocation \(row.evidenceID), target node \(row.target)")
+        .accessibilityValue("\(row.capability), \(row.status), \(row.attempts) attempts")
+    }
+
+    private func networkTargetCell(_ value: String, header: Bool = false) -> some View {
+        Text(value)
+            .font(.system(size: header ? 9 : 10, weight: header ? .bold : .medium, design: .monospaced))
+            .foregroundStyle(header ? ZeroTheme.secondaryInk : ZeroTheme.ink)
+            .textSelection(.enabled)
+            .lineLimit(nil)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(width: NetworkTargetPresentation.width, alignment: .leading)
+            .frame(minHeight: 38, alignment: .leading)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 9)
+            .accessibilityLabel(header ? "Target node column" : "Target node")
+            .accessibilityValue(NetworkTargetPresentation.accessibilityValue(value))
+            .help(value)
     }
 
     private func networkCell(_ value: String, width: CGFloat, header: Bool = false, tone: ZeroTone? = nil) -> some View {
