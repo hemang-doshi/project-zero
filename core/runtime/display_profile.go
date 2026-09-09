@@ -35,7 +35,8 @@ func (r *Runtime) Advertise(ctx context.Context, node string, body json.RawMessa
 		return fmt.Errorf("VALIDATION: render schema")
 	}
 	r.mu.Lock()
-	defer r.mu.Unlock()
+	committed := false
+	defer r.unlockAndPublish(&committed, "node_profiles", "events", "invocations", "approvals", "audit")
 	tx, e := r.db.BeginTx(ctx, nil)
 	if e != nil {
 		return e
@@ -72,7 +73,9 @@ func (r *Runtime) Advertise(ctx context.Context, node string, body json.RawMessa
 	if e = r.queueSession(ctx, tx, id, s); e != nil {
 		return e
 	}
-	return tx.Commit()
+	e = tx.Commit()
+	committed = e == nil
+	return e
 }
 func hybrid(ctx context.Context, tx *sql.Tx, node string) bool {
 	var b []byte

@@ -122,7 +122,8 @@ func (r *Runtime) Policies(ctx context.Context) ([]Policy, error) {
 }
 func (r *Runtime) TickAutomations(ctx context.Context) error {
 	r.mu.Lock()
-	defer r.mu.Unlock()
+	committed := false
+	defer r.unlockAndPublish(&committed, "firings", "events", "audit")
 	tx, e := r.db.BeginTx(ctx, nil)
 	if e != nil {
 		return e
@@ -158,11 +159,14 @@ func (r *Runtime) TickAutomations(ctx context.Context) error {
 	if e = r.audit(ctx, tx, "policy:focus-break", "notification.propose", "owner", "ALLOW", id); e != nil {
 		return e
 	}
-	return tx.Commit()
+	e = tx.Commit()
+	committed = e == nil
+	return e
 }
 func (r *Runtime) recordGitFiring(ctx context.Context, result error) {
 	r.mu.Lock()
-	defer r.mu.Unlock()
+	committed := false
+	defer r.unlockAndPublish(&committed, "firings", "events", "audit")
 	tx, e := r.db.BeginTx(ctx, nil)
 	if e != nil {
 		return
@@ -189,7 +193,7 @@ func (r *Runtime) recordGitFiring(ctx context.Context, result error) {
 	if r.audit(ctx, tx, "policy:git-refresh", "repo.status", s.ProjectID, state, id) != nil {
 		return
 	}
-	tx.Commit()
+	committed = tx.Commit() == nil
 }
 
 func (r *Runtime) notificationAction(ctx context.Context, tx *sql.Tx, q Request, v *Response) error {
