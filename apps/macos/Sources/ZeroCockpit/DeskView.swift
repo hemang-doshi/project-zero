@@ -6,7 +6,8 @@ enum DeskRuntimeLayout: Equatable {
     case regular
     case wide
 
-    static func mode(for width: CGFloat) -> Self {
+    static func mode(for width: CGFloat, accessibilitySize: Bool = false) -> Self {
+        if accessibilitySize { return .compact }
         if width >= 1_020 { return .wide }
         if width >= 720 { return .regular }
         return .compact
@@ -26,10 +27,12 @@ struct DeskRuntimeFacts {
     let connection: RuntimeConnectionState
     let runtimeStatusLabel: String
     let runtimeStatusTone: ZeroTone
-    let activeProjectName: String
-    let focusElapsedLabel: String
-    let deliveryState: DeliveryState
-    let attentionCount: Int
+    private let reportedActiveProjectName: String
+    private let reportedFocusElapsedLabel: String
+    private let reportedDeliveryState: DeliveryState
+    private let reportedAttentionCount: Int
+    let codexApprovalCount: Int
+    let hasUncertainCommand: Bool
 
     @MainActor
     init(model: CockpitModel) {
@@ -37,10 +40,12 @@ struct DeskRuntimeFacts {
         connection = model.runtimeConnection
         runtimeStatusLabel = model.runtimeStatusLabel
         runtimeStatusTone = model.runtimeStatusTone
-        activeProjectName = model.activeProjectName
-        focusElapsedLabel = model.focusElapsedLabel
-        deliveryState = model.deliveryState
-        attentionCount = model.attentionCount
+        reportedActiveProjectName = model.activeProjectName
+        reportedFocusElapsedLabel = model.focusElapsedLabel
+        reportedDeliveryState = model.deliveryState
+        reportedAttentionCount = model.attentionCount
+        codexApprovalCount = model.codex.store.approvals.count
+        hasUncertainCommand = model.hasUncertainRuntimeCommand
     }
 
     init(
@@ -51,25 +56,138 @@ struct DeskRuntimeFacts {
         activeProjectName: String,
         focusElapsedLabel: String,
         deliveryState: DeliveryState,
-        attentionCount: Int
+        attentionCount: Int,
+        codexApprovalCount: Int = 0,
+        hasUncertainCommand: Bool = false
     ) {
         self.snapshot = snapshot
         self.connection = connection
         self.runtimeStatusLabel = runtimeStatusLabel
         self.runtimeStatusTone = runtimeStatusTone
-        self.activeProjectName = activeProjectName
-        self.focusElapsedLabel = focusElapsedLabel
-        self.deliveryState = deliveryState
-        self.attentionCount = attentionCount
+        reportedActiveProjectName = activeProjectName
+        reportedFocusElapsedLabel = focusElapsedLabel
+        reportedDeliveryState = deliveryState
+        reportedAttentionCount = attentionCount
+        self.codexApprovalCount = codexApprovalCount
+        self.hasUncertainCommand = hasUncertainCommand
     }
 
     var isLive: Bool { connection == .live && snapshot != nil }
-    var sessionState: String { snapshot?.session.state ?? "UNAVAILABLE" }
-    var runtimeVersion: String { snapshot?.runtimeVersion ?? "Unavailable" }
-    var revisionLabel: String { snapshot.map { String($0.revision) } ?? "Unavailable" }
-    var enabledIntegrationCount: Int { snapshot?.integrations.filter(\.enabled).count ?? 0 }
-    var onlineNodeCount: Int { snapshot?.nodes.filter { !$0.revoked && $0.status == "ONLINE" }.count ?? 0 }
-    var nodeCount: Int { snapshot?.nodes.filter { !$0.revoked }.count ?? 0 }
+    var hasCachedSnapshot: Bool { !isLive && snapshot != nil }
+    var authoritativeSnapshot: CockpitSnapshot? { isLive ? snapshot : nil }
+    var sessionState: String { authoritativeSnapshot?.session.state ?? "UNAVAILABLE" }
+    var activeProjectName: String { isLive ? reportedActiveProjectName : "Unavailable" }
+    var focusElapsedLabel: String { isLive ? reportedFocusElapsedLabel : "Unavailable" }
+    var deliveryState: DeliveryState { isLive ? reportedDeliveryState : .offline }
+    var runtimeVersion: String { authoritativeSnapshot?.runtimeVersion ?? "Unavailable" }
+    var revisionLabel: String { authoritativeSnapshot.map { String($0.revision) } ?? "Unavailable" }
+    var enabledIntegrationCount: Int { authoritativeSnapshot?.integrations.filter(\.enabled).count ?? 0 }
+    var onlineNodeCount: Int { authoritativeSnapshot?.nodes.filter { !$0.revoked && $0.status == "ONLINE" }.count ?? 0 }
+    var nodeCount: Int { authoritativeSnapshot?.nodes.filter { !$0.revoked }.count ?? 0 }
+    var policyCount: Int { authoritativeSnapshot?.policies.count ?? 0 }
+    var contextCount: Int { authoritativeSnapshot?.context.count ?? 0 }
+    var firingStateCounts: [String: Int] {
+        guard let firings = authoritativeSnapshot?.firings else { return [:] }
+        return firings.reduce(into: [:]) { counts, firing in
+            let state = runtimeText(firing, keys: ["state"])?.uppercased() ?? "UNKNOWN"
+            counts[state, default: 0] += 1
+        }
+    }
+    var runtimeWorkTotal: Int {
+        guard let snapshot = authoritativeSnapshot else { return 0 }
+        return snapshot.approvals.count + snapshot.firings.count + (snapshot.session.state == "IDLE" ? 0 : 1)
+    }
+    var runtimeWorkLabel: String {
+        guard let snapshot = authoritativeSnapshot else { return "OFFLINE" }
+        let lowerBound = snapshot.truncated["approvals"] == true || snapshot.truncated["firings"] == true
+        return "\(runtimeWorkTotal)\(lowerBound ? "+" : "")"
+    }
+    var attentionCount: Int {
+        isLive ? reportedAttentionCount : codexApprovalCount + (hasUncertainCommand ? 1 : 0)
+    }
+    var attentionLabel: String {
+        let lowerBound = authoritativeSnapshot?.truncated["approvals"] == true
+            || authoritativeSnapshot?.truncated["firings"] == true
+        return "\(attentionCount)\(lowerBound ? "+" : "")"
+    }
+    var attentionSource: DeskAttentionSource {
+        if let snapshot = authoritativeSnapshot {
+            if !snapshot.approvals.isEmpty { return .runtimeApproval }
+            if snapshot.firings.contains(where: { runtimeText($0, keys: ["state"])?.uppercased() == "PENDING" }) {
+                return .runtimeFiring
+            }
+        }
+        if codexApprovalCount > 0 { return .codexApproval }
+        return isLive ? .clear : .runtimeUnavailable
+    }
+    var cachedSnapshotLabel: String? {
+        guard hasCachedSnapshot, let timestamp = snapshot?.timestamp else { return nil }
+        return "Cached at \(timestamp) · not current authority"
+    }
+}
+
+enum DeskAttentionSource: Equatable {
+    case runtimeApproval, runtimeFiring, codexApproval, runtimeUnavailable, clear
+}
+
+struct DeskCodexFacts: Equatable {
+    let connectionLabel: String
+    let isConnected: Bool
+    let threadCount: Int
+    let activeTurnCount: Int
+    let activeItemCount: Int
+    let approvalCount: Int
+
+    init(state: CodexConnectionState, store: CodexEventStore) {
+        switch state {
+        case .disconnected:
+            connectionLabel = "Codex disconnected"
+            isConnected = false
+        case .connecting:
+            connectionLabel = "Codex connecting"
+            isConnected = false
+        case .connected:
+            connectionLabel = "Codex connected"
+            isConnected = true
+        case .exited(let code):
+            connectionLabel = "Codex exited (\(code))"
+            isConnected = false
+        case .failed:
+            connectionLabel = "Codex failed"
+            isConnected = false
+        }
+        threadCount = store.threads.count
+        activeTurnCount = store.threads.values.reduce(0) { count, thread in
+            count + thread.turns.values.filter { Self.isActive($0.status) }.count
+        }
+        activeItemCount = store.threads.values.reduce(0) { count, thread in
+            count + thread.items.filter { Self.isActive($0.status) }.count
+        }
+        approvalCount = store.approvals.count
+    }
+
+    var workLabel: String {
+        if activeTurnCount > 0 || activeItemCount > 0 {
+            return "\(activeTurnCount) active turn\(activeTurnCount == 1 ? "" : "s") · \(activeItemCount) streaming item\(activeItemCount == 1 ? "" : "s")"
+        }
+        return threadCount == 0 ? "No Project Zero-owned Codex threads" : "\(threadCount) thread\(threadCount == 1 ? "" : "s") · no active turn"
+    }
+
+    private static func isActive(_ status: String) -> Bool {
+        let normalized = status.lowercased().filter(\.isLetter)
+        return normalized == "inprogress" || normalized == "running" || normalized == "streaming"
+    }
+}
+
+enum DeskRuntimeType {
+    static let hero = Font.system(.largeTitle, design: .default).weight(.black)
+    static let title = Font.system(.title2, design: .default).weight(.black)
+    static let heading = Font.system(.headline, design: .default).weight(.black)
+    static let body = Font.system(.body, design: .default).weight(.medium)
+    static let callout = Font.system(.callout, design: .default).weight(.medium)
+    static let caption = Font.system(.caption, design: .default).weight(.medium)
+    static let micro = Font.system(.caption2, design: .monospaced).weight(.bold)
+    static let evidence = Font.system(.caption, design: .monospaced).weight(.medium)
 }
 
 enum DeskEvidenceTab: String, CaseIterable, Hashable {
@@ -80,6 +198,7 @@ enum DeskEvidenceTab: String, CaseIterable, Hashable {
 
 public struct DeskView: View {
     @ObservedObject private var model: CockpitModel
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var evidenceTab: DeskEvidenceTab = .attention
 
     public init(model: CockpitModel) {
@@ -88,7 +207,7 @@ public struct DeskView: View {
 
     public var body: some View {
         GeometryReader { proxy in
-            let layout = DeskRuntimeLayout.mode(for: proxy.size.width)
+            let layout = DeskRuntimeLayout.mode(for: proxy.size.width, accessibilitySize: dynamicTypeSize.isAccessibilitySize)
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
                     hero(layout: layout)
@@ -122,23 +241,27 @@ public struct DeskView: View {
     private func heroCopy(facts: DeskRuntimeFacts) -> some View {
         VStack(alignment: .leading, spacing: 14) {
             Label("PROJECT ZERO", systemImage: "square.grid.2x2.fill")
-                .font(.system(size: 11, weight: .black, design: .monospaced))
+                .font(DeskRuntimeType.micro)
             VStack(alignment: .leading, spacing: 2) {
                 Text("Make your runtime")
-                Text("personally sovereign")
+                Text("completely")
+                Text("self-governing")
                     .padding(.horizontal, 5)
                     .background(Color(red: 0.73, green: 0.93, blue: 0.96))
                     .rotationEffect(.degrees(-0.6))
             }
-            .font(.system(size: 42, weight: .black))
-            .tracking(-1.5)
-            .minimumScaleFactor(0.75)
+            .font(DeskRuntimeType.hero)
             .fixedSize(horizontal: false, vertical: true)
 
-            Text("One local cockpit for committed runtime state, explicit authority, and owner-started Codex work.")
-                .font(.system(size: 14, weight: .medium))
-                .foregroundStyle(ZeroTheme.secondaryInk)
-                .fixedSize(horizontal: false, vertical: true)
+            VStack(alignment: .leading, spacing: 4) {
+                Text("One local cockpit for committed runtime state, explicit authority, and owner-started Codex work.")
+                Text("Zero cognitive friction; no invented evidence.")
+                    .padding(.horizontal, 4)
+                    .background(Color(red: 0.98, green: 0.87, blue: 0.52).opacity(0.75))
+            }
+            .font(DeskRuntimeType.body)
+            .foregroundStyle(ZeroTheme.secondaryInk)
+            .fixedSize(horizontal: false, vertical: true)
 
             HStack(spacing: 8) {
                 ZeroStatusBadge(
@@ -147,12 +270,19 @@ public struct DeskView: View {
                     tone: facts.runtimeStatusTone
                 )
                 Text(facts.isLive ? "Revision \(facts.revisionLabel)" : "Committed state unavailable")
-                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                    .font(DeskRuntimeType.evidence)
                     .foregroundStyle(ZeroTheme.secondaryInk)
             }
 
+            if let cached = facts.cachedSnapshotLabel {
+                Label(cached, systemImage: "archivebox")
+                    .font(DeskRuntimeType.evidence)
+                    .foregroundStyle(ZeroTheme.secondaryInk)
+                    .accessibilityLabel("Cached runtime evidence. \(cached)")
+            }
+
             Text("THE MACHINE IS THE INTERFACE; THE EVIDENCE IS THE TRUTH.")
-                .font(.system(size: 10, weight: .bold, design: .monospaced))
+                .font(DeskRuntimeType.micro)
                 .foregroundStyle(ZeroTheme.secondaryInk)
                 .padding(.horizontal, 6)
                 .padding(.vertical, 3)
@@ -165,41 +295,81 @@ public struct DeskView: View {
             VStack(alignment: .leading, spacing: 16) {
                 HStack(alignment: .firstTextBaseline) {
                     Text("Local focus")
-                        .font(.system(size: 20, weight: .black))
+                        .font(DeskRuntimeType.title)
                     Spacer()
                     ZeroStatusBadge(facts.sessionState, tone: sessionTone(facts.sessionState))
                 }
                 VStack(alignment: .leading, spacing: 4) {
                     Text(facts.activeProjectName)
-                        .font(.system(size: 17, weight: .bold))
+                        .font(DeskRuntimeType.heading)
                         .textSelection(.enabled)
                     Text(facts.focusElapsedLabel)
-                        .font(.system(size: 32, weight: .black, design: .monospaced))
+                        .font(.system(.title, design: .monospaced).weight(.black))
                         .monospacedDigit()
                     Text(facts.deliveryState.presentation.detail)
-                        .font(.system(size: 11, weight: .medium))
+                        .font(DeskRuntimeType.caption)
                         .foregroundStyle(ZeroTheme.secondaryInk)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 Divider().overlay(ZeroTheme.line)
                 DeskRuntimeFocusControls(model: model, showProjects: facts.sessionState == "IDLE")
                 DeskRuntimeCommandEvidence(model: model)
+                Divider().overlay(ZeroTheme.line)
+                codexSummary
             }
         }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Current focus")
     }
 
+    private var codexSummary: some View {
+        let codex = DeskCodexFacts(state: model.codexConnection, store: model.codex.store)
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("PROJECT ZERO CODEX")
+                    .font(DeskRuntimeType.micro)
+                    .foregroundStyle(ZeroTheme.secondaryInk)
+                Spacer()
+                ZeroStatusBadge(
+                    codex.connectionLabel,
+                    symbol: codex.isConnected ? "terminal.fill" : "terminal",
+                    tone: codex.isConnected ? .healthy : .neutral
+                )
+            }
+            Text(codex.workLabel)
+                .font(DeskRuntimeType.callout)
+                .textSelection(.enabled)
+            if codex.approvalCount > 0 {
+                Text("\(codex.approvalCount) Codex approval request\(codex.approvalCount == 1 ? "" : "s") waiting")
+                    .font(DeskRuntimeType.caption)
+                    .foregroundStyle(ZeroTone.attention.color)
+            }
+            Button("Open Zero Bot") { model.selection.route = .zeroBot }
+                .buttonStyle(ZeroButtonStyle(.quiet))
+                .focusEffectDisabled()
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Codex work, \(codex.connectionLabel), \(codex.workLabel), \(codex.approvalCount) approvals")
+    }
+
     private func evidenceShowcase(layout: DeskRuntimeLayout) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             ScrollView(.horizontal, showsIndicators: false) {
-                ZeroSegmentedChoice(
-                    "Desk evidence",
-                    values: DeskEvidenceTab.allCases,
-                    selection: $evidenceTab
-                ) { tab in
-                    Text(tab.rawValue).fixedSize()
+                HStack(spacing: 4) {
+                    ForEach(DeskEvidenceTab.allCases, id: \.self) { tab in
+                        Button { evidenceTab = tab } label: {
+                            Text(tab.rawValue).fixedSize()
+                        }
+                        .buttonStyle(ZeroButtonStyle(evidenceTab == tab ? .authority : .quiet, selected: evidenceTab == tab))
+                        .focusEffectDisabled()
+                        .accessibilityAddTraits(evidenceTab == tab ? .isSelected : [])
+                        .accessibilityValue(evidenceTab == tab ? "Selected" : "Not selected")
+                    }
                 }
+                .padding(3)
+                .background(ZeroTheme.navigation, in: RoundedRectangle(cornerRadius: 7))
+                .accessibilityElement(children: .contain)
+                .accessibilityLabel("Desk evidence")
             }
             .padding(.bottom, 8)
 
@@ -220,12 +390,13 @@ public struct DeskView: View {
 
     @ViewBuilder
     private func attentionEvidence(layout: DeskRuntimeLayout) -> some View {
+        let explanation = attentionExplanation
         if layout == .wide {
             HStack(alignment: .top, spacing: 22) {
                 attentionRecord.frame(maxWidth: .infinity, alignment: .leading)
                 evidenceExplanation(
-                    title: "Authority stays explicit",
-                    detail: "Review the exact pending target and evidence in Airlock before making a decision."
+                    title: explanation.title,
+                    detail: explanation.detail
                 )
                 .frame(width: 330)
             }
@@ -233,22 +404,32 @@ public struct DeskView: View {
             VStack(alignment: .leading, spacing: 18) {
                 attentionRecord
                 evidenceExplanation(
-                    title: "Authority stays explicit",
-                    detail: "Review the exact pending target and evidence in Airlock before making a decision."
+                    title: explanation.title,
+                    detail: explanation.detail
                 )
             }
         }
     }
 
+    private var attentionExplanation: (title: String, detail: String) {
+        switch DeskRuntimeFacts(model: model).attentionSource {
+        case .codexApproval:
+            return ("Codex authority stays separate", "Review the exact Project Zero-owned Codex request in Zero Bot; it never crosses the zerod approval path.")
+        case .runtimeApproval, .runtimeFiring:
+            return ("Authority stays explicit", "Review the exact pending target and runtime evidence in Airlock before making a decision.")
+        case .runtimeUnavailable:
+            return ("Cached is not current", "Reconnect before interpreting runtime attention. Any independent live Codex request remains visible here.")
+        case .clear:
+            return ("No inferred request", "The live bounded sources contain no pending authority request; absence outside those bounds is not claimed.")
+        }
+    }
+
     @ViewBuilder
     private var attentionRecord: some View {
-        if model.runtimeConnection != .live || model.snapshot == nil {
-            DeskRuntimeEmptyState(
-                symbol: "wifi.slash",
-                title: "Attention evidence unavailable",
-                detail: "The runtime is not live. No pending request is inferred from cached or missing state."
-            )
-        } else if let approval = model.snapshot?.approvals.first {
+        let facts = DeskRuntimeFacts(model: model)
+        switch facts.attentionSource {
+        case .runtimeApproval:
+            if let approval = facts.authoritativeSnapshot?.approvals.first {
             VStack(alignment: .leading, spacing: 12) {
                 HStack {
                     ZeroStatusBadge("PENDING APPROVAL", symbol: "exclamationmark.shield.fill", tone: .error)
@@ -256,7 +437,7 @@ public struct DeskView: View {
                     DeskRuntimeMonoValue(runtimeText(approval, keys: ["deadline"]) ?? "Deadline unavailable")
                 }
                 Text(runtimeText(approval, keys: ["capability"]) ?? "Capability unavailable")
-                    .font(.system(size: 20, weight: .black))
+                    .font(DeskRuntimeType.title)
                     .textSelection(.enabled)
                 DeskRuntimeEvidenceRows(rows: [
                     ("Approval ID", runtimeText(approval, keys: ["id"]) ?? "Unavailable"),
@@ -267,35 +448,52 @@ public struct DeskView: View {
                     .buttonStyle(ZeroButtonStyle(.authority))
                     .focusEffectDisabled()
             }
-        } else if let firing = model.snapshot?.firings.first(where: { runtimeText($0, keys: ["state"]) == "PENDING" }) {
+            }
+        case .runtimeFiring:
+            if let firing = facts.authoritativeSnapshot?.firings.first(where: { runtimeText($0, keys: ["state"])?.uppercased() == "PENDING" }) {
             VStack(alignment: .leading, spacing: 12) {
                 ZeroStatusBadge("PENDING FIRING", symbol: "bolt.badge.clock", tone: .attention)
                 Text(runtimeText(firing, keys: ["name", "automation", "id"]) ?? "Automation requires attention")
-                    .font(.system(size: 20, weight: .black))
+                    .font(DeskRuntimeType.title)
                 DeskRuntimeEvidenceRows(rows: safeEvidenceRows(firing, keys: ["id", "state", "scheduled_at", "project_id"]))
             }
-        } else if model.codex.store.approvals.isEmpty {
+            }
+        case .codexApproval:
+            VStack(alignment: .leading, spacing: 12) {
+                ZeroStatusBadge("CODEX APPROVAL", symbol: "terminal.fill", tone: .attention)
+                Text("\(facts.codexApprovalCount) connected Codex request\(facts.codexApprovalCount == 1 ? "" : "s") need review.")
+                    .font(DeskRuntimeType.heading)
+                Text(facts.isLive
+                    ? "Codex authority is independent from the runtime approval queue."
+                    : "The runtime is offline; this live Codex request still requires an explicit response in Zero Bot.")
+                    .font(DeskRuntimeType.caption)
+                    .foregroundStyle(ZeroTheme.secondaryInk)
+                Button("Open Zero Bot") { model.selection.route = .zeroBot }
+                    .buttonStyle(ZeroButtonStyle(.authority))
+                    .focusEffectDisabled()
+            }
+        case .runtimeUnavailable:
+            DeskRuntimeEmptyState(
+                symbol: "wifi.slash",
+                title: "Runtime attention unavailable",
+                detail: facts.hasCachedSnapshot
+                    ? "A retained snapshot exists, but it is cached and is not used to infer current pending work."
+                    : "The runtime is not live. No pending request is inferred from missing state."
+            )
+        case .clear:
             DeskRuntimeEmptyState(
                 symbol: "checkmark.shield.fill",
                 title: "No pending authority request",
                 detail: "The current bounded runtime and connected Codex state contain no active approval."
             )
-        } else {
-            VStack(alignment: .leading, spacing: 12) {
-                ZeroStatusBadge("CODEX APPROVAL", symbol: "terminal.fill", tone: .attention)
-                Text("\(model.codex.store.approvals.count) connected Codex request\(model.codex.store.approvals.count == 1 ? "" : "s") need review.")
-                    .font(.system(size: 18, weight: .bold))
-                Button("Open Zero Bot") { model.selection.route = .zeroBot }
-                    .buttonStyle(ZeroButtonStyle(.authority))
-                    .focusEffectDisabled()
-            }
         }
     }
 
     @ViewBuilder
     private func deliveryEvidence(layout: DeskRuntimeLayout) -> some View {
-        let delivery = model.deliveryState.presentation
-        let displayNodes = model.snapshot?.nodes.filter {
+        let facts = DeskRuntimeFacts(model: model)
+        let delivery = facts.deliveryState.presentation
+        let displayNodes = facts.authoritativeSnapshot?.nodes.filter {
             !$0.revoked && ($0.capabilities.contains("display.render") || $0.capabilities.contains("display.clear"))
         } ?? []
         if layout == .wide {
@@ -326,7 +524,7 @@ public struct DeskView: View {
         VStack(alignment: .leading, spacing: 12) {
             ZeroStatusBadge(delivery.label, symbol: delivery.symbol, tone: delivery.tone)
             Text(delivery.detail)
-                .font(.system(size: 18, weight: .bold))
+                .font(DeskRuntimeType.heading)
                 .fixedSize(horizontal: false, vertical: true)
             if displayNodes.isEmpty {
                 DeskRuntimeMonoValue("No registered display capability in the current snapshot")
@@ -344,17 +542,18 @@ public struct DeskView: View {
 
     @ViewBuilder
     private func activityEvidence(layout: DeskRuntimeLayout) -> some View {
-        if model.runtimeConnection != .live || model.snapshot == nil {
+        let facts = DeskRuntimeFacts(model: model)
+        if !facts.isLive {
             DeskRuntimeEmptyState(
                 symbol: "clock.badge.questionmark",
                 title: "Recent evidence unavailable",
                 detail: "Reconnect to load the runtime's bounded chronological projection."
             )
-        } else if let event = model.snapshot?.events.first {
+        } else if let event = facts.authoritativeSnapshot?.events.first {
             let content = VStack(alignment: .leading, spacing: 12) {
                 ZeroStatusBadge("DURABLE RUNTIME EVENT", symbol: "checkmark.seal.fill", tone: .healthy)
                 Text(runtimeText(event, keys: ["kind"]) ?? "Event")
-                    .font(.system(size: 20, weight: .black))
+                    .font(DeskRuntimeType.title)
                 DeskRuntimeEvidenceRows(rows: safeEvidenceRows(event, keys: ["seq", "id", "time", "kind"]))
             }
             if layout == .wide {
@@ -384,11 +583,11 @@ public struct DeskView: View {
     private func evidenceExplanation(title: String, detail: String) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             Label("Project Zero evidence", systemImage: "shield.lefthalf.filled")
-                .font(.system(size: 10, weight: .bold, design: .monospaced))
+                .font(DeskRuntimeType.micro)
                 .foregroundStyle(ZeroTheme.orangePressed)
-            Text(title).font(.system(size: 23, weight: .black))
+            Text(title).font(DeskRuntimeType.title)
             Text(detail)
-                .font(.system(size: 12, weight: .medium))
+                .font(DeskRuntimeType.callout)
                 .foregroundStyle(ZeroTheme.secondaryInk)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -397,7 +596,7 @@ public struct DeskView: View {
     }
 
     private func truncationNote(for collection: String) -> String {
-        model.snapshot?.truncated[collection] == true
+        DeskRuntimeFacts(model: model).authoritativeSnapshot?.truncated[collection] == true
             ? "The runtime marked this projection as truncated. Open the dedicated evidence surface before drawing historical conclusions."
             : "This is the newest row in the runtime's bounded display projection."
     }
@@ -409,10 +608,14 @@ struct DeskRuntimeFocusControls: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            if showProjects {
+            if model.runtimeConnection != .live || model.snapshot == nil {
+                DeskRuntimeMonoValue(model.snapshot == nil
+                    ? "Focus controls unavailable while runtime is offline"
+                    : "Cached focus state is non-authoritative; reconnect to act")
+            } else if showProjects {
                 if let projects = model.snapshot?.projects, !projects.isEmpty {
                     Text("REGISTERED PROJECT")
-                        .font(.system(size: 9, weight: .bold, design: .monospaced))
+                        .font(DeskRuntimeType.micro)
                         .foregroundStyle(ZeroTheme.secondaryInk)
                     ScrollView(.horizontal, showsIndicators: false) {
                         HStack(spacing: 5) {
@@ -488,7 +691,7 @@ struct DeskRuntimeCommandEvidence: View {
             VStack(alignment: .leading, spacing: 8) {
                 ZeroStatusBadge("CONFIRMATION UNCERTAIN", symbol: "questionmark.diamond.fill", tone: .error)
                 DeskRuntimeMonoValue("\(operation) · \(id)")
-                Text(message).font(.system(size: 11)).foregroundStyle(ZeroTheme.secondaryInk)
+                Text(message).font(DeskRuntimeType.caption).foregroundStyle(ZeroTheme.secondaryInk)
                 Button("Retry same request") { Task { await model.retryPendingRuntimeCommand() } }
                     .buttonStyle(ZeroButtonStyle(.authority))
                     .focusEffectDisabled()
@@ -497,7 +700,7 @@ struct DeskRuntimeCommandEvidence: View {
         case .blocked(let operation, let message), .rejected(let operation, let message):
             VStack(alignment: .leading, spacing: 5) {
                 ZeroStatusBadge("\(operation) NOT SENT", symbol: "xmark.octagon.fill", tone: .error)
-                Text(message).font(.system(size: 11)).foregroundStyle(ZeroTheme.secondaryInk)
+                Text(message).font(DeskRuntimeType.caption).foregroundStyle(ZeroTheme.secondaryInk)
             }
         }
     }
@@ -537,17 +740,16 @@ struct DeskRuntimeMetricCard: View {
             VStack(alignment: .leading, spacing: 9) {
                 HStack(alignment: .top) {
                     Text(label.uppercased())
-                        .font(.system(size: 9, weight: .bold, design: .monospaced))
+                        .font(DeskRuntimeType.micro)
                         .foregroundStyle(ZeroTheme.secondaryInk)
                     Spacer()
                     ZeroStatusBadge(badge, tone: tone)
                 }
                 Text(value)
-                    .font(.system(size: 22, weight: .black, design: .rounded))
-                    .minimumScaleFactor(0.72)
-                    .lineLimit(1)
+                    .font(.system(.title2, design: .rounded).weight(.black))
+                    .fixedSize(horizontal: false, vertical: true)
                 Text(detail)
-                    .font(.system(size: 10, weight: .medium))
+                    .font(DeskRuntimeType.caption)
                     .foregroundStyle(ZeroTheme.secondaryInk)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -565,10 +767,16 @@ struct DeskRuntimeSectionHeader: View {
     }
 
     var body: some View {
-        HStack(alignment: .firstTextBaseline) {
-            Text(title).font(.system(size: 15, weight: .black))
-            Spacer()
-            if let badge { DeskRuntimeMonoValue(badge) }
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(title).font(DeskRuntimeType.heading)
+                Spacer()
+                if let badge { DeskRuntimeMonoValue(badge) }
+            }
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title).font(DeskRuntimeType.heading)
+                if let badge { DeskRuntimeMonoValue(badge) }
+            }
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
@@ -584,11 +792,11 @@ struct DeskRuntimeEmptyState: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             Image(systemName: symbol)
-                .font(.system(size: 25, weight: .semibold))
+                .font(.title2.weight(.semibold))
                 .foregroundStyle(ZeroTheme.secondaryInk)
-            Text(title).font(.system(size: 17, weight: .bold))
+            Text(title).font(DeskRuntimeType.heading)
             Text(detail)
-                .font(.system(size: 11, weight: .medium))
+                .font(DeskRuntimeType.caption)
                 .foregroundStyle(ZeroTheme.secondaryInk)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -605,7 +813,7 @@ struct DeskRuntimeMonoValue: View {
 
     var body: some View {
         Text(value)
-            .font(.system(size: 10, weight: .medium, design: .monospaced))
+            .font(DeskRuntimeType.evidence)
             .foregroundStyle(ZeroTheme.secondaryInk)
             .textSelection(.enabled)
     }
@@ -617,15 +825,16 @@ struct DeskRuntimeEvidenceRows: View {
     var body: some View {
         VStack(spacing: 0) {
             ForEach(Array(rows.enumerated()), id: \.offset) { index, row in
-                HStack(alignment: .top, spacing: 12) {
-                    Text(row.0.uppercased())
-                        .font(.system(size: 9, weight: .bold, design: .monospaced))
-                        .foregroundStyle(ZeroTheme.secondaryInk)
-                        .frame(width: 100, alignment: .leading)
-                    Text(row.1)
-                        .font(.system(size: 10, weight: .medium, design: .monospaced))
-                        .textSelection(.enabled)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                ViewThatFits(in: .horizontal) {
+                    HStack(alignment: .top, spacing: 12) {
+                        evidenceLabel(row.0)
+                            .frame(minWidth: 100, idealWidth: 116, maxWidth: 150, alignment: .leading)
+                        evidenceValue(row.1)
+                    }
+                    VStack(alignment: .leading, spacing: 4) {
+                        evidenceLabel(row.0)
+                        evidenceValue(row.1)
+                    }
                 }
                 .padding(.vertical, 7)
                 if index < rows.count - 1 { Divider().overlay(ZeroTheme.line.opacity(0.7)) }
@@ -633,6 +842,19 @@ struct DeskRuntimeEvidenceRows: View {
         }
         .padding(.horizontal, 10)
         .background(Color(red: 0.95, green: 0.95, blue: 0.97), in: RoundedRectangle(cornerRadius: 6))
+    }
+
+    private func evidenceLabel(_ value: String) -> some View {
+        Text(value.uppercased())
+            .font(DeskRuntimeType.micro)
+            .foregroundStyle(ZeroTheme.secondaryInk)
+    }
+
+    private func evidenceValue(_ value: String) -> some View {
+        Text(value)
+            .font(DeskRuntimeType.evidence)
+            .textSelection(.enabled)
+            .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
