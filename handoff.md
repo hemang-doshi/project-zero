@@ -1,0 +1,148 @@
+# Project Zero — full project handoff
+
+Updated: **2026-09-09**. Start with [AGENTS.md](AGENTS.md) and [snapshot.md](snapshot.md). This document supplies durable context; the snapshot supplies the newest checkout/installation/test state. Every agent must maintain both. Pending items are not permission to resume a task the user stopped.
+
+## 1. Current user direction and project purpose
+
+The user is moving this work into a new chat. They asked to leave the display band alone and create these documents. No further implementation, hardware tests or automatic monitoring should start from this handoff alone.
+
+Project Zero is a personal, local-first environment runtime on the personal Mac, with a dedicated ESP32 desk display. The everyday loop is: explicitly select a project, start focus, see elapsed/state/connectivity plus Git, observed agent status and Spotify, pause/resume using BOOT, and recover durable state across restarts. The runtime owns state; interfaces reflect committed state and show uncertainty honestly.
+
+The user values execution after planning, predictable installation, consistent versions and minimal configuration burden. Avoid repeated approval questions for already-authorized reversible work. Use one agent in the same task, meaningful test-first changes and evidence before completion claims. Do not hide an unsupported integration or a physical failure behind a passing simulator test.
+
+Canonical product specification: [PROJECT_ZERO_SPEC.md](PROJECT_ZERO_SPEC.md), originally [the Google specification](https://docs.google.com/document/d/1LLFTPbh4YMIST0SH27XJmf3ITT1vlHki-crrpNFbu_I/edit?tab=t.0). Latest approved release plan/design:
+
+- [v0.2 complete implementation and reliable installation](docs/superpowers/plans/2026-09-09-v02-release.md)
+- [release design](docs/superpowers/specs/2026-09-09-v02-release-design.md)
+- Earlier plans in `docs/superpowers/plans/` explain v0.1 and the initial v0.2 preview.
+
+**Read older documentation as historical.** In particular, README still contains legacy `.runtime/live` launch/flash examples and outdated “soak in progress / preview not installed” statements. Production is now installed; use the runbooks and snapshot instead of those old startup examples.
+
+## 2. Decisions and boundaries that persist
+
+- Personal Mac only. Never discover, enroll, inspect or collect context from the work Mac. Do not scan the Developer directory. Additional personal repositories require explicit registration; only Project Zero is initially registered.
+- Codex observation is metadata-only and must not start/resume coding work. Turn completed/failed/interrupted is distinct from achieving a software objective. Do not infer completion from inactivity or a hook Stop event, and do not scrape UI/private databases/transcripts.
+- Spotify observation uses the installed Mac application; no playback controls, account API or automatic app launch. **Later user amendments authorized artwork and a real bass-reactive waveform**, superseding the original no-artwork scope. No microphone, raw audio storage/transmission, or artwork rotation.
+- BOOT pauses/resumes focus regardless of media. Reset/EN is never an input button. Offline presses are discarded.
+- Three bounded routines: Git refresh during focus, verified relevant Codex completion once (blocked with observation), and a reminder at 45 accumulated active minutes. Reminders do not pause focus. Unreviewed firings do not count as correct.
+- Known intent phrases resolve locally. Unfamiliar phrasing may use Codex only after a per-request export preview and approval, complete restricted context/tools isolation, schema validation and mandatory proposal review. Limits are one concurrent request, 30 seconds, 20/day, no retries. This optional path is currently disabled, not secretly substituted with a less restricted model session.
+- User explicitly **waived the 24-hour soak and 14-day evaluation release gates**. No scheduled AI checks or automatic model calls. The hourly `project-zero-hardware-soak` automation was recorded PAUSED; the obsolete local collector was stopped. Preserve incomplete evidence; do not restart either.
+- Keep “implemented,” “ready for evaluation,” and “accepted” distinct. Full v0.2 is not accepted; Codex outcomes, hardware reliability and other checks remain open.
+
+## 3. Architecture and code map
+
+| Area | Location and contract |
+| --- | --- |
+| Daemon / CLI | `core/cmd/zerod`, `cli/cmd/zero`. Go modular runtime, separate UI lifecycle. |
+| Durable storage | `core/storage`, `core/runtime`. modernc SQLite, WAL/FULL, foreign keys and versioned migrations. Transactions cover durable events/projections/decisions/invocations/outbox; serialized mutation path. Preserve existing history/grants/identity. |
+| Local interface | `core/api/unix.go`, `peer_darwin.go`. Owner-restricted Unix socket with peer identity checks; HTTP/JSON, stable machine output, dry-run/idempotency/audit boundaries. |
+| Node transport | `core/api/nodes.go`, `core/protocol`, `sdk/go`. Mutually authenticated TLS WebSockets, bounded JSON, node enrollment, session fencing, authorization, invocation results and reconciliation. |
+| Policy and effects | `core/runtime/actions.go`, `dispatch.go`. Permission states DENIED, ASK, SESSION_ALLOWED, ALWAYS_ALLOWED; deny precedence, exact-action approval, deadlines, desired display restoration and transactional outbox. Never blindly repeat an uncertain non-idempotent effect. |
+| Projects / focus / context | `core/runtime` personal/session/context code. Stable project registration and aliases, explicit end/switch, accumulated elapsed time, provenance/freshness and explicit override precedence. RUNNING time includes runtime downtime; PAUSED time freezes. Projection rebuild must not dispatch physical effects. |
+| Integrations | `integrations/git`, runtime integration/workers code, native helpers. Fixed Git arguments/timeouts on registered paths only, no fetch/scripts/file mutation. Integration work stays outside serialized transactions. Spotify nominally polls every 2 s while enabled/running; Git every 15 s during focus. |
+| Native UI | `apps/macos`: `ZeroMenu` SwiftUI/AppKit, `ZeroKit` Unix transport/artwork/filter code, `ZeroMacObserve` Spotify scripting, `ZeroAudio` Core Audio tap. Pending request identity survives transport uncertainty. |
+| ESP32 | `nodes/esp32-desk/main`: protocol parser, rendering, provisioning, keys, debounced BOOT, Wi-Fi/WebSocket lifecycle. |
+| Schemas / generators | `proto/schemas`, `proto/fixtures`; `tools/schema-gen.py`, `tools/release-gen.py`. Display fixtures run in Go and C. Do not manually diverge generated metadata. |
+| Install / recovery | `tools/build-macos.py`, `install-release.py`, `setup-signing.py`; `docs/runbooks/`. |
+
+CLI scope includes status/doctor/version, nodes/pairing/revocation, grants/capabilities/approvals, events/state/audit, projects, session start/pause/resume/end/show, context show/assert/clear/explain, local intent parse/run/explain and `run`, integration controls, typed automation policies/history and costs. The preview contains substantial implementations; **do not assume every planned command/schema/error/physical gate has been exhaustively audited**. Follow the latest checklist and tests.
+
+## 4. Installation, release identity and production state
+
+Current exact build is in [snapshot.md](snapshot.md). `core/release/manifest.json` is the source of product version, build identity, supported protocols/render schemas and migration level. Generated Swift/C metadata must agree. Product `0.2.0` is separate from protocol `0.1`, render `0.2`, and database level `2`.
+
+Production locations:
+
+- `~/Applications/Zero.app`, bundled `zero`, `zerod`, `Zero Observer.app` and `Zero Audio.app`.
+- `~/Library/Application Support/ProjectZero/zero.db`, `zero.sock`, `daemon.log`, installation receipt and `recovery/`.
+- `/opt/homebrew/bin/zero` symlink to the installed CLI.
+- LaunchAgents `dev.projectzero.zerod` (one production runtime) and `dev.projectzero.menu` (login UI). Closing the interface must not stop the daemon.
+- `.runtime/live` is the preserved legacy source/recovery reference, **not** a second current production data directory. Development data must remain isolated and visibly selected.
+
+Persistent local signing identity: **Project Zero Local Release** in login Keychain. Bundle identities include `dev.projectzero.menu`, `dev.projectzero.observer`, `dev.projectzero.audio`; runtime designated identity is `zerod`. Runtime authority is stored under Keychain service `project-zero.runtime-authority`. Never print/export it, regenerate it to work around a prompt, or copy it into SQLite/logs.
+
+Installation preflights Keychain access before stopping the old service, stages the signed app, takes a consistent SQLite backup including WAL, saves app/config/database, switches the service, health checks and attempts restoration on failure. An early failed cutover exposed Keychain and launchd timing problems; foreground preflight and bootstrap retry were added. Later upgrades completed. **Keychain prompts still recurred across builds despite the same designated signing requirement; automatic permission retention is not proven.** The user approved prompts locally. Never request passwords or automate the security dialog.
+
+Full installed rollback is not physically exercised. Automated failed-health restoration and consistent WAL backup tests pass. The oldest legacy backup predates a complete Zero.app and needs the legacy manual procedure; newer snapshots include app/database/config. A deliberate database rollback loses post-snapshot history from the restored view, so preserve a current backup first.
+
+See [installation runbook](docs/runbooks/v02-installation.md) and [hardware recovery](docs/runbooks/hardware-recovery.md) before any upgrade/flash.
+
+## 5. Hardware and media implementation
+
+Verified hardware: classic ESP32-D0WD-V3 rev 3.1, 4 MB flash; ST7735-compatible 128×160 portrait display; SPI SCLK 18, MOSI 23, CS 5, DC 16, reset 17; BLACKTAB orientation, 8 MHz SPI; fixed backlight is an acknowledged hardware exception. BOOT GPIO0. USB was `/dev/cu.usbserial-1410`—re-enumerate if absent, do not guess another board.
+
+Times Gate reference: `/Users/hemangdoshi/Developer/times-gate`. Reuse verified hardware/render/audio lessons, not TG2 transport/security. Keep it unchanged.
+
+Current screen: one project header, focus state and timer, Spotify text on the left, 32×32 artwork centered at x48..79/y85..116, narrow waveform on the right, Git/Codex and connectivity footer. Text is bounded/truncated; no automatic screen rotation. Media layout is physically visible, but the user reported the persistent band described below.
+
+Artwork: native helper reads Spotify artwork URL, permits bounded HTTPS images from the expected Spotify CDN, refuses redirects, limits download/time/image dimensions, converts to exactly 2,048 RGB565 bytes and caches one small image. Runtime stores deduplicated assets; sends artwork only to advertising nodes (`rgb565-32`). Older displays retain text/focus compatibility.
+
+Audio: `ZeroAudio` adapts Times Gate’s Spotify-only process tap; `BassFilter` measures roughly 40–200 Hz energy. PCM stays in RAM; helper emits normalized level/bass bytes. Runtime keeps latest levels in RAM and checks Spotify enabled/freshness, paired profile and display permission. Firmware interpolates/damps the narrow trace and flattens stale/paused/disconnected input. Mac audio capture needs OS permission; text/focus must continue without it.
+
+### Unresolved connectivity incident — important
+
+Do not repeat the earlier completion claims. Initial streaming sent about 20 JSON samples/s on the control WebSocket. A single command/audio receive queue overflowed; separating/coalescing audio helped the waveform, but recurring outages remained. Subsequent evidence:
+
+1. Send-lock timeout while receiving continuously → enabled Espressif’s separate TX lock. This removed an observed lock-contention failure, **not all outages**.
+2. Audio age grew into seconds, TLS read failures and server write deadlines followed → increased connection I/O timeouts from 3 to 10 seconds, preserving 500 ms audio freshness. **Still failed**. Wi-Fi association/DNS lookup failures also appeared during reconnect; do not attribute every failure to the same cause.
+3. Latest build 7 introduces `levels-v2`: at most one audio update in flight, receipt-bound sequence/session, max 10 Hz; newest sample replaces superseded samples only after receipt. Tests prove matching/duplicate receipt behavior. However, the final real-device capture still hit **command queue overflow**, after 340 received / 313 accepted audio frames, and reported socket/welcomed false thereafter.
+
+Current command queue has two 8,193-byte slots; audio has a separate 1,024-byte overwrite slot. The overflow path sets the firmware `connected` flag false without necessarily closing/restarting the underlying WebSocket. This is an important observed failure path, not a verified complete root cause. A future authorized investigation should model control-message bursts/ACKs and lifecycle recovery; do not simply keep increasing queues/timeouts and declare victory.
+
+`core/api/telemetry.go`/test and the latest changes are uncommitted. Receipt message type is in the envelope list, but a separate receipt-body schema/conformance audit is still missing. Receipt handling currently also passes through general `Seen` metadata persistence; review that cost and lifecycle behavior if resuming flow-control work. Missing receipts suspend streaming until receipt/session recovery; that behavior needs physical coverage.
+
+Evidence: `.runtime/flow-acceptance.log` is the latest failed capture; earlier `.runtime/link-build6-acceptance.log`, `link-final-acceptance.log`, `link-tx-lock-acceptance.log` explain rejected fixes. [Display/link evidence](docs/evidence/2026-09-09-display-link-debugging.md) may end before the latest interrupted capture; this handoff/snapshot explicitly supersede optimistic or in-progress lines there.
+
+### Display band — leave alone unless user reopens it
+
+User photo: `/Users/hemangdoshi/Downloads/IMG_7296.heic` (local personal reference, not committed). A dark horizontal band crosses the project header and extends into the background. The renderer’s pixel output has no blank header row. White appeared clean, but a stationary solid-gray screen retained the band with drawing paused. Restoring full Times Gate/Adafruit BLACKTAB frame-rate/power/VCOM/gamma initialization did not remove it.
+
+This implicates panel/cover/controller-level response rather than the text/waveform painting. **Exact physical cause is not established; do not claim confirmed dead pixels or a repaired panel.** The user said to leave it. USB diagnostic commands `PANELTEST` (white, 15 s) and `PANELGRAY` (gray, 30 s) return automatically; do not run them unasked now.
+
+## 6. Codex blockers and acceptance status
+
+[Bounded Codex investigation](docs/evidence/2026-09-09-v02-codex-boundary.md): standalone CLI pinned at `~/Library/Application Support/ProjectZero/toolchains/codex-0.153.4/codex`; `/opt/homebrew/bin/codex` was repaired to point there. The supported app-server control socket was absent; desktop-owned service exposed no supported named attachment endpoint. Starting a separate managed server would not establish desktop observation. Generated turn/thread event schemas alone do not supply the missing attachment contract. Hooks remain experimental supporting signals only.
+
+Revisit only when the supported interface or installation materially changes. No repeated scheduled probes, resume-to-observe, replacement coding session or private database access. Restricted model parsing is also disabled until the pinned interface can enforce no repository/filesystem/shell/integration/coding tools; an empty dynamic-tool list does not prove that.
+
+Passed evidence includes durable runtime/simulator work, automated migration/policy/session tests, native transport tests, real Spotify metadata/artwork, previous BOOT confirmation and user-confirmed manual setup notification. The notification says “Zero setup check”; it is **not** proof that an actual 45-minute automation fired correctly.
+
+Open requirements include stable real link/reconnect/deduplication, full physical interruption/sleep-wake matrix and <10 s restoration after authenticated reconnect, installed rollback/permission retention, dispatch performance, complete CLI/API/schema audit and operational diagnostics/log rotation. Full Codex outcomes block full v0.2 acceptance. Use [release checklist](docs/evidence/2026-09-09-v02-release-checklist.md) with the newer failure corrections in the snapshot.
+
+Measured subsets: installed status p95 about 0.177 ms, idle RSS 28.625 MiB, daemon crash recovery about 0.212 s before audio; a later playing-audio measurement gave p95 0.233 ms/RSS 30.625 MiB. These do not prove physical screen restoration, dispatch latency or stable networking.
+
+## 7. Verification and recovery commands
+
+Run from the repo, using preinstalled dependencies where possible. Do not deploy as a side effect of verification.
+
+```sh
+zero version
+zero doctor
+zero integrations list
+zero session show
+
+go mod download                       # only if dependencies need installation
+make test                             # offline Go race + Python tests
+ZERO_TEST_SOCKET="$HOME/Library/Application Support/ProjectZero/zero.sock" swift test --package-path apps/macos
+bash tools/test-firmware.sh            # host protocol fixtures + ESP-IDF build; does not flash
+python3 tools/release-gen.py --check
+python3 tools/schema-gen.py --check
+python3 tests/test_desk_layout.py      # compiles actual firmware renderer
+```
+
+Go module targets 1.25.0; ESP-IDF 5.5.2, WebSocket component 1.6.1, mDNS 1.9.1 are pinned. SDK/runtime lives under `.runtime/toolchains/esp-idf`; ESP Python used at `/Users/hemangdoshi/.espressif/python_env/idf5.5_py3.14_env/bin/python`. The Spotify audio tap requires macOS 14.2+. Firmware/renderer tests require the local ESP-IDF cJSON checkout. Tests are offline only after these dependencies are installed.
+
+For SDK/API specifics: `npx ctx7@latest library '<official name>' '<specific question>'`, then `npx ctx7@latest docs '<returned ID>' '<question>'`; resolve first, at most three requests per question, report quota errors and suggest login/API-key setup rather than guessing. Never send secrets. Context7 sometimes did not index component-specific options; installed pinned Kconfig/source supplied the exact separate-TX-lock contract.
+
+Authorized release workflow: build/sign with `python3 tools/build-macos.py`; preview `python3 tools/install-release.py upgrade --source .runtime/v02-build/Zero.app --dry-run`; execute only within the requested deployment scope. Match compatible host protocol first, then firmware, and retain backups. Review Keychain prompts locally.
+
+**Firmware recovery protections:** verified full-flash backups are private, including `.runtime/recovery/zero-before-v02.bin` and its production recovery copy; original AuxDeck backup remains `.runtime/recovery/auxdeck-original.bin`. These contain provisioning/keys: never commit, print or upload their contents. Reverify checksum artifacts before a future flash. The routine upgrade writes only application offset `0x10000`; do not erase all flash or use README’s old full-region example casually. UART/serial opening resets this board even with DTR/RTS disabled, so account for that intentional interruption in evidence.
+
+## 8. How to take over safely
+
+1. Read these three root documents and the current user request. Check `git status`, installed versions and health without changing session state.
+2. Preserve the uncommitted implementation inventory from the snapshot. `git checkout` of the old implementation HEAD would not reproduce the installed build 7. Do not automatically commit unfinished physical fixes as accepted work.
+3. If engineering is requested, define the next bounded verification target and isolate development from production. Treat failed physical captures as failures even though software tests pass.
+4. Update snapshot with exact outcomes/current dirty work, and reconcile this handoff before ending. Keep logs and long incident details in evidence files; never turn AGENTS.md into a running diary.
+
+The AGENTS.md base is the community `multica-ai/andrej-karpathy-skills` guidance at commit `2c606141936f1eeef17fa3043a72095b4765b9c2`, adapted to agent-neutral naming. Upstream README declares MIT and explicitly invites copying/customization; no claim is made that Karpathy authored that repository.
