@@ -36,6 +36,8 @@ static QueueHandle_t messages, audio_messages;
 static esp_websocket_client_handle_t ws;
 static volatile bool connected, wifi_ready;
 static bool welcomed;
+static int64_t panel_test_until, debug_at;
+static unsigned queue_overflows;
 static uint64_t audio_sequence;
 static unsigned audio_received, audio_accepted;
 static int64_t audio_age;
@@ -84,9 +86,11 @@ static void websocket_event(void *arg, esp_event_base_t base, int32_t id,
   (void)base;
   esp_websocket_event_data_t *e = data;
   if (id == WEBSOCKET_EVENT_CONNECTED) {
+    puts("ZERO SOCKET CONNECTED");
     connected = true;
     rx_used = 0;
   } else if (id == WEBSOCKET_EVENT_DISCONNECTED) {
+    puts("ZERO SOCKET DISCONNECTED");
     connected = false;
     rx_used = 0;
   } else if (id == WEBSOCKET_EVENT_DATA) {
@@ -94,6 +98,7 @@ static void websocket_event(void *arg, esp_event_base_t base, int32_t id,
       return;
     if (e->payload_len > 8192 || e->data_len < 0 ||
         rx_used + (size_t)e->data_len > 8192) {
+      printf("ZERO FRAME BOUNDS len=%d used=%u chunk=%d\n",e->payload_len,(unsigned)rx_used,e->data_len);
       connected = false;
       rx_used = 0;
       return;
@@ -106,8 +111,11 @@ static void websocket_event(void *arg, esp_event_base_t base, int32_t id,
       rx[rx_used] = 0;
       if(rx_used<1024 && strstr(rx,"\"type\":\"display.telemetry\"")) {
         char latest[1024]={0};memcpy(latest,rx,rx_used+1);xQueueOverwrite(audio_messages,latest);
-      } else if (xQueueSend(messages, rx, 0) != pdTRUE)
+      } else if (xQueueSend(messages, rx, 0) != pdTRUE) {
+        queue_overflows++;
+        puts("ZERO COMMAND QUEUE OVERFLOW");
         connected = false;
+      }
       rx_used = 0;
     }
   }
@@ -118,8 +126,10 @@ static void wifi_event(void *arg, esp_event_base_t base, int32_t id,
   (void)data;
   if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP)
     wifi_ready = true;
-  else if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED)
+  else if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED) {
+    printf("ZERO WIFI LOST reason=%u\n",((wifi_event_sta_disconnected_t*)data)->reason);
     wifi_ready = false;
+  }
 }
 static void handle(const char *message) {
   cJSON *root = zero_json(message);
@@ -146,12 +156,16 @@ static void handle(const char *message) {
     strcpy(session_id, s);
     welcomed = true;
     audio_sequence=0;
-    send_message("node.register", "{\"render_schema\":\"0.2\",\"artwork\":\"rgb565-32\",\"audio\":\"levels-v1\",\"firmware\":"
+    send_message("node.register", "{\"render_schema\":\"0.2\",\"artwork\":\"rgb565-32\",\"audio\":\"levels-v2\",\"firmware\":"
                                   "\"" ZERO_VERSION "\",\"build\":\"" ZERO_BUILD "\",\"capabilities\":["
                                   "\"display.render\",\"display.clear\"]}");
     printf("ZERO ONLINE heap=%lu\n", (unsigned long)esp_get_free_heap_size());
   } else if (!strcmp(type,"display.telemetry") && welcomed) {
     audio_received++;
+    zero_levels levels;
+    if(!zero_audio_object(body,&levels)||strcmp(levels.session_id,session_id))return;
+    char receipt[256];snprintf(receipt,sizeof(receipt),"{\"session_id\":\"%s\",\"sequence\":%llu}",session_id,(unsigned long long)levels.sequence);
+    send_message("display.telemetry.ack",receipt);
     if(!fraction)return;
     struct timeval current;gettimeofday(&current,NULL);
     int64_t sent=(int64_t)mktime(&runtime_time)*1000;
@@ -159,8 +173,7 @@ static void handle(const char *message) {
     int64_t age=(int64_t)current.tv_sec*1000+current.tv_usec/1000-sent;
     audio_age=age;
     if(age< -1000||age>500)return;
-    zero_levels levels;
-    if(zero_audio_object(body,&levels)&&!strcmp(levels.session_id,session_id)&&levels.sequence>audio_sequence){
+    if(levels.sequence>audio_sequence){
       audio_accepted++;
       audio_sequence=levels.sequence;
       display_levels(levels.level,levels.bass,esp_timer_get_time()/1000);
@@ -190,7 +203,7 @@ static void handle(const char *message) {
       if (view.running && view.since_ms > 0 && now_ms > view.since_ms)
         view_elapsed += now_ms - view.since_ms;
       view_at = esp_timer_get_time() / 1000;
-      display_status(&view, true, view_elapsed);
+      if(esp_timer_get_time()/1000>=panel_test_until)display_status(&view, true, view_elapsed);
     }
     char result[320];
     snprintf(result, sizeof(result),
@@ -201,6 +214,8 @@ static void handle(const char *message) {
   }
 }
 static void serial_command(const char *line) {
+  if(!strcmp(line,"PANELGRAY")){panel_test_until=esp_timer_get_time()/1000+30000;display_gray_test();puts("ZERO PANEL GRAY 30 SECONDS");return;}
+  if(!strcmp(line,"PANELTEST")){panel_test_until=esp_timer_get_time()/1000+15000;display_test();puts("ZERO PANEL WHITE 15 SECONDS");return;}
   if (!strcmp(line, "CSR")) {
     printf("ZERO FINGERPRINT %s\nZERO CSR BEGIN\n%sZERO CSR END\n", fingerprint,
            csr);
@@ -335,7 +350,7 @@ void app_main(void) {
                                            .client_key = key,
                                            .cert_common_name = "zero.local",
                                            .reconnect_timeout_ms = 1000,
-                                           .network_timeout_ms = 3000,
+                                           .network_timeout_ms = 10000,
                                            .buffer_size = 2048,
                                            .task_stack = 8192};
       ws = esp_websocket_client_init(&cfg);
@@ -375,12 +390,13 @@ void app_main(void) {
       printf("ZERO HEALTH %s audio_rx=%u audio_ok=%u audio_age=%lld media=%s\n", body,audio_received,audio_accepted,(long long)audio_age,view.media);
       last_heartbeat = now;
     }
-    if (cert[0] && now - last_screen >= 1000) {
+    if (cert[0] && now>=panel_test_until && now - last_screen >= 1000) {
       display_status(&view, welcomed,
                      view_elapsed + (view.running ? now - view_at : 0));
       last_screen = now;
     }
-    if(cert[0])display_animate(now,welcomed);
+    if(cert[0] && now>=panel_test_until)display_animate(now,welcomed);
+    if(now-debug_at>=10000){printf("ZERO LINK wifi=%d socket=%d welcomed=%d queue_overflows=%u audio_rx=%u audio_ok=%u\n",wifi_ready,connected,welcomed,queue_overflows,audio_received,audio_accepted);debug_at=now;}
     esp_task_wdt_reset();
     vTaskDelay(pdMS_TO_TICKS(10));
   }

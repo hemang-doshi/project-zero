@@ -47,7 +47,7 @@ func (r *Runtime) AudioLevels(ctx context.Context, node string) (AudioFrame, boo
 	defer tx.Rollback()
 	var raw []byte
 	var profile map[string]string
-	if tx.QueryRowContext(ctx, "SELECT e.value FROM entities e JOIN nodes n ON n.id=e.key WHERE e.kind='node_profile' AND e.key=? AND n.revoked=0", node).Scan(&raw) != nil || json.Unmarshal(raw, &profile) != nil || profile["audio"] != "levels-v1" {
+	if tx.QueryRowContext(ctx, "SELECT e.value FROM entities e JOIN nodes n ON n.id=e.key WHERE e.kind='node_profile' AND e.key=? AND n.revoked=0", node).Scan(&raw) != nil || json.Unmarshal(raw, &profile) != nil || profile["audio"] != "levels-v2" {
 		return frame, false
 	}
 	source, e := readIntegration(ctx, tx, "spotify")

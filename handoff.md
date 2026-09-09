@@ -1,16 +1,18 @@
 # Project Zero — full project handoff
 
-Updated: **2026-09-09**. Start with [AGENTS.md](AGENTS.md) and [snapshot.md](snapshot.md). This document supplies durable context; the snapshot supplies the newest checkout/installation/test state. Every agent must maintain both. Pending items are not permission to resume a task the user stopped.
+Updated: **2026-09-09 12:33 IST**. Start with [AGENTS.md](AGENTS.md) and [snapshot.md](snapshot.md). This document supplies durable context; the snapshot supplies the newest checkout/installation/test state. Every agent must maintain both. Pending items are not permission to resume a task the user stopped.
 
 ## 1. Current user direction and project purpose
 
-The user is moving this work into a new chat. They asked to leave the display band alone and create these documents. No further implementation, hardware tests or automatic monitoring should start from this handoff alone.
+The user reaffirmed that Project Zero needs a dedicated native macOS application comparable in role to the Codex desktop app. That application is the primary cockpit and abstraction layer. The menu bar is a compact companion for status, permissions/approvals and useful quick controls; it must not be the main project-selection, intent-entry or coding interface. Remove the menu's “Work on Project Zero” workflow from the product direction. Show elapsed focus time with hours in the native app instead of unbounded minutes. The reported roughly 20-second menu pause/resume-to-ESP32 delay is a major reliability defect; connected propagation should feel immediate and offline/queued state must be explicit.
+
+The user wants the future conversational layer to reuse the existing Codex ChatGPT login if supported: general typed input, transcribed voice and model-assisted intent understanding use GPT-5.6 Luna at medium reasoning, while actual coding work uses GPT-5.6 Sol at medium reasoning. Preserve local deterministic parsing for known Zero commands. There is no advertised GPT-6 Luna model. No implementation, deployment, hardware test or automatic model invocation was authorized or performed in the review that recorded this direction. Continue to leave the display band alone unless the user reopens it.
 
 Project Zero is a personal, local-first environment runtime on the personal Mac, with a dedicated ESP32 desk display. The everyday loop is: explicitly select a project, start focus, see elapsed/state/connectivity plus Git, observed agent status and Spotify, pause/resume using BOOT, and recover durable state across restarts. The runtime owns state; interfaces reflect committed state and show uncertainty honestly.
 
 The user values execution after planning, predictable installation, consistent versions and minimal configuration burden. Avoid repeated approval questions for already-authorized reversible work. Use one agent in the same task, meaningful test-first changes and evidence before completion claims. Do not hide an unsupported integration or a physical failure behind a passing simulator test.
 
-Canonical product specification: [PROJECT_ZERO_SPEC.md](PROJECT_ZERO_SPEC.md), originally [the Google specification](https://docs.google.com/document/d/1LLFTPbh4YMIST0SH27XJmf3ITT1vlHki-crrpNFbu_I/edit?tab=t.0). Latest approved release plan/design:
+Canonical product specification: [PROJECT_ZERO_SPEC.md](PROJECT_ZERO_SPEC.md), originally [the Google specification](https://docs.google.com/document/d/1LLFTPbh4YMIST0SH27XJmf3ITT1vlHki-crrpNFbu_I/edit?tab=t.0). Its header still says **Version 0.1** even though the current product/release branch is 0.2.0; do not describe the canonical file itself as spec v0.2 until it is deliberately revised. Latest approved release plan/design:
 
 - [v0.2 complete implementation and reliable installation](docs/superpowers/plans/2026-09-09-v02-release.md)
 - [release design](docs/superpowers/specs/2026-09-09-v02-release-design.md)
@@ -40,7 +42,7 @@ Canonical product specification: [PROJECT_ZERO_SPEC.md](PROJECT_ZERO_SPEC.md), o
 | Policy and effects | `core/runtime/actions.go`, `dispatch.go`. Permission states DENIED, ASK, SESSION_ALLOWED, ALWAYS_ALLOWED; deny precedence, exact-action approval, deadlines, desired display restoration and transactional outbox. Never blindly repeat an uncertain non-idempotent effect. |
 | Projects / focus / context | `core/runtime` personal/session/context code. Stable project registration and aliases, explicit end/switch, accumulated elapsed time, provenance/freshness and explicit override precedence. RUNNING time includes runtime downtime; PAUSED time freezes. Projection rebuild must not dispatch physical effects. |
 | Integrations | `integrations/git`, runtime integration/workers code, native helpers. Fixed Git arguments/timeouts on registered paths only, no fetch/scripts/file mutation. Integration work stays outside serialized transactions. Spotify nominally polls every 2 s while enabled/running; Git every 15 s during focus. |
-| Native UI | `apps/macos`: `ZeroMenu` SwiftUI/AppKit, `ZeroKit` Unix transport/artwork/filter code, `ZeroMacObserve` Spotify scripting, `ZeroAudio` Core Audio tap. Pending request identity survives transport uncertainty. |
+| Native UI | `apps/macos`: the current `ZeroMenu` SwiftUI/AppKit window is only an early menu-bar interface, not the required native cockpit. `ZeroKit` provides Unix transport/artwork/filter code; `ZeroMacObserve` provides Spotify scripting; `ZeroAudio` provides the Core Audio tap. Pending request identity survives transport uncertainty. The next UI design must introduce a normal native app window, reduce the menu surface, and format elapsed time as hours/minutes/seconds. |
 | ESP32 | `nodes/esp32-desk/main`: protocol parser, rendering, provisioning, keys, debounced BOOT, Wi-Fi/WebSocket lifecycle. |
 | Schemas / generators | `proto/schemas`, `proto/fixtures`; `tools/schema-gen.py`, `tools/release-gen.py`. Display fixtures run in Go and C. Do not manually diverge generated metadata. |
 | Install / recovery | `tools/build-macos.py`, `install-release.py`, `setup-signing.py`; `docs/runbooks/`. |
@@ -89,6 +91,8 @@ Do not repeat the earlier completion claims. Initial streaming sent about 20 JSO
 
 Current command queue has two 8,193-byte slots; audio has a separate 1,024-byte overwrite slot. The overflow path sets the firmware `connected` flag false without necessarily closing/restarting the underlying WebSocket. This is an important observed failure path, not a verified complete root cause. A future authorized investigation should model control-message bursts/ACKs and lifecycle recovery; do not simply keep increasing queues/timeouts and declare victory.
 
+The user subsequently measured roughly 20 seconds between a menu pause/resume and the change appearing on the ESP32. The local command path commits immediately and a healthy connected node checks pending work every 100 ms. At 12:33 IST, `zero doctor` reported the desk OFFLINE with last seen `2026-09-09T06:29:42.141Z`, and the production daemon log contained repeated `capability.invoke` write timeouts, broken pipes and closed-connection failures. Treat the delay as failed delivery followed by retry/reconnect, not as an acceptable polling interval. Future acceptance should separately measure command commit, transport send, firmware receipt/result and first rendered frame; target a sub-second visible update while connected and show explicit offline/queued state otherwise.
+
 `core/api/telemetry.go`/test and the latest changes are uncommitted. Receipt message type is in the envelope list, but a separate receipt-body schema/conformance audit is still missing. Receipt handling currently also passes through general `Seen` metadata persistence; review that cost and lifecycle behavior if resuming flow-control work. Missing receipts suspend streaming until receipt/session recovery; that behavior needs physical coverage.
 
 Evidence: `.runtime/flow-acceptance.log` is the latest failed capture; earlier `.runtime/link-build6-acceptance.log`, `link-final-acceptance.log`, `link-tx-lock-acceptance.log` explain rejected fixes. [Display/link evidence](docs/evidence/2026-09-09-display-link-debugging.md) may end before the latest interrupted capture; this handoff/snapshot explicitly supersede optimistic or in-progress lines there.
@@ -99,11 +103,18 @@ User photo: `/Users/hemangdoshi/Downloads/IMG_7296.heic` (local personal referen
 
 This implicates panel/cover/controller-level response rather than the text/waveform painting. **Exact physical cause is not established; do not claim confirmed dead pixels or a repaired panel.** The user said to leave it. USB diagnostic commands `PANELTEST` (white, 15 s) and `PANELGRAY` (gray, 30 s) return automatically; do not run them unasked now.
 
-## 6. Codex blockers and acceptance status
+## 6. Codex interface and acceptance status
 
-[Bounded Codex investigation](docs/evidence/2026-09-09-v02-codex-boundary.md): standalone CLI pinned at `~/Library/Application Support/ProjectZero/toolchains/codex-0.153.4/codex`; `/opt/homebrew/bin/codex` was repaired to point there. The supported app-server control socket was absent; desktop-owned service exposed no supported named attachment endpoint. Starting a separate managed server would not establish desktop observation. Generated turn/thread event schemas alone do not supply the missing attachment contract. Hooks remain experimental supporting signals only.
+[The earlier bounded Codex investigation](docs/evidence/2026-09-09-v02-codex-boundary.md) correctly found no supported way for Zero to attach to and observe a desktop-owned Codex turn at that time. The installation/interface has now materially changed. The pinned standalone CLI remains `~/Library/Application Support/ProjectZero/toolchains/codex-0.153.4/codex`, `/opt/homebrew/bin/codex` points there, and `codex login status` reports `Logged in using ChatGPT`. This binary exposes `codex app-server` over stdio, Unix socket or WebSocket. A bounded stdio probe initialized successfully and `model/list` returned the models available to this account. This supports building a Project Zero-owned Codex frontend without reading credentials or depending on a private desktop database/socket; it does not retroactively make desktop-observation claims true.
 
-Revisit only when the supported interface or installation materially changes. No repeated scheduled probes, resume-to-observe, replacement coding session or private database access. Restricted model parsing is also disabled until the pinned interface can enforce no repository/filesystem/shell/integration/coding tools; an empty dynamic-tool list does not prove that.
+Live advertised routes on 2026-09-09 were:
+
+- `gpt-5.6-luna`: low, medium, high, xhigh and max; default medium; text/image input.
+- `gpt-5.6-sol`: low, medium, high, xhigh, max and ultra; default low; text/image input.
+- `gpt-5.6-terra`: balanced coding route; low through ultra; default medium.
+- `gpt-6-astra`: low through ultra; no model named GPT-6 Luna was advertised.
+
+The intended first routing policy is deterministic local parsing for known Zero commands; GPT-5.6 Luna medium for general text, locally transcribed voice and ambiguous intent interpretation; and GPT-5.6 Sol medium for explicit coding work. The app-server's advertised models do not accept audio directly, so voice requires a separate transcription layer. Using an OpenAI Realtime/audio API would be a separate API-auth/billing path; a local Apple speech path can keep the Codex ChatGPT login as the only model authentication. Before enabling model parsing, prove bounded context, structured output, approval behavior, cancellation and that the non-coding route cannot acquire repository/shell tools. The current Zero runtime still has model parsing disabled.
 
 Passed evidence includes durable runtime/simulator work, automated migration/policy/session tests, native transport tests, real Spotify metadata/artwork, previous BOOT confirmation and user-confirmed manual setup notification. The notification says “Zero setup check”; it is **not** proof that an actual 45-minute automation fired correctly.
 

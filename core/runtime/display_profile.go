@@ -22,7 +22,7 @@ func (r *Runtime) Advertise(ctx context.Context, node string, body json.RawMessa
 	if len(body) > 2048 || json.Unmarshal(body, &b) != nil || len(b.Capabilities) > 2 || len(b.Firmware) > 64 || len(b.Build) > 64 {
 		return fmt.Errorf("VALIDATION: advertisement bounds")
 	}
-	if b.Audio != "" && b.Audio != "levels-v1" {
+	if b.Audio != "" && b.Audio != "levels-v1" && b.Audio != "levels-v2" {
 		return fmt.Errorf("VALIDATION: audio profile")
 	}
 	if b.Artwork != "" && b.Artwork != "rgb565-32" {
