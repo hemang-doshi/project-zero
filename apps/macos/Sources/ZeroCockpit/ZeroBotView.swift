@@ -30,365 +30,35 @@ struct ZeroBotModelOption: Identifiable, Equatable, Sendable {
     let advertised: Bool
 }
 
-struct ZeroBotProjectBinding: Codable, Equatable, Sendable {
-    let projectID: String
-    let name: String
-    let path: String
-
-    init(projectID: String, name: String, path: String) {
-        self.projectID = projectID
-        self.name = name
-        self.path = path
-    }
-
-    init(_ project: CockpitProject) {
-        self.init(projectID: project.id, name: project.name, path: project.path)
-    }
-}
-
-enum ZeroBotProjectBindingCodec {
-    static func decode(_ encoded: String) -> [String: ZeroBotProjectBinding] {
-        guard let data = encoded.data(using: .utf8),
-              let bindings = try? JSONDecoder().decode([String: ZeroBotProjectBinding].self, from: data) else {
-            return [:]
-        }
-        return bindings
-    }
-
-    static func encode(_ bindings: [String: ZeroBotProjectBinding]) -> String {
-        guard let data = try? JSONEncoder().encode(bindings) else { return "" }
-        return String(decoding: data, as: UTF8.self)
-    }
-}
-
-struct ZeroBotEvidence: Equatable, Sendable {
-    let title: String
-    let content: String
-    let truncated: Bool
-}
-
-struct ZeroBotMetadataField: Equatable, Sendable {
-    let label: String
-    let value: String
-}
-
-enum ZeroBotApprovalAvailability: Equatable, Sendable {
-    case actionable
-    case blocked(String)
-
-    var reason: String? {
-        if case .blocked(let reason) = self { return reason }
-        return nil
-    }
-}
-
-struct ZeroBotThreadPresentation: Equatable {
-    let label: String
-    let symbol: String
-    let tone: ZeroTone
-}
-
-/// Sidebar row mapping: a thread grouped under its bound provider project.
-///
-/// Layout only — the workspace path comes straight from the bound project's
-/// registered snapshot path. The basename keeps rows scannable while the
-/// full path stays one hover away, which is the orientation Codex users
-/// asked for. Accessibility consumers always get the exact full path.
-struct ThreadRowPresentation: Equatable, Sendable {
-    let threadID: String
-    let title: String
-    let project: ZeroBotProjectBinding?
-
-    init(threadID: String, title: String = "", project: ZeroBotProjectBinding?) {
-        self.threadID = threadID
-        self.title = title
-        self.project = project
-    }
-
-    var subtitle: String {
-        guard let project else { return threadID }
-        return "\(project.name) · \(threadID)"
-    }
-
-    var accessibilityPath: String { project?.path ?? "" }
-
-    var workspaceBasename: String {
-        guard let path = project?.path, !path.isEmpty else { return "" }
-        return (path as NSString).lastPathComponent
-    }
-
-    var tooltip: String { accessibilityPath }
-}
-
-/// Sidebar row mapping for an OpenCode ACP session: the row's title is the
-/// head of the bounded retained transcript, never a guess.
-struct OpenCodeSessionRow: Equatable, Sendable {
-    let id: String
-    let title: String
-    let subtitle: String
-}
-
-/// Composer labels with honest per-provider capability wording.
-///
-/// The Codex app-server exposes interrupt-then-new-turn, not mid-turn steer,
-/// so its control must never be labelled "Steer". OpenCode ACP exposes
-/// `session/cancel`, which hands control back to the operator turn loop and
-/// earns the steer wording. Attachments have no provider evidence on either
-/// bridge, so attach stays disabled with a reason everywhere.
-enum ZeroBotComposer {
-    static func steerLabel(for provider: ProviderID) -> String {
-        switch provider {
-        case .codex: "Stop & redirect"
-        case .opencode: "Steer"
-        }
-    }
-
-    static func supportsMidTurnSteer(for provider: ProviderID) -> Bool {
-        provider == .opencode
-    }
-
-    static func steerExplanation(for provider: ProviderID) -> String {
-        switch provider {
-        case .codex:
-            "Codex interrupts the exact turn, then a new turn starts — it cannot steer mid-turn."
-        case .opencode:
-            "OpenCode cancels the turn (session/cancel) so a new prompt can steer it."
-        }
-    }
-
-    static func attachUnavailableReason(for provider: ProviderID) -> String? {
-        switch provider {
-        case .codex: "This Codex connection advertises no attachment input."
-        case .opencode: "This OpenCode connection advertises no attachment input."
-        }
-    }
-
-    static func voiceUnavailableReason(for provider: ProviderID) -> String {
-        switch provider {
-        case .codex: "Voice input is not wired to the Codex app-server in this build; use system dictation."
-        case .opencode: "Voice input is not wired to OpenCode ACP in this build; use system dictation."
-        }
-    }
-}
-
-/// Harness split for the conversational UI: GPT models ride Codex only,
-/// Muse Spark rides OpenCode only. The lock lives on `ProviderID.allowsModel`;
-/// these wrappers keep the view and its tests on the same predicate. A
-/// mismatch never reroutes and never reads the other harness's session store
-/// (including the desktop-owned Codex DB) — the composer shows an inline
-/// warning row and records a mirror file under `zero-meta/{harness}/` instead.
-enum Harness: String, CaseIterable, Sendable {
-    case codex, opencode
-
-    /// Total mapping: the harness is derived from the provider selection, so
-    /// the two selectors can never visibly disagree.
-    init(provider: ProviderID) {
-        switch provider {
-        case .codex: self = .codex
-        case .opencode: self = .opencode
-        }
-    }
-
-    var provider: ProviderID {
-        switch self {
-        case .codex: .codex
-        case .opencode: .opencode
-        }
-    }
-
-    var title: String { provider.displayName }
-}
-
-func isModelAllowed(_ model: String, in harness: Harness) -> Bool {
-    harness.provider.allowsModel(model)
-}
-
-func mirrorPath(for harness: Harness, threadID: String) -> URL {
-    let base = FileManager.default.homeDirectoryForCurrentUser
-        .appendingPathComponent("Library/Application Support/ProjectZero/zero-meta")
-    return base.appendingPathComponent(harness.rawValue).appendingPathComponent("\(threadID).json")
-}
-
-func models(for harness: Harness) -> [String] {
-    switch harness {
-    case .codex: return ["gpt-5.6-luna", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-6-astra"]
-    case .opencode: return ["muse-spark-1.3"]
-    }
-}
-
-func harnessMismatchWarning(model: String, harness: Harness) -> String? {
-    guard !isModelAllowed(model, in: harness) else { return nil }
-    let home: String =
-        harness == .codex ? "Codex (GPT only)" : "OpenCode (Muse Spark only)"
-    return "Model \(model) is not allowed in the \(harness.title) harness. "
-        + "It stays locked to its home harness (\(home)); this mismatch was mirrored, not sent."
-}
-
-/// Records a harness mismatch as an explicit mirror file. Best-effort: never
-/// throws on the send path, and never touches either provider's session store.
-@discardableResult
-func writeMirrorFile(for harness: Harness, threadID: String, model: String, note: String) -> URL? {
-    let url = mirrorPath(for: harness, threadID: threadID)
-    let payload: [String: String] = [
-        "harness": harness.rawValue,
-        "threadID": threadID,
-        "model": model,
-        "note": note,
-        "recordedAt": ISO8601DateFormatter().string(from: Date()),
-    ]
-    guard let data = try? JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted, .sortedKeys]) else {
-        return nil
-    }
-    do {
-        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try data.write(to: url, options: .atomic)
-        return url
-    } catch {
-        return nil
-    }
-}
-
-/// Right-dock inspector tabs mirroring the Codex panel grammar
-/// (Browser/Chat/Terminal/Review): Run / Diff / Telemetry / Raw protocol.
-enum ZeroBotInspectorTab: String, CaseIterable, Sendable {
-    case run
-    case diff
-    case telemetry
-    case raw
-
-    var title: String {
-        switch self {
-        case .run: "Run"
-        case .diff: "Diff"
-        case .telemetry: "Telemetry"
-        case .raw: "Raw"
-        }
-    }
-
-    var icon: String {
-        switch self {
-        case .run: "scope"
-        case .diff: "doc.badge.gearshape"
-        case .telemetry: "chart.bar.fill"
-        case .raw: "waveform.path.ecg"
-        }
-    }
-}
-
-/// Command-palette rows: a filtered list over existing selection state.
-/// Choosing a row only mutates local selection — no new authority.
-struct ZeroBotPaletteItem: Equatable, Sendable {
-    enum Kind: String, Sendable {
-        case thread
-        case project
-        case model
-    }
-
-    let id: String
-    let title: String
-    let subtitle: String
-    let kind: Kind
-}
-
-enum ZeroBotPalette {
-    static func filter(query: String, items: [ZeroBotPaletteItem]) -> [ZeroBotPaletteItem] {
-        let needle = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        guard !needle.isEmpty else { return items }
-        return items.filter {
-            $0.title.lowercased().contains(needle) || $0.subtitle.lowercased().contains(needle)
-        }
-    }
-}
-
-/// Composer-adjacent status strip rows. Every fact carries text + icon so
-/// state is never carried by color alone.
-struct ZeroBotStatusItem: Equatable, Sendable {
-    let icon: String
-    let text: String
-}
-
-enum ZeroBotStatusStrip {
-    static func items(
-        connectionLabel: String,
-        projectPath: String?,
-        modelID: String?,
-        usageGlance: String?,
-        syncState: String
-    ) -> [ZeroBotStatusItem] {
-        [
-            ZeroBotStatusItem(icon: "link.circle.fill", text: connectionLabel),
-            ZeroBotStatusItem(
-                icon: "folder.fill",
-                text: projectPath.map { "Project \($0)" } ?? "No project selected"
-            ),
-            ZeroBotStatusItem(
-                icon: "cpu.fill",
-                text: modelID.map { "Model \($0)" } ?? "No model selected"
-            ),
-            ZeroBotStatusItem(icon: "chart.bar.fill", text: usageGlance ?? "No usage yet"),
-            ZeroBotStatusItem(icon: "arrow.triangle.2.circlepath", text: syncState),
-        ]
-    }
-}
-
-enum ZeroBotTypography {
-    static let usesDynamicTypeRelativeStyles = true
-    static let minimumProminentStyle: Font.TextStyle = .caption2
-
-    static func font(
-        _ style: Font.TextStyle,
-        weight: Font.Weight = .regular,
-        design: Font.Design = .default
-    ) -> Font {
-        (design == .monospaced ? Font.zeroMono(style) : Font.zero(style)).weight(weight)
-    }
-}
-
 struct ZeroBotProjection {
     let snapshot: CockpitSnapshot?
-    let runtimeConnection: RuntimeConnectionState
     let connection: CodexConnectionState
     let store: CodexEventStore
-    let openCodeConnection: CodexConnectionState
-    let openCodeStore: OpenCodeEventStore
     let threadSettings: [String: CodexSettings]
-    let threadProjects: [String: ZeroBotProjectBinding]
     let models: [CodexJSON]
 
     @MainActor
-    init(model: CockpitModel, threadProjects: [String: ZeroBotProjectBinding] = [:]) {
+    init(model: CockpitModel) {
         self.init(
             snapshot: model.snapshot,
-            runtimeConnection: model.runtimeConnection,
             connection: model.codexConnection,
             store: model.codex.store,
-            openCodeConnection: model.openCodeConnection,
-            openCodeStore: model.openCode.store,
             threadSettings: model.codex.threadSettings,
-            threadProjects: threadProjects,
             models: model.codex.models
         )
     }
 
     init(
         snapshot: CockpitSnapshot?,
-        runtimeConnection: RuntimeConnectionState = .live,
         connection: CodexConnectionState,
         store: CodexEventStore,
-        openCodeConnection: CodexConnectionState = .disconnected,
-        openCodeStore: OpenCodeEventStore = OpenCodeEventStore(),
         threadSettings: [String: CodexSettings],
-        threadProjects: [String: ZeroBotProjectBinding] = [:],
         models: [CodexJSON]
     ) {
         self.snapshot = snapshot
-        self.runtimeConnection = runtimeConnection
         self.connection = connection
         self.store = store
-        self.openCodeConnection = openCodeConnection
-        self.openCodeStore = openCodeStore
         self.threadSettings = threadSettings
-        self.threadProjects = threadProjects
         self.models = models
     }
 
@@ -404,60 +74,6 @@ struct ZeroBotProjection {
             let right = $1.title.isEmpty ? $1.id : $1.title
             return left.localizedCaseInsensitiveCompare(right) == .orderedAscending
         }
-    }
-
-    /// OpenCode sessions from the Project Zero-owned ACP bridge store, sorted
-    /// by ID for a deterministic sidebar. Never reads any other session
-    /// database; empty while OpenCode is offline.
-    var openCodeSessions: [OpenCodeSession] {
-        openCodeStore.sessions.values.sorted { $0.id < $1.id }
-    }
-
-    func openCodeSession(id: String?) -> OpenCodeSession? {
-        guard let id else { return nil }
-        return openCodeStore.session(id: id)
-    }
-
-    var openCodeSessionRows: [OpenCodeSessionRow] {
-        openCodeSessions.map { session in
-            OpenCodeSessionRow(id: session.id, title: Self.openCodeSessionTitle(session), subtitle: session.id)
-        }
-    }
-
-    static func openCodeSessionTitle(_ session: OpenCodeSession) -> String {
-        let line = session.transcript
-            .split(separator: "\n", omittingEmptySubsequences: true)
-            .first.map(String.init) ?? ""
-        guard !line.isEmpty else { return "Untitled session" }
-        return line.count > 48 ? String(line.prefix(48)) + "…" : line
-    }
-
-    var openCodeConnectionPresentation: (label: String, detail: String, tone: ZeroTone) {
-        switch openCodeConnection {
-        case .disconnected:
-            return ("Disconnected", "Connect manually to the local OpenCode ACP bridge.", .neutral)
-        case .connecting:
-            return ("Connecting", "Negotiating the local OpenCode ACP protocol.", .attention)
-        case .connected:
-            return ("Connected", "Project Zero owns this OpenCode ACP session.", .healthy)
-        case .exited(let code):
-            return ("Exited \(code)", "The local OpenCode process ended. Reconnect explicitly.", .error)
-        case .failed(let message):
-            return ("Failed", message.isEmpty ? "The local OpenCode transport failed." : message, .error)
-        }
-    }
-
-    /// Retained-vs-live truth for OpenCode, mirroring the Codex evidence rule:
-    /// offline sessions are retained evidence, never actionable runs.
-    var openCodeRetainedNotice: String? {
-        guard openCodeConnection != .connected, !openCodeSessions.isEmpty || !openCodeStore.unknownEvents.isEmpty else {
-            return nil
-        }
-        return "Visible OpenCode state is retained evidence, not a live or actionable run."
-    }
-
-    func openCodeEvents(sessionID: String) -> [OpenCodeEvent] {
-        openCodeStore.unknownEvents.filter { $0.sessionID == sessionID }
     }
 
     var connectionPresentation: (label: String, detail: String, tone: ZeroTone) {
@@ -476,7 +92,7 @@ struct ZeroBotProjection {
     }
 
     var historyNotice: String {
-        let dropped = store.truncation.threads + store.truncation.turns + store.truncation.items + store.truncation.unknownEvents + store.truncation.approvals
+        let dropped = store.truncation.threads + store.truncation.turns + store.truncation.items + store.truncation.unknownEvents
         var parts = ["Codex history is held only in bounded application memory."]
         if connection != .connected && (!store.threads.isEmpty || !store.approvals.isEmpty) {
             parts.append("Visible Codex state is retained evidence, not a live or actionable run.")
@@ -523,46 +139,21 @@ struct ZeroBotProjection {
         return threadSettings[threadID] != nil
     }
 
-    func projectBinding(threadID: String?) -> ZeroBotProjectBinding? {
-        guard let threadID else { return nil }
-        return threadProjects[threadID]
-    }
-
-    func projectSelectionMismatch(threadID: String?, selectedProjectID: String?) -> Bool {
-        guard let binding = projectBinding(threadID: threadID), let selectedProjectID else { return false }
-        return selectedProjectID != binding.projectID
-    }
-
-    func hasCurrentProjectBinding(threadID: String?) -> Bool {
-        guard runtimeConnection == .live,
-              snapshot != nil,
-              let threadID,
-              threadSettings[threadID] != nil,
-              store.thread(id: threadID) != nil,
-              let binding = threadProjects[threadID] else { return false }
-        return registeredProjects.contains {
-            $0.id == binding.projectID && $0.name == binding.name && $0.path == binding.path
-        }
-    }
-
     func settings(threadID: String?) -> CodexSettings? {
         guard let threadID else { return nil }
         return threadSettings[threadID]
     }
 
     func canStartThread(projectID: String?, modelID: String) -> Bool {
-        guard runtimeConnection == .live,
-              snapshot != nil,
-              connection == .connected,
+        guard connection == .connected,
               let projectID,
               isAdvertisedModel(modelID) else { return false }
         return registeredProjects.contains { $0.id == projectID }
     }
 
-    func canSend(threadID: String?, selectedProjectID: String?, text: String) -> Bool {
+    func canSend(threadID: String?, text: String) -> Bool {
         connection == .connected
-            && hasCurrentProjectBinding(threadID: threadID)
-            && projectBinding(threadID: threadID)?.projectID == selectedProjectID
+            && isOwned(threadID: threadID)
             && !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
@@ -577,12 +168,7 @@ struct ZeroBotProjection {
     }
 
     func canInterrupt(threadID: String?, turnID: String?) -> Bool {
-        guard connection == .connected,
-              hasCurrentProjectBinding(threadID: threadID),
-              let threadID,
-              let turnID,
-              let turn = store.thread(id: threadID)?.turns[turnID] else { return false }
-        return Self.isActive(status: turn.status)
+        connection == .connected && isOwned(threadID: threadID) && turnID != nil
     }
 
     var retainedOnly: Bool { connection != .connected }
@@ -591,128 +177,8 @@ struct ZeroBotProjection {
         retainedOnly ? "RETAINED · \(status.uppercased())" : status.uppercased()
     }
 
-    func evidenceTone(_ liveTone: ZeroTone) -> ZeroTone {
-        retainedOnly ? .neutral : liveTone
-    }
-
     var approvalCountLabel: String {
         "\(store.approvals.count) \(retainedOnly ? "RETAINED" : "PENDING")"
-    }
-
-    func threadPresentation(threadID: String?) -> ZeroBotThreadPresentation {
-        if retainedOnly {
-            return ZeroBotThreadPresentation(label: "RETAINED EVIDENCE", symbol: "archivebox.fill", tone: .neutral)
-        }
-        if hasCurrentProjectBinding(threadID: threadID) {
-            return ZeroBotThreadPresentation(label: "OWNED SESSION", symbol: "checkmark.shield.fill", tone: .healthy)
-        }
-        if isOwned(threadID: threadID) {
-            return ZeroBotThreadPresentation(label: "OWNERSHIP UNVERIFIED", symbol: "exclamationmark.shield.fill", tone: .attention)
-        }
-        return ZeroBotThreadPresentation(label: "HISTORY ONLY", symbol: "lock.fill", tone: .neutral)
-    }
-
-    func tokenUsageBadge(truncated: Bool) -> String {
-        if truncated { return "CLIPPED" }
-        return retainedOnly ? "RETAINED" : "CURRENT"
-    }
-
-    var retainedConnectionEvidence: String? {
-        guard retainedOnly, !store.threads.isEmpty || !store.approvals.isEmpty else { return nil }
-        switch connection {
-        case .failed(let message): return message.isEmpty ? "The local Codex transport failed." : message
-        case .exited(let code): return "The local Codex process exited with status \(code)."
-        case .disconnected: return "Codex is disconnected."
-        case .connecting: return "Codex is reconnecting; retained evidence is not actionable."
-        case .connected: return nil
-        }
-    }
-
-    func approvalAvailability(
-        _ approval: CodexApproval,
-        selectedThreadID: String?
-    ) -> ZeroBotApprovalAvailability {
-        guard Self.approvalResponse(method: approval.method, approve: true) != nil else {
-            return .blocked("This request method does not have a safely implemented response.")
-        }
-        guard store.approvals.contains(approval) else {
-            return .blocked("This exact request is no longer pending in the current Codex store.")
-        }
-        guard !Self.jsonText(approval.params).truncated else {
-            return .blocked("The request payload exceeds the safe display boundary.")
-        }
-        guard connection == .connected else {
-            return .blocked("Codex is not connected; this request is retained evidence only.")
-        }
-        guard runtimeConnection == .live, snapshot != nil else {
-            return .blocked("The Project Zero runtime and project registry must be live.")
-        }
-        guard let threadID = approval.params["threadId"].string, !threadID.isEmpty else {
-            return .blocked("The request has no exact thread identity.")
-        }
-        guard threadID == selectedThreadID else {
-            return .blocked("Select the exact requesting thread before responding.")
-        }
-        guard hasCurrentProjectBinding(threadID: threadID) else {
-            return .blocked("The request is not bound to a current Project Zero-owned project thread.")
-        }
-        guard let turnID = approval.params["turnId"].string, !turnID.isEmpty,
-              let turn = store.thread(id: threadID)?.turns[turnID], Self.isActive(status: turn.status) else {
-            return .blocked("The request does not match a current active turn in that thread.")
-        }
-        guard let itemID = approval.params["itemId"].string, !itemID.isEmpty,
-              let item = store.thread(id: threadID)?.item(id: itemID), item.turnID == turnID else {
-            return .blocked("The request item does not match that exact thread and turn.")
-        }
-        let category = ZeroBotItemCategory(kind: item.kind)
-        if approval.method == "item/commandExecution/requestApproval", category != .command {
-            return .blocked("The command approval does not match a command-execution item.")
-        }
-        if approval.method == "item/fileChange/requestApproval", category != .fileChange {
-            return .blocked("The file-change approval does not match a file-change item.")
-        }
-        return .actionable
-    }
-
-    var protocolErrorEvidence: ZeroBotEvidence? {
-        evidence(title: "APP-SERVER ERROR", value: store.lastError)
-    }
-
-    func turnErrorEvidence(_ turn: CodexTurn) -> ZeroBotEvidence? {
-        evidence(title: "TURN ERROR", value: turn.error)
-    }
-
-    func itemMetadataFields(_ item: CodexItem) -> [ZeroBotMetadataField] {
-        let metadata = item.metadata
-        var fields: [ZeroBotMetadataField] = []
-        switch ZeroBotItemCategory(kind: item.kind) {
-        case .command:
-            appendField("COMMAND", value: metadata["command"], suffix: nil, to: &fields)
-            appendField("WORKING DIRECTORY", value: metadata["cwd"], suffix: nil, to: &fields)
-            appendField("SOURCE", value: metadata["source"], suffix: nil, to: &fields)
-            appendField("PROCESS", value: metadata["processId"], suffix: nil, to: &fields)
-            appendField("EXIT CODE", value: metadata["exitCode"], suffix: nil, to: &fields)
-            appendField("DURATION", value: metadata["durationMs"], suffix: " ms", to: &fields)
-            appendField("PLUGIN", value: metadata["pluginId"], suffix: nil, to: &fields)
-            appendField("PLUGIN SCRIPT", value: metadata["scriptPath"], suffix: nil, to: &fields)
-            appendJSONField("PARSED ACTIONS", value: metadata["commandActions"], to: &fields)
-        case .fileChange:
-            appendJSONField("FILE CHANGES", value: metadata["changes"], to: &fields)
-        case .tool:
-            appendField("TOOL SERVER", value: metadata["server"], suffix: nil, to: &fields)
-            appendField("TOOL", value: metadata["tool"], suffix: nil, to: &fields)
-            appendField("NAMESPACE", value: metadata["namespace"], suffix: nil, to: &fields)
-            appendField("READ ONLY", value: metadata["readOnlyHint"], suffix: nil, to: &fields)
-            appendField("DURATION", value: metadata["durationMs"], suffix: " ms", to: &fields)
-            appendJSONField("ARGUMENTS", value: metadata["arguments"], to: &fields)
-        default:
-            break
-        }
-        return fields
-    }
-
-    func itemMetadataEvidence(_ item: CodexItem) -> ZeroBotEvidence? {
-        evidence(title: "BOUNDED ITEM METADATA", value: item.metadata)
     }
 
     static func approvalResponse(method: String, approve: Bool) -> CodexJSON? {
@@ -737,35 +203,6 @@ struct ZeroBotProjection {
         var suffix = data.suffix(limit)
         while let first = suffix.first, first & 0xC0 == 0x80 { suffix = suffix.dropFirst() }
         return ("…\n" + String(decoding: suffix, as: UTF8.self), true)
-    }
-
-    private func evidence(title: String, value: CodexJSON) -> ZeroBotEvidence? {
-        guard value != .null else { return nil }
-        let rendered = Self.jsonText(value)
-        return ZeroBotEvidence(title: title, content: rendered.text, truncated: rendered.truncated)
-    }
-
-    private func appendField(
-        _ label: String,
-        value: CodexJSON,
-        suffix: String?,
-        to fields: inout [ZeroBotMetadataField]
-    ) {
-        guard let scalar = Self.scalar(value), !scalar.isEmpty else { return }
-        fields.append(ZeroBotMetadataField(label: label, value: scalar + (suffix ?? "")))
-    }
-
-    private func appendJSONField(
-        _ label: String,
-        value: CodexJSON,
-        to fields: inout [ZeroBotMetadataField]
-    ) {
-        guard value != .null else { return }
-        let rendered = Self.jsonText(value, limit: 4_096)
-        fields.append(ZeroBotMetadataField(
-            label: label,
-            value: rendered.truncated ? "Clipped — inspect exact metadata below" : rendered.text
-        ))
     }
 
     private static func scalar(_ value: CodexJSON) -> String? {
@@ -799,41 +236,16 @@ public struct ZeroBotView: View {
     @State private var selectedThreadID: String?
     @State private var mode: CodexMode = .assist
     @State private var selectedModelID = CodexMode.assist.settings.model
-    @SceneStorage("projectZero.zeroBot.threadProjects.v1") private var encodedThreadProjects = ""
     @State private var intent = ""
     @State private var actionInFlight = false
     @State private var localNotice: String?
     @State private var expandedReasoning = Set<String>()
-    @State private var expandedMetadata = Set<String>()
     @State private var selectedUnknownIndex: Int?
-    @State private var sidebarSearch = ""
-    @State private var collapsedSidebarSections = Set<String>()
-    @State private var inspectorTab: ZeroBotInspectorTab = .run
-    @State private var paletteOpen = false
-    @State private var paletteQuery = ""
-    @State private var providerSelection = ProviderSelection()
-    @State private var harnessWarnings: [String] = []
-    @State private var selectedOpenCodeSessionID: String?
     @FocusState private var composerFocused: Bool
 
     public init(model: CockpitModel) { self.model = model }
 
-    /// Single source of truth for the harness: derived from the unified
-    /// provider selection, so the harness segmented control, the provider
-    /// picker, the composer lock, and the voice reason can never disagree.
-    private var harness: Harness { Harness(provider: providerSelection.provider) }
-
-    private var harnessSelection: Binding<Harness> {
-        Binding(
-            get: { Harness(provider: providerSelection.provider) },
-            set: { providerSelection.provider = $0.provider }
-        )
-    }
-
-    private var threadProjects: [String: ZeroBotProjectBinding] {
-        ZeroBotProjectBindingCodec.decode(encodedThreadProjects)
-    }
-    private var projection: ZeroBotProjection { ZeroBotProjection(model: model, threadProjects: threadProjects) }
+    private var projection: ZeroBotProjection { ZeroBotProjection(model: model) }
     private var selectedThread: CodexThread? { projection.thread(id: selectedThreadID) }
     private var activeTurn: CodexTurn? { projection.activeTurn(in: selectedThread) }
 
@@ -845,13 +257,9 @@ public struct ZeroBotView: View {
                     sessionHeader(wide: wide)
                     if wide {
                         HStack(alignment: .top, spacing: 12) {
-                            ResizablePane(.explorer(key: "zeroBot.explorer", defaultWidth: 250), handleEdge: .trailing) {
-                                explorer
-                            }
+                            explorer.frame(width: 250)
                             conversation.frame(maxWidth: .infinity)
-                            ResizablePane(.inspector(key: "zeroBot.inspector", defaultWidth: 330)) {
-                                inspector
-                            }
+                            inspector.frame(width: 330)
                         }
                     } else {
                         VStack(alignment: .leading, spacing: 12) {
@@ -869,17 +277,8 @@ public struct ZeroBotView: View {
         }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Zero Bot project chat and live execution workspace")
-        .sheet(isPresented: $paletteOpen) { paletteSheet }
         .onChange(of: mode) { _, newMode in
             selectedModelID = newMode.settings.model
-        }
-        .onChange(of: providerSelection) { _, selection in
-            if selection.provider == .codex, projection.isAdvertisedModel(selection.modelID) {
-                selectedModelID = selection.modelID
-            }
-        }
-        .onChange(of: Set(model.codex.store.threads.keys)) { _, retainedThreadIDs in
-            storeThreadProjects(threadProjects.filter { retainedThreadIDs.contains($0.key) })
         }
     }
 
@@ -888,18 +287,18 @@ public struct ZeroBotView: View {
         let identity = VStack(alignment: .leading, spacing: 7) {
             HStack(spacing: 7) {
                 Text("ZERO BOT")
-                    .font(ZeroBotTypography.font(.caption, weight: .black, design: .monospaced))
+                    .font(.system(size: 10, weight: .black, design: .monospaced))
                     .foregroundStyle(.white)
                     .padding(.horizontal, 6)
                     .padding(.vertical, 3)
                     .background(ZeroTheme.orange, in: RoundedRectangle(cornerRadius: 3))
                 Text(selectedThread.map(threadTitle) ?? "Project-owned Codex workspace")
-                    .font(ZeroBotTypography.font(.callout, weight: .bold, design: .monospaced))
+                    .font(.system(size: 12, weight: .bold, design: .monospaced))
                     .lineLimit(1)
                     .textSelection(.enabled)
             }
             Text("Live app-server evidence · explicit local authority · no desktop session scraping")
-                .font(ZeroBotTypography.font(.callout, weight: .medium))
+                .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(ZeroTheme.secondaryInk)
         }
 
@@ -921,21 +320,10 @@ public struct ZeroBotView: View {
         HStack(spacing: 8) {
             let state = projection.connectionPresentation
             ZeroStatusBadge(state.label, symbol: connectionSymbol, tone: state.tone)
-            Button {
-                paletteOpen = true
-            } label: {
-                Label("Switch", systemImage: "command")
-            }
-            .buttonStyle(ZeroButtonStyle(.quiet))
-            .focusEffectDisabled()
-            .keyboardShortcut("k", modifiers: [.command])
-            .help("Switch threads, projects, and models (⌘K)")
-            .accessibilityLabel("Open command palette")
             if model.codexConnection == .connected {
                 Button("Disconnect") {
                     model.disconnectCodex()
                     selectedThreadID = nil
-                    storeThreadProjects([:])
                     localNotice = "Codex disconnected. No thread or turn was started."
                 }
                 .buttonStyle(ZeroButtonStyle(.standard))
@@ -956,27 +344,23 @@ public struct ZeroBotView: View {
             VStack(alignment: .leading, spacing: 12) {
                 ZeroBotSectionHeader("Workspace Threads", badge: "\(projection.threads.count) VISIBLE")
                 Text("Select a registered project, then explicitly start a Project Zero-owned thread.")
-                    .font(ZeroBotTypography.font(.callout, weight: .medium))
+                    .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(ZeroTheme.secondaryInk)
 
-                TextField("Search threads or projects", text: $sidebarSearch)
-                    .font(ZeroBotTypography.font(.callout, design: .monospaced))
-                    .textFieldStyle(.roundedBorder)
-                    .accessibilityLabel("Search threads or projects")
-
-                sidebarSectionToggle(title: "REGISTERED PROJECTS", key: "projects")
-                if !collapsedSidebarSections.contains("projects") {
-                if filteredSidebarProjects.isEmpty {
+                Text("REGISTERED PROJECTS")
+                    .font(.system(size: 9, weight: .bold, design: .monospaced))
+                    .foregroundStyle(ZeroTheme.secondaryInk)
+                if projection.registeredProjects.isEmpty {
                     ZeroBotEmpty(
                         symbol: "folder.badge.questionmark",
-                        title: sidebarNeedle.isEmpty ? "No registered project available" : "No project matches this search",
+                        title: "No registered project available",
                         detail: model.runtimeConnection == .live
                             ? "Register a project through Project Zero before opening a Codex thread."
                             : "Connect to the Project Zero runtime to load registered projects."
                     )
                 } else {
                     VStack(spacing: 6) {
-                        ForEach(filteredSidebarProjects) { project in
+                        ForEach(projection.registeredProjects) { project in
                             Button {
                                 selectedProjectID = project.id
                             } label: {
@@ -985,14 +369,9 @@ public struct ZeroBotView: View {
                                     VStack(alignment: .leading, spacing: 2) {
                                         Text(project.name).lineLimit(1)
                                         Text(project.id)
-                                            .font(ZeroBotTypography.font(.caption2, design: .monospaced))
+                                            .font(.system(size: 9, design: .monospaced))
                                             .foregroundStyle(ZeroTheme.secondaryInk)
                                             .lineLimit(1)
-                                        Text(project.path)
-                                            .font(ZeroBotTypography.font(.caption2, design: .monospaced))
-                                            .foregroundStyle(ZeroTheme.secondaryInk)
-                                            .lineLimit(2)
-                                            .textSelection(.enabled)
                                     }
                                     Spacer(minLength: 4)
                                 }
@@ -1004,10 +383,9 @@ public struct ZeroBotView: View {
                         }
                     }
                 }
-                }
                 if projection.snapshot?.truncated["projects"] == true {
                     Label("Project list is bounded", systemImage: "ellipsis.circle")
-                        .font(ZeroBotTypography.font(.caption2, weight: .semibold, design: .monospaced))
+                        .font(.system(size: 9, weight: .semibold, design: .monospaced))
                         .foregroundStyle(ZeroTone.attention.color)
                 }
 
@@ -1021,8 +399,9 @@ public struct ZeroBotView: View {
                     .accessibilityHint(startThreadUnavailableReason ?? "Starts one thread with the displayed project and policy")
 
                 Divider().overlay(ZeroTheme.line)
-                sidebarSectionToggle(title: "CODEX CHATS", key: "threads.codex")
-                if !collapsedSidebarSections.contains("threads.codex") {
+                Text("THREADS")
+                    .font(.system(size: 9, weight: .bold, design: .monospaced))
+                    .foregroundStyle(ZeroTheme.secondaryInk)
                 if projection.threads.isEmpty {
                     ZeroBotEmpty(
                         symbol: "bubble.left.and.exclamationmark.bubble.right",
@@ -1031,97 +410,13 @@ public struct ZeroBotView: View {
                             ? "Choose a project and start a session."
                             : "Connect Codex manually to discover or create threads."
                     )
-                } else if groupedSidebarThreads.isEmpty {
-                    ZeroBotEmpty(
-                        symbol: "magnifyingglass",
-                        title: "No thread matches this search",
-                        detail: "Clear the search to see every visible thread."
-                    )
                 } else {
-                    VStack(alignment: .leading, spacing: 8) {
-                        ForEach(groupedSidebarThreads, id: \.key) { group in
-                            sidebarSectionToggle(title: group.title.uppercased(), key: "threads.\(group.key)")
-                            if !collapsedSidebarSections.contains("threads.\(group.key)") {
-                                VStack(spacing: 6) {
-                                    ForEach(group.threads) { thread in threadButton(thread) }
-                                }
-                            }
-                        }
-                    }
-                }
-                }
-                Divider().overlay(ZeroTheme.line)
-                sidebarSectionToggle(title: "OPENCODE SESSIONS", key: "threads.opencode")
-                if !collapsedSidebarSections.contains("threads.opencode") {
-                    let openCodeState = projection.openCodeConnectionPresentation
-                    HStack(spacing: 8) {
-                        ZeroStatusBadge(openCodeState.label, tone: openCodeState.tone)
-                        Spacer(minLength: 4)
-                        if model.openCodeConnection == .connected {
-                            Button("Disconnect") {
-                                model.disconnectOpenCode()
-                                selectedOpenCodeSessionID = nil
-                                localNotice = "OpenCode disconnected. No session or prompt was started."
-                            }
-                            .buttonStyle(ZeroButtonStyle(.standard))
-                            .focusEffectDisabled()
-                            .disabled(actionInFlight)
-                        } else {
-                            Button(actionInFlight ? "Connecting…" : "Connect OpenCode") { connectOpenCode() }
-                                .buttonStyle(ZeroButtonStyle(.authority))
-                                .focusEffectDisabled()
-                                .disabled(actionInFlight || model.openCodeConnection == .connecting)
-                        }
-                    }
-                    .accessibilityElement(children: .contain)
-                    if let error = model.openCodeActionError, !error.isEmpty {
-                        Label(error, systemImage: "exclamationmark.triangle")
-                            .font(ZeroBotTypography.font(.callout, weight: .semibold))
-                            .foregroundStyle(ZeroTone.error.color)
-                            .fixedSize(horizontal: false, vertical: true)
-                            .textSelection(.enabled)
-                    }
-                    if projection.openCodeSessionRows.isEmpty {
-                        ZeroBotEmpty(
-                            symbol: "sparkles",
-                            title: model.openCodeConnection == .connected ? "No OpenCode sessions" : "OpenCode is not connected",
-                            detail: model.openCodeConnection == .connected
-                                ? "No ACP sessions have streamed into this build's OpenCode store yet."
-                                : "Connect OpenCode manually to list this build's ACP sessions. Nothing is ever read from another session database."
-                        )
-                    } else {
-                        VStack(spacing: 6) {
-                            ForEach(projection.openCodeSessionRows, id: \.id) { row in
-                                openCodeSessionButton(row)
-                            }
-                        }
+                    VStack(spacing: 6) {
+                        ForEach(projection.threads) { thread in threadButton(thread) }
                     }
                 }
             }
         }
-    }
-
-    private func sidebarSectionToggle(title: String, key: String) -> some View {
-        Button {
-            if collapsedSidebarSections.contains(key) { collapsedSidebarSections.remove(key) }
-            else { collapsedSidebarSections.insert(key) }
-        } label: {
-            HStack(spacing: 6) {
-                Text(title)
-                    .font(ZeroBotTypography.font(.caption2, weight: .bold, design: .monospaced))
-                    .foregroundStyle(ZeroTheme.secondaryInk)
-                Spacer(minLength: 4)
-                Image(systemName: collapsedSidebarSections.contains(key) ? "chevron.right" : "chevron.down")
-                    .font(ZeroBotTypography.font(.caption2, weight: .bold))
-                    .foregroundStyle(ZeroTheme.secondaryInk)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .focusEffectDisabled()
-        .accessibilityLabel("\(title) section")
-        .accessibilityValue(collapsedSidebarSections.contains(key) ? "Collapsed" : "Expanded")
     }
 
     private var policyControls: some View {
@@ -1134,12 +429,12 @@ public struct ZeroBotView: View {
             Text(mode == .assist
                 ? "Assist is read-only and never approves actions."
                 : "Work may write in the registered workspace and asks before protected actions.")
-                .font(ZeroBotTypography.font(.caption, weight: .medium))
+                .font(.system(size: 10, weight: .medium))
                 .foregroundStyle(ZeroTheme.secondaryInk)
                 .fixedSize(horizontal: false, vertical: true)
 
             Text("MODEL")
-                .font(ZeroBotTypography.font(.caption2, weight: .bold, design: .monospaced))
+                .font(.system(size: 9, weight: .bold, design: .monospaced))
                 .foregroundStyle(ZeroTheme.secondaryInk)
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 5) {
@@ -1150,7 +445,7 @@ public struct ZeroBotView: View {
                             VStack(alignment: .leading, spacing: 1) {
                                 Text(option.label).lineLimit(1)
                                 Text(option.advertised ? "ADVERTISED" : "POLICY DEFAULT")
-                                    .font(ZeroBotTypography.font(.caption2, weight: .bold, design: .monospaced))
+                                    .font(.system(size: 8, weight: .bold, design: .monospaced))
                                     .opacity(0.72)
                             }
                         }
@@ -1170,87 +465,34 @@ public struct ZeroBotView: View {
     }
 
     private func threadButton(_ thread: CodexThread) -> some View {
-        let presentation = projection.threadPresentation(threadID: thread.id)
-        let row = ThreadRowPresentation(
-            threadID: thread.id,
-            title: threadTitle(thread),
-            project: projection.projectBinding(threadID: thread.id)
-        )
+        let owned = projection.isOwned(threadID: thread.id)
+        let accessLabel = projection.retainedOnly ? "RETAINED" : (owned ? "OWNED" : "READ ONLY")
         return Button {
             selectedThreadID = thread.id
-            if let binding = projection.projectBinding(threadID: thread.id) {
-                selectedProjectID = binding.projectID
-            }
         } label: {
             VStack(alignment: .leading, spacing: 5) {
                 HStack(spacing: 6) {
-                    Image(systemName: presentation.symbol)
-                        .foregroundStyle(presentation.tone.color)
+                    Image(systemName: owned ? "lock.open.fill" : "lock.fill")
+                        .foregroundStyle(owned ? ZeroTone.healthy.color : ZeroTone.neutral.color)
                     Text(threadTitle(thread))
-                        .font(ZeroBotTypography.font(.callout, weight: .bold))
+                        .font(.system(size: 11, weight: .bold))
                         .lineLimit(2)
                     Spacer(minLength: 3)
                 }
                 HStack(spacing: 5) {
-                    ZeroStatusBadge(presentation.label, tone: presentation.tone)
+                    ZeroStatusBadge(accessLabel, tone: owned && !projection.retainedOnly ? .healthy : .neutral)
                     Text(thread.id)
-                        .font(ZeroBotTypography.font(.caption2, design: .monospaced))
+                        .font(.system(size: 8, design: .monospaced))
                         .foregroundStyle(ZeroTheme.secondaryInk)
                         .lineLimit(1)
-                }
-                if !row.workspaceBasename.isEmpty {
-                    HStack(spacing: 4) {
-                        Image(systemName: "folder")
-                            .font(ZeroBotTypography.font(.caption2))
-                            .foregroundStyle(ZeroTheme.secondaryInk)
-                        Text(row.workspaceBasename)
-                            .font(ZeroBotTypography.font(.caption2, design: .monospaced))
-                            .foregroundStyle(ZeroTheme.secondaryInk)
-                            .lineLimit(1)
-                    }
-                    .help(row.tooltip)
-                    .accessibilityLabel("Workspace \(row.accessibilityPath)")
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .buttonStyle(ZeroButtonStyle(.quiet, selected: selectedThreadID == thread.id))
         .focusEffectDisabled()
-        .accessibilityLabel("\(threadTitle(thread)), \(presentation.label.lowercased()), \(row.subtitle)")
+        .accessibilityLabel("\(threadTitle(thread)), \(accessLabel.lowercased())")
         .accessibilityValue(selectedThreadID == thread.id ? "Selected" : "Not selected")
-    }
-
-    private func openCodeSessionButton(_ row: OpenCodeSessionRow) -> some View {
-        Button {
-            selectedOpenCodeSessionID = row.id
-            harnessSelection.wrappedValue = .opencode
-        } label: {
-            VStack(alignment: .leading, spacing: 5) {
-                HStack(spacing: 6) {
-                    Image(systemName: "sparkles")
-                        .foregroundStyle(ZeroTone.attention.color)
-                    Text(row.title)
-                        .font(ZeroBotTypography.font(.callout, weight: .bold))
-                        .lineLimit(2)
-                    Spacer(minLength: 3)
-                }
-                HStack(spacing: 5) {
-                    ZeroStatusBadge(
-                        projection.openCodeConnection == .connected ? "OWNED SESSION" : "RETAINED EVIDENCE",
-                        tone: projection.openCodeConnection == .connected ? .healthy : .neutral
-                    )
-                    Text(row.subtitle)
-                        .font(ZeroBotTypography.font(.caption2, design: .monospaced))
-                        .foregroundStyle(ZeroTheme.secondaryInk)
-                        .lineLimit(1)
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-        }
-        .buttonStyle(ZeroButtonStyle(.quiet, selected: selectedOpenCodeSessionID == row.id))
-        .focusEffectDisabled()
-        .accessibilityLabel("OpenCode session \(row.title), \(row.subtitle)")
-        .accessibilityValue(selectedOpenCodeSessionID == row.id ? "Selected" : "Not selected")
     }
 
     private var conversation: some View {
@@ -1258,48 +500,29 @@ public struct ZeroBotView: View {
             VStack(alignment: .leading, spacing: 12) {
                 HStack(alignment: .top, spacing: 10) {
                     VStack(alignment: .leading, spacing: 3) {
-                        Text(conversationTitle)
-                            .font(ZeroBotTypography.font(.title3, weight: .black))
+                        Text(selectedThread.map(threadTitle) ?? "No thread selected")
+                            .font(.system(size: 17, weight: .black))
                             .textSelection(.enabled)
-                        Text(conversationSubtitleText)
-                            .font(ZeroBotTypography.font(.caption, weight: .medium, design: .monospaced))
+                        Text(conversationSubtitle)
+                            .font(.system(size: 10, weight: .medium, design: .monospaced))
                             .foregroundStyle(ZeroTheme.secondaryInk)
                     }
                     Spacer()
-                    if harness == .opencode {
-                        if selectedOpenCodeSessionID != nil {
-                            let state = projection.openCodeConnectionPresentation
-                            ZeroStatusBadge(state.label, tone: state.tone)
-                        }
-                    } else if let selectedThreadID {
-                        let presentation = projection.threadPresentation(threadID: selectedThreadID)
+                    if let selectedThreadID {
                         ZeroStatusBadge(
-                            presentation.label,
-                            symbol: presentation.symbol,
-                            tone: presentation.tone
+                            projection.isOwned(threadID: selectedThreadID) ? "OWNED SESSION" : "HISTORY ONLY",
+                            symbol: projection.isOwned(threadID: selectedThreadID) ? "checkmark.shield.fill" : "lock.fill",
+                            tone: projection.isOwned(threadID: selectedThreadID) ? .healthy : .neutral
                         )
                     }
                 }
 
-                if let retainedConnectionEvidence = projection.retainedConnectionEvidence {
-                    Label(retainedConnectionEvidence, systemImage: "exclamationmark.triangle.fill")
-                        .font(ZeroBotTypography.font(.callout, weight: .semibold))
-                        .foregroundStyle(ZeroTone.error.color)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .textSelection(.enabled)
-                        .padding(9)
-                        .background(ZeroTone.error.color.opacity(0.07), in: RoundedRectangle(cornerRadius: 6))
-                        .accessibilityLabel("Retained Codex connection failure. \(retainedConnectionEvidence)")
-                }
-
-                if harness == .opencode {
-                    openCodeConversationBody
-                } else if let thread = selectedThread {
+                if let thread = selectedThread {
                     if thread.items.isEmpty && thread.turns.isEmpty {
                         ZeroBotEmpty(
                             symbol: "ellipsis.message",
                             title: "No streamed content yet",
-                            detail: projection.hasCurrentProjectBinding(threadID: thread.id)
+                            detail: projection.isOwned(threadID: thread.id)
                                 ? "Enter an intent below to start the first turn."
                                 : "This discovered thread has no retained events in the current connection."
                         )
@@ -1318,231 +541,23 @@ public struct ZeroBotView: View {
                     )
                 }
 
-                if harness == .codex {
-                    approvalCards
-                }
-                harnessWarningRows
-                statusStrip
+                approvalCards
                 composer
             }
         }
     }
 
-    private var conversationTitle: String {
-        if harness == .opencode {
-            return projection.openCodeSession(id: selectedOpenCodeSessionID)
-                .map(ZeroBotProjection.openCodeSessionTitle) ?? "No session selected"
-        }
-        return selectedThread.map(threadTitle) ?? "No thread selected"
-    }
-
-    private var conversationSubtitleText: String {
-        if harness == .opencode {
-            return projection.openCodeConnectionPresentation.detail
-        }
-        return conversationSubtitle
-    }
-
-    @ViewBuilder
-    private var harnessWarningRows: some View {
-        if !harnessWarnings.isEmpty {
-            VStack(alignment: .leading, spacing: 6) {
-                ForEach(Array(harnessWarnings.enumerated()), id: \.offset) { _, warning in
-                    Label(warning, systemImage: "exclamationmark.triangle.fill")
-                        .font(ZeroBotTypography.font(.caption, weight: .semibold))
-                        .foregroundStyle(ZeroTone.error.color)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .textSelection(.enabled)
-                        .padding(8)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(ZeroTone.error.color.opacity(0.07), in: RoundedRectangle(cornerRadius: 6))
-                }
-            }
-            .accessibilityLabel("Harness mismatch warnings")
-        }
-    }
-
-    private var statusStrip: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 10) {
-                ForEach(Array(statusStripItems.enumerated()), id: \.offset) { _, item in
-                    Label(item.text, systemImage: item.icon)
-                        .font(ZeroBotTypography.font(.caption2, weight: .semibold, design: .monospaced))
-                        .foregroundStyle(ZeroTheme.secondaryInk)
-                        .lineLimit(1)
-                        .fixedSize(horizontal: true, vertical: false)
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 7)
-        .background(ZeroTheme.navigation.opacity(0.55), in: RoundedRectangle(cornerRadius: 7))
-        .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(ZeroTheme.line))
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel("Session status")
-    }
-
-    @ViewBuilder
     private func itemCard(_ item: CodexItem) -> some View {
         let category = ZeroBotItemCategory(kind: item.kind)
-        if category == .operatorMessage || category == .agentMessage {
-            messageBubble(item, category: category)
-        } else {
-            evidenceCard(item, category: category)
-        }
-    }
-
-    /// Conversational bubble: aligned, borderless, no box chrome. Execution
-    /// evidence (commands, tools, diffs) keeps the bordered card below.
-    /// OpenCode transcripts render through this same path via the text-based
-    /// core; only the item wrapper is Codex-specific.
-    private func messageBubble(_ item: CodexItem, category: ZeroBotItemCategory) -> some View {
-        messageBubble(
-            title: category == .operatorMessage ? "YOU" : "ZERO BOT",
-            text: item.text,
-            output: item.output,
-            isOperator: category == .operatorMessage,
-            truncated: item.textTruncated || item.outputTruncated || item.metadataTruncated,
-            accessibilityLabel: category == .operatorMessage ? "Your message" : "Zero Bot reply"
-        )
-    }
-
-    private func messageBubble(
-        title: String,
-        text: String,
-        output: String,
-        isOperator: Bool,
-        truncated: Bool,
-        accessibilityLabel: String
-    ) -> some View {
-        HStack {
-            if isOperator { Spacer(minLength: 36) }
-            VStack(alignment: .leading, spacing: 4) {
-                Text(title)
-                    .font(ZeroBotTypography.font(.caption2, weight: .bold, design: .monospaced))
-                    .foregroundStyle(isOperator ? Color.white.opacity(0.75) : ZeroTheme.secondaryInk)
-                if !text.isEmpty {
-                    Text(text)
-                        .font(ZeroBotTypography.font(.body, weight: .medium))
-                        .foregroundStyle(isOperator ? Color.white : ZeroTheme.ink)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .textSelection(.enabled)
-                }
-                if !output.isEmpty {
-                    Text(output)
-                        .font(ZeroBotTypography.font(.callout, design: .monospaced))
-                        .foregroundStyle(isOperator ? Color.white : ZeroTheme.ink)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .textSelection(.enabled)
-                }
-                if truncated {
-                    Label("Clipped by the retention boundary", systemImage: "scissors")
-                        .font(ZeroBotTypography.font(.caption2, weight: .semibold, design: .monospaced))
-                        .foregroundStyle(isOperator ? Color.white.opacity(0.85) : ZeroTone.attention.color)
-                }
-            }
-            .padding(10)
-            .background(
-                isOperator ? ZeroTheme.orange : Color.white,
-                in: RoundedRectangle(cornerRadius: 14)
-            )
-            if !isOperator { Spacer(minLength: 36) }
-        }
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel(accessibilityLabel)
-    }
-
-    /// OpenCode conversation: the retained transcript renders through the same
-    /// bubble path as Codex messages; retained ACP events render as evidence
-    /// cards. Offline content is labelled retained, never actionable.
-    @ViewBuilder
-    private var openCodeConversationBody: some View {
-        if let retained = projection.openCodeRetainedNotice {
-            Label(retained, systemImage: "archivebox.fill")
-                .font(ZeroBotTypography.font(.callout, weight: .semibold))
-                .foregroundStyle(ZeroTheme.secondaryInk)
-                .fixedSize(horizontal: false, vertical: true)
-                .textSelection(.enabled)
-                .padding(9)
-                .background(ZeroTheme.navigation.opacity(0.55), in: RoundedRectangle(cornerRadius: 6))
-                .accessibilityLabel("Retained OpenCode evidence. \(retained)")
-        }
-        if let session = projection.openCodeSession(id: selectedOpenCodeSessionID) {
-            let events = projection.openCodeEvents(sessionID: session.id)
-            if session.transcript.isEmpty && events.isEmpty {
-                ZeroBotEmpty(
-                    symbol: "ellipsis.message",
-                    title: "No streamed content yet",
-                    detail: "This OpenCode session has no retained transcript or events in the current connection."
-                )
-            } else {
-                VStack(spacing: 9) {
-                    if !session.transcript.isEmpty {
-                        messageBubble(
-                            title: "ZERO BOT · OPENCODE",
-                            text: session.transcript,
-                            output: "",
-                            isOperator: false,
-                            truncated: session.contentTruncated,
-                            accessibilityLabel: "OpenCode session transcript"
-                        )
-                    }
-                    ForEach(Array(events.enumerated()), id: \.offset) { _, event in
-                        openCodeEventCard(event)
-                    }
-                }
-            }
-        } else {
-            ZeroBotEmpty(
-                symbol: "sparkles",
-                title: projection.openCodeSessions.isEmpty
-                    ? (model.openCodeConnection == .connected
-                        ? "No OpenCode sessions yet"
-                        : "OpenCode is not connected")
-                    : "Select an OpenCode session",
-                detail: projection.openCodeSessions.isEmpty
-                    ? (model.openCodeConnection == .connected
-                        ? "No ACP sessions have streamed into this build's OpenCode store yet."
-                        : "Connect OpenCode manually to list this build's ACP sessions.")
-                    : "Retained sessions are read-only evidence."
-            )
-        }
-    }
-
-    private func openCodeEventCard(_ event: OpenCodeEvent) -> some View {
-        let payload = ZeroBotProjection.jsonText(event.params)
         return VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
-                ZeroStatusBadge("PROTOCOL ITEM", symbol: "waveform.path.ecg", tone: .neutral)
-                Spacer()
-                Text(event.method)
-                    .font(ZeroBotTypography.font(.caption2, design: .monospaced))
-                    .foregroundStyle(ZeroTheme.secondaryInk)
-                    .lineLimit(1)
-            }
-            ZeroBotCodeWell(title: "RETAINED ACP PARAMS", content: payload.text, tone: .neutral)
-        }
-        .padding(11)
-        .background(ZeroTheme.workstation, in: RoundedRectangle(cornerRadius: 8))
-        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(ZeroTheme.line))
-        .accessibilityElement(children: .contain)
-    }
-
-    private func evidenceCard(_ item: CodexItem, category: ZeroBotItemCategory) -> some View {
-        return VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 8) {
-                ZeroStatusBadge(
-                    category.rawValue,
-                    symbol: itemSymbol(category),
-                    tone: projection.evidenceTone(itemTone(category))
-                )
+                ZeroStatusBadge(category.rawValue, symbol: itemSymbol(category), tone: itemTone(category))
                 Text(projection.evidenceStatus(item.status))
-                    .font(ZeroBotTypography.font(.caption2, weight: .bold, design: .monospaced))
+                    .font(.system(size: 9, weight: .bold, design: .monospaced))
                     .foregroundStyle(ZeroTheme.secondaryInk)
                 Spacer()
                 Text(item.id)
-                    .font(ZeroBotTypography.font(.caption2, design: .monospaced))
+                    .font(.system(size: 8, design: .monospaced))
                     .foregroundStyle(ZeroTheme.secondaryInk)
                     .lineLimit(1)
             }
@@ -1566,12 +581,12 @@ public struct ZeroBotView: View {
             }
             if item.textTruncated || item.outputTruncated || item.metadataTruncated {
                 Label("Content clipped by the in-memory retention boundary", systemImage: "scissors")
-                    .font(ZeroBotTypography.font(.caption2, weight: .semibold, design: .monospaced))
+                    .font(.system(size: 9, weight: .semibold, design: .monospaced))
                     .foregroundStyle(ZeroTone.attention.color)
             }
         }
         .padding(11)
-        .background(projection.retainedOnly ? ZeroTheme.workstation : itemBackground(category), in: RoundedRectangle(cornerRadius: 8))
+        .background(itemBackground(category), in: RoundedRectangle(cornerRadius: 8))
         .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(ZeroTheme.line))
         .accessibilityElement(children: .contain)
     }
@@ -1581,50 +596,20 @@ public struct ZeroBotView: View {
         if !item.text.isEmpty {
             Text(item.text)
                 .font(category == .command || category == .tool
-                    ? ZeroBotTypography.font(.callout, design: .monospaced)
-                    : ZeroBotTypography.font(.body, weight: .medium))
+                    ? .system(size: 11, design: .monospaced)
+                    : .system(size: 12, weight: .medium))
                 .fixedSize(horizontal: false, vertical: true)
                 .textSelection(.enabled)
         }
         if !item.output.isEmpty {
-            ZeroBotCodeWell(
-                title: "STREAMED OUTPUT",
-                content: item.output,
-                tone: projection.evidenceTone(category == .fileChange ? .healthy : .neutral)
-            )
+            ZeroBotCodeWell(title: "STREAMED OUTPUT", content: item.output, tone: category == .fileChange ? .healthy : .neutral)
         }
-        let fields = projection.itemMetadataFields(item)
-        if !fields.isEmpty {
-            VStack(alignment: .leading, spacing: 4) {
-                ForEach(Array(fields.enumerated()), id: \.offset) { _, field in
-                    ZeroBotPolicyRow(label: field.label, value: field.value)
-                }
-            }
-            .padding(8)
-            .background(ZeroTheme.navigation.opacity(0.55), in: RoundedRectangle(cornerRadius: 5))
-            .accessibilityLabel("Structured execution metadata")
-        }
-        if let metadata = projection.itemMetadataEvidence(item) {
-            Button {
-                if expandedMetadata.contains(item.id) { expandedMetadata.remove(item.id) }
-                else { expandedMetadata.insert(item.id) }
-            } label: {
-                HStack {
-                    Text(expandedMetadata.contains(item.id) ? "Hide exact bounded metadata" : "Inspect exact bounded metadata")
-                    Spacer()
-                    Image(systemName: expandedMetadata.contains(item.id) ? "chevron.up" : "chevron.down")
-                }
-            }
-            .buttonStyle(ZeroButtonStyle(.quiet, selected: expandedMetadata.contains(item.id)))
-            .focusEffectDisabled()
-            .accessibilityValue(expandedMetadata.contains(item.id) ? "Expanded" : "Collapsed")
-            .accessibilityHint("Shows the exact retained metadata payload for this item")
-            if expandedMetadata.contains(item.id) {
-                ZeroBotCodeWell(title: metadata.title, content: metadata.content, tone: .neutral)
-            }
-            if metadata.truncated {
+        if item.text.isEmpty && item.output.isEmpty {
+            let payload = ZeroBotProjection.jsonText(item.metadata)
+            ZeroBotCodeWell(title: "BOUNDED ITEM METADATA", content: payload.text, tone: .neutral)
+            if payload.truncated {
                 Text("Inspector rendering clipped this payload further.")
-                    .font(ZeroBotTypography.font(.caption2, design: .monospaced))
+                    .font(.system(size: 9, design: .monospaced))
                     .foregroundStyle(ZeroTone.attention.color)
             }
         }
@@ -1650,7 +635,6 @@ public struct ZeroBotView: View {
 
     private func approvalCard(_ approval: CodexApproval) -> some View {
         let responseSupported = ZeroBotProjection.approvalResponse(method: approval.method, approve: true) != nil
-        let availability = projection.approvalAvailability(approval, selectedThreadID: selectedThreadID)
         let payload = ZeroBotProjection.jsonText(approval.params)
         return VStack(alignment: .leading, spacing: 8) {
             HStack {
@@ -1661,16 +645,16 @@ public struct ZeroBotView: View {
                 )
                 Spacer()
                 Text("REQUEST \(ZeroBotProjection.requestIDLabel(approval.id))")
-                    .font(ZeroBotTypography.font(.caption2, design: .monospaced))
+                    .font(.system(size: 8, design: .monospaced))
                     .textSelection(.enabled)
             }
             Text(approval.method)
-                .font(ZeroBotTypography.font(.callout, weight: .bold, design: .monospaced))
+                .font(.system(size: 11, weight: .bold, design: .monospaced))
                 .textSelection(.enabled)
             ZeroBotCodeWell(title: "EXACT REQUEST PAYLOAD", content: payload.text, tone: .attention)
-            if let reason = availability.reason {
-                Label(reason, systemImage: "lock.fill")
-                    .font(ZeroBotTypography.font(.callout, weight: .semibold))
+            if projection.retainedOnly {
+                Label("Codex is not connected. This is retained request evidence; no response can be sent.", systemImage: "lock.fill")
+                    .font(.system(size: 10, weight: .semibold))
                     .foregroundStyle(ZeroTheme.secondaryInk)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -1683,10 +667,10 @@ public struct ZeroBotView: View {
                         .buttonStyle(ZeroButtonStyle(.authority))
                         .focusEffectDisabled()
                 }
-                .disabled(availability != .actionable || actionInFlight || payload.truncated)
+                .disabled(model.codexConnection != .connected || actionInFlight || payload.truncated)
             } else {
                 Label("This request needs a method-specific response that this client does not safely implement.", systemImage: "exclamationmark.shield")
-                    .font(ZeroBotTypography.font(.callout, weight: .semibold))
+                    .font(.system(size: 10, weight: .semibold))
                     .foregroundStyle(ZeroTone.attention.color)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -1698,54 +682,14 @@ public struct ZeroBotView: View {
 
     private var composer: some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 8) {
-                Text("SEND INTENT")
-                    .font(ZeroBotTypography.font(.caption2, weight: .bold, design: .monospaced))
-                    .foregroundStyle(ZeroTheme.secondaryInk)
-                Spacer()
-                ProviderPicker(
-                    selection: $providerSelection,
-                    advertised: advertisedProviderModels,
-                    openCodeUnavailableReason: "OpenCode is not connected"
-                )
-            }
-            HStack(spacing: 8) {
-                ZeroSegmentedChoice("Harness", values: Harness.allCases, selection: harnessSelection) { value in
-                    Text(value.title)
-                        .frame(maxWidth: .infinity)
-                }
-                .frame(maxWidth: 230)
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 5) {
-                        ForEach(models(for: harness), id: \.self) { modelID in
-                            Button {
-                                selectedModelID = modelID
-                            } label: {
-                                Text(modelID).lineLimit(1)
-                            }
-                            .buttonStyle(ZeroButtonStyle(.quiet, selected: selectedModelID == modelID))
-                            .focusEffectDisabled()
-                            .accessibilityValue(selectedModelID == modelID ? "Selected" : "Not selected")
-                        }
-                    }
-                }
-                .accessibilityLabel("Harness-scoped models")
-            }
-            if let mismatch = composerHarnessMismatch {
-                Label(mismatch, systemImage: "exclamationmark.shield.fill")
-                    .font(ZeroBotTypography.font(.caption, weight: .semibold))
-                    .foregroundStyle(ZeroTone.error.color)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .textSelection(.enabled)
-                    .padding(8)
-                    .background(ZeroTone.error.color.opacity(0.07), in: RoundedRectangle(cornerRadius: 6))
-                    .accessibilityLabel("Harness mismatch. \(mismatch)")
-            }
+            Text("SEND INTENT")
+                .font(.system(size: 9, weight: .bold, design: .monospaced))
+                .foregroundStyle(ZeroTheme.secondaryInk)
             TextEditor(text: $intent)
-                .font(ZeroBotTypography.font(.body, design: .monospaced))
+                .font(.system(size: 12, design: .monospaced))
                 .scrollContentBackground(.hidden)
                 .padding(8)
-                .frame(minHeight: 36, maxHeight: 68)
+                .frame(minHeight: 82, maxHeight: 150)
                 .background(Color.white, in: RoundedRectangle(cornerRadius: 6))
                 .overlay {
                     RoundedRectangle(cornerRadius: 6)
@@ -1757,33 +701,15 @@ public struct ZeroBotView: View {
             HStack(alignment: .center, spacing: 8) {
                 composerPolicy
                 Spacer()
-                Button {} label: {
-                    Label("Voice", systemImage: "mic.fill")
-                }
-                .buttonStyle(ZeroButtonStyle(.standard))
-                .focusEffectDisabled()
-                .disabled(true)
-                .help(ZeroBotComposer.voiceUnavailableReason(for: harness.provider))
-                .accessibilityHint(ZeroBotComposer.voiceUnavailableReason(for: harness.provider))
-                Button("Attach") {}
-                    .buttonStyle(ZeroButtonStyle(.standard))
-                    .focusEffectDisabled()
-                    .disabled(true)
-                    .help(ZeroBotComposer.attachUnavailableReason(for: providerSelection.provider) ?? "Attachments unavailable.")
-                    .accessibilityHint(ZeroBotComposer.attachUnavailableReason(for: providerSelection.provider) ?? "Attachments unavailable.")
-                Button(actionInFlight ? "Sending…" : "Send") { sendIntent() }
+                Button(actionInFlight ? "Sending…" : "Send Intent") { sendIntent() }
                     .buttonStyle(ZeroButtonStyle(.authority))
                     .focusEffectDisabled()
                     .keyboardShortcut(.return, modifiers: [.command])
-                    .disabled(actionInFlight || !projection.canSend(
-                        threadID: selectedThreadID,
-                        selectedProjectID: selectedProjectID,
-                        text: intent
-                    ))
+                    .disabled(actionInFlight || !projection.canSend(threadID: selectedThreadID, text: intent))
             }
             if let reason = sendUnavailableReason {
                 Label(reason, systemImage: "info.circle")
-                    .font(ZeroBotTypography.font(.caption2, weight: .medium))
+                    .font(.system(size: 9, weight: .medium))
                     .foregroundStyle(ZeroTheme.secondaryInk)
             }
         }
@@ -1791,15 +717,8 @@ public struct ZeroBotView: View {
         .background(ZeroTheme.navigation.opacity(0.55), in: RoundedRectangle(cornerRadius: 8))
     }
 
-    /// Harness lock for the composer: GPT models stay Codex-only, Muse Spark
-    /// stays OpenCode-only. Non-nil means send is blocked with a warning.
-    private var composerHarnessMismatch: String? {
-        harnessMismatchWarning(model: selectedModelID, harness: harness)
-    }
-
     private var composerPolicy: some View {
         let settings = projection.settings(threadID: selectedThreadID)
-        let binding = projection.projectBinding(threadID: selectedThreadID)
         return VStack(alignment: .leading, spacing: 2) {
             Text(settings?.model ?? "No owned thread policy")
             if let settings {
@@ -1807,71 +726,33 @@ public struct ZeroBotView: View {
             } else {
                 Text("New-session choices do not alter existing threads")
             }
-            if let binding {
-                Text("BOUND PROJECT · \(binding.name) [\(binding.projectID)]")
-                Text("REGISTERED SNAPSHOT PATH · \(binding.path)")
-                    .textSelection(.enabled)
-            } else if selectedThreadID != nil {
-                Text("NO VERIFIED PROJECT BINDING · SEND DISABLED")
-            }
         }
-        .font(ZeroBotTypography.font(.caption2, weight: .semibold, design: .monospaced))
+        .font(.system(size: 9, weight: .semibold, design: .monospaced))
         .foregroundStyle(ZeroTheme.secondaryInk)
-        .fixedSize(horizontal: false, vertical: true)
+        .lineLimit(2)
     }
 
     private var inspector: some View {
         ZeroBotCard {
             VStack(alignment: .leading, spacing: 12) {
-                InspectorPopoutButton(kind: .zeroBot)
                 ZeroBotSectionHeader(
                     projection.retainedOnly ? "Retained Run" : "Current Run",
                     badge: activeTurn.map { projection.evidenceStatus($0.status) } ?? "IDLE"
                 )
-                ZeroSegmentedChoice("Inspector", values: ZeroBotInspectorTab.allCases, selection: $inspectorTab) { tab in
-                    Label(tab.title, systemImage: tab.icon)
-                        .frame(maxWidth: .infinity)
+                if let thread = selectedThread, let activeTurn {
+                    runInspector(thread: thread, turn: activeTurn)
+                } else {
+                    ZeroBotEmpty(
+                        symbol: "scope",
+                        title: "No active run",
+                        detail: selectedThread == nil
+                            ? "Select a thread to inspect plan, diff, usage, and streamed protocol state."
+                            : "This thread has no retained active turn."
+                    )
+                    if let thread = selectedThread { completedTurnEvidence(thread) }
                 }
-                .accessibilityLabel("Inspector panel")
-                switch inspectorTab {
-                case .run:
-                    if let thread = selectedThread, let activeTurn {
-                        runInspector(thread: thread, turn: activeTurn)
-                    } else {
-                        ZeroBotEmpty(
-                            symbol: "scope",
-                            title: "No active run",
-                            detail: selectedThread == nil
-                                ? "Select a thread to inspect plan, diff, usage, and streamed protocol state."
-                                : "This thread has no retained active turn."
-                        )
-                        if let thread = selectedThread { completedTurnEvidence(thread) }
-                    }
-                    if let thread = selectedThread { turnErrorEvidence(thread) }
-                case .diff:
-                    if selectedThread != nil, let activeTurn {
-                        diffWell(activeTurn)
-                        if activeTurn.diff.isEmpty {
-                            ZeroBotEmpty(
-                                symbol: "doc.badge.gearshape",
-                                title: "No diff in this run",
-                                detail: "This turn reports no unified code diff."
-                            )
-                        }
-                    } else if let thread = selectedThread {
-                        completedTurnEvidence(thread)
-                    } else {
-                        ZeroBotEmpty(
-                            symbol: "doc.badge.gearshape",
-                            title: "No diff to inspect",
-                            detail: "Select a thread to inspect its retained code diff."
-                        )
-                    }
-                case .telemetry:
-                    tokenUsage
-                case .raw:
-                    rawEvents
-                }
+                tokenUsage
+                rawEvents
                 stateNotice
             }
         }
@@ -1890,33 +771,23 @@ public struct ZeroBotView: View {
                     ZeroBotPolicyRow(label: "Approval", value: settings.approvalPolicy)
                 }
             }
-            Button(ZeroBotComposer.steerLabel(for: providerSelection.provider)) {
+            Button("Interrupt exact turn") {
                 interrupt(threadID: thread.id, turnID: turn.id)
             }
             .buttonStyle(ZeroButtonStyle(.authority))
             .focusEffectDisabled()
             .disabled(actionInFlight || !projection.canInterrupt(threadID: thread.id, turnID: turn.id))
-            .help(ZeroBotComposer.steerExplanation(for: providerSelection.provider))
-            .accessibilityHint("Interrupts turn \(turn.id) in thread \(thread.id). \(ZeroBotComposer.steerExplanation(for: providerSelection.provider))")
+            .accessibilityHint("Interrupts turn \(turn.id) in thread \(thread.id)")
 
             planView(turn)
-            diffWell(turn)
+            if !turn.diff.isEmpty {
+                ZeroBotCodeWell(title: "UNIFIED CODE DIFF", content: turn.diff, tone: .healthy)
+            }
             if turn.contentTruncated {
                 Label("Run evidence is truncated", systemImage: "scissors")
-                    .font(ZeroBotTypography.font(.caption2, weight: .semibold, design: .monospaced))
+                    .font(.system(size: 9, weight: .semibold, design: .monospaced))
                     .foregroundStyle(ZeroTone.attention.color)
             }
-        }
-    }
-
-    @ViewBuilder
-    private func diffWell(_ turn: CodexTurn) -> some View {
-        if !turn.diff.isEmpty {
-            ZeroBotCodeWell(
-                title: "UNIFIED CODE DIFF",
-                content: turn.diff,
-                tone: projection.evidenceTone(.healthy)
-            )
         }
     }
 
@@ -1927,20 +798,20 @@ public struct ZeroBotView: View {
                 ZeroBotSectionHeader("Execution Stages", badge: "\(turn.plan.count)")
                 if let explanation = turn.explanation, !explanation.isEmpty {
                     Text(explanation)
-                        .font(ZeroBotTypography.font(.caption, weight: .medium))
+                        .font(.system(size: 10, weight: .medium))
                         .foregroundStyle(ZeroTheme.secondaryInk)
                         .textSelection(.enabled)
                 }
                 ForEach(Array(turn.plan.enumerated()), id: \.offset) { index, step in
                     HStack(alignment: .top, spacing: 7) {
                         Image(systemName: planSymbol(step.status))
-                            .foregroundStyle(projection.evidenceTone(planTone(step.status)).color)
+                            .foregroundStyle(planTone(step.status).color)
                         VStack(alignment: .leading, spacing: 2) {
                             Text(step.step)
-                                .font(ZeroBotTypography.font(.caption, weight: .semibold))
+                                .font(.system(size: 10, weight: .semibold))
                                 .fixedSize(horizontal: false, vertical: true)
                             Text("STEP \(index + 1) · \(step.status.uppercased())")
-                                .font(ZeroBotTypography.font(.caption2, weight: .bold, design: .monospaced))
+                                .font(.system(size: 8, weight: .bold, design: .monospaced))
                                 .foregroundStyle(ZeroTheme.secondaryInk)
                         }
                     }
@@ -1959,31 +830,7 @@ public struct ZeroBotView: View {
                 ZeroBotSectionHeader("Latest Retained Turn", badge: turn.status.uppercased())
                 ZeroBotPolicyRow(label: "Turn", value: turn.id)
                 planView(turn)
-                if !turn.diff.isEmpty {
-                    ZeroBotCodeWell(
-                        title: "UNIFIED CODE DIFF",
-                        content: turn.diff,
-                        tone: projection.evidenceTone(.healthy)
-                    )
-                }
-            }
-        }
-    }
-
-    @ViewBuilder
-    private func turnErrorEvidence(_ thread: CodexThread) -> some View {
-        let failedTurns = thread.turns.values
-            .filter { projection.turnErrorEvidence($0) != nil }
-            .sorted { $0.id < $1.id }
-        if !failedTurns.isEmpty {
-            VStack(alignment: .leading, spacing: 8) {
-                ZeroBotSectionHeader("Turn Failures", badge: "\(failedTurns.count) EVIDENCE")
-                ForEach(failedTurns, id: \.id) { turn in
-                    VStack(alignment: .leading, spacing: 5) {
-                        ZeroBotPolicyRow(label: "Turn", value: turn.id)
-                        turnErrorCard(turn)
-                    }
-                }
+                if !turn.diff.isEmpty { ZeroBotCodeWell(title: "UNIFIED CODE DIFF", content: turn.diff, tone: .healthy) }
             }
         }
     }
@@ -1993,7 +840,7 @@ public struct ZeroBotView: View {
         if let thread = selectedThread, thread.tokenUsage != .null {
             let payload = ZeroBotProjection.jsonText(thread.tokenUsage)
             VStack(alignment: .leading, spacing: 7) {
-                ZeroBotSectionHeader("Token Usage", badge: projection.tokenUsageBadge(truncated: payload.truncated))
+                ZeroBotSectionHeader("Token Usage", badge: payload.truncated ? "CLIPPED" : "LIVE")
                 ZeroBotCodeWell(title: "APP-SERVER USAGE", content: payload.text, tone: .neutral)
             }
         }
@@ -2004,7 +851,7 @@ public struct ZeroBotView: View {
             ZeroBotSectionHeader("Protocol Inspector", badge: "\(projection.store.unknownEvents.count) RAW")
             if projection.store.unknownEvents.isEmpty {
                 Text("No unrecognized app-server events are retained.")
-                    .font(ZeroBotTypography.font(.caption, weight: .medium))
+                    .font(.system(size: 10, weight: .medium))
                     .foregroundStyle(ZeroTheme.secondaryInk)
             } else {
                 VStack(spacing: 5) {
@@ -2015,7 +862,7 @@ public struct ZeroBotView: View {
                             HStack(spacing: 6) {
                                 Image(systemName: "waveform.path.ecg")
                                 Text(event.method)
-                                    .font(ZeroBotTypography.font(.caption2, weight: .semibold, design: .monospaced))
+                                    .font(.system(size: 9, weight: .semibold, design: .monospaced))
                                     .lineLimit(1)
                                 Spacer()
                                 Image(systemName: selectedUnknownIndex == index ? "chevron.up" : "chevron.down")
@@ -2037,18 +884,10 @@ public struct ZeroBotView: View {
 
     @ViewBuilder
     private var stateNotice: some View {
-        if let protocolError = projection.protocolErrorEvidence {
-            ZeroBotCodeWell(title: protocolError.title, content: protocolError.content, tone: .error)
-            if protocolError.truncated {
-                Text("App-server error evidence was clipped for display.")
-                    .font(ZeroBotTypography.font(.caption2, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(ZeroTone.attention.color)
-            }
-        }
         let message = model.codexActionError ?? localNotice
         if let message, !message.isEmpty {
             Label(message, systemImage: model.codexActionError == nil ? "checkmark.circle" : "exclamationmark.triangle")
-                .font(ZeroBotTypography.font(.callout, weight: .semibold))
+                .font(.system(size: 10, weight: .semibold))
                 .foregroundStyle(model.codexActionError == nil ? ZeroTone.healthy.color : ZeroTone.error.color)
                 .fixedSize(horizontal: false, vertical: true)
                 .textSelection(.enabled)
@@ -2057,92 +896,15 @@ public struct ZeroBotView: View {
         }
     }
 
-    @ViewBuilder
-    private func turnErrorCard(_ turn: CodexTurn) -> some View {
-        if let error = projection.turnErrorEvidence(turn) {
-            ZeroBotCodeWell(title: error.title, content: error.content, tone: .error)
-            if error.truncated {
-                Text("Turn error evidence was clipped for display.")
-                    .font(ZeroBotTypography.font(.caption2, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(ZeroTone.attention.color)
-            }
-        }
-    }
-
-    private var paletteSheet: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                Text("Switch threads, projects, models")
-                    .font(ZeroBotTypography.font(.callout, weight: .black))
-                Spacer()
-                Button("Close") { paletteOpen = false }
-                    .buttonStyle(ZeroButtonStyle(.quiet))
-                    .focusEffectDisabled()
-                    .keyboardShortcut(.cancelAction)
-            }
-            TextField("Filter threads, projects, models", text: $paletteQuery)
-                .font(ZeroBotTypography.font(.callout, design: .monospaced))
-                .textFieldStyle(.roundedBorder)
-                .accessibilityLabel("Filter palette")
-            if filteredPaletteItems.isEmpty {
-                ZeroBotEmpty(
-                    symbol: "magnifyingglass",
-                    title: "No match",
-                    detail: "The palette only lists already-visible threads, projects, and models."
-                )
-            } else {
-                ScrollView {
-                    VStack(spacing: 4) {
-                        ForEach(filteredPaletteItems, id: \.id) { item in
-                            Button { applyPaletteItem(item) } label: {
-                                HStack(spacing: 8) {
-                                    Image(systemName: paletteSymbol(item.kind))
-                                        .foregroundStyle(ZeroTheme.secondaryInk)
-                                    VStack(alignment: .leading, spacing: 1) {
-                                        Text(item.title).lineLimit(1)
-                                        Text(item.subtitle)
-                                            .font(ZeroBotTypography.font(.caption2, design: .monospaced))
-                                            .foregroundStyle(ZeroTheme.secondaryInk)
-                                            .lineLimit(1)
-                                    }
-                                    Spacer(minLength: 4)
-                                }
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                            }
-                            .buttonStyle(ZeroButtonStyle(.quiet))
-                            .focusEffectDisabled()
-                        }
-                    }
-                }
-            }
-        }
-        .padding(16)
-        .frame(minWidth: 420, minHeight: 320)
-        .background(ZeroTheme.workstation)
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel("Command palette")
-    }
-
-    private func paletteSymbol(_ kind: ZeroBotPaletteItem.Kind) -> String {
-        switch kind {
-        case .thread: "bubble.left.and.text.bubble.right"
-        case .project: "folder"
-        case .model: "cpu"
-        }
-    }
-
     private var historyFooter: some View {
         Label(projection.historyNotice, systemImage: "archivebox")
-            .font(ZeroBotTypography.font(.caption2, weight: .medium, design: .monospaced))
+            .font(.system(size: 9, weight: .medium, design: .monospaced))
             .foregroundStyle(ZeroTheme.secondaryInk)
             .fixedSize(horizontal: false, vertical: true)
             .accessibilityLabel("History boundary. \(projection.historyNotice)")
     }
 
     private var startThreadUnavailableReason: String? {
-        if model.runtimeConnection != .live || model.snapshot == nil {
-            return "Connect the Project Zero runtime and load a fresh project registry before starting a thread."
-        }
         if model.codexConnection != .connected { return "Connect Codex before starting a thread." }
         if selectedProjectID == nil { return "Select a registered project before starting a thread." }
         if !projection.isAdvertisedModel(selectedModelID) { return "Select a model advertised by this Codex connection." }
@@ -2150,25 +912,9 @@ public struct ZeroBotView: View {
     }
 
     private var sendUnavailableReason: String? {
-        if model.runtimeConnection != .live || model.snapshot == nil {
-            return "Project Zero runtime evidence is not live; sending is disabled."
-        }
-        if harness == .opencode {
-            return "OpenCode sending is not wired in this build; switch to the Codex harness to send."
-        }
         if model.codexConnection != .connected { return "Connect Codex before sending." }
-        if let mismatch = composerHarnessMismatch { return mismatch }
         guard let selectedThreadID else { return "Select a thread before sending." }
         if !projection.isOwned(threadID: selectedThreadID) { return "This discovered thread is read-only; start a Project Zero-owned session." }
-        guard let binding = projection.projectBinding(threadID: selectedThreadID) else {
-            return "This thread has no verified Project Zero project binding; sending is disabled."
-        }
-        if !projection.hasCurrentProjectBinding(threadID: selectedThreadID) {
-            return "The bound project \(binding.name) no longer exactly matches the live registered path."
-        }
-        if projection.projectSelectionMismatch(threadID: selectedThreadID, selectedProjectID: selectedProjectID) {
-            return "Select the bound project \(binding.name) before sending to this thread."
-        }
         if intent.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return "Enter an intent before sending." }
         return nil
     }
@@ -2178,117 +924,6 @@ public struct ZeroBotView: View {
         let turnCount = selectedThread.turns.count
         let itemCount = selectedThread.items.count
         return "\(turnCount) turn\(turnCount == 1 ? "" : "s") · \(itemCount) streamed item\(itemCount == 1 ? "" : "s")"
-    }
-
-    private var advertisedProviderModels: [ProviderModel] {
-        projection.modelOptions(mode: mode)
-            .filter(\.advertised)
-            .map { ProviderModel(provider: .codex, id: $0.id, label: $0.label) }
-    }
-
-    private var sidebarNeedle: String {
-        sidebarSearch.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-    }
-
-    private var filteredSidebarProjects: [CockpitProject] {
-        guard !sidebarNeedle.isEmpty else { return projection.registeredProjects }
-        return projection.registeredProjects.filter {
-            $0.name.lowercased().contains(sidebarNeedle) || $0.path.lowercased().contains(sidebarNeedle)
-        }
-    }
-
-    private var filteredSidebarThreads: [CodexThread] {
-        guard !sidebarNeedle.isEmpty else { return projection.threads }
-        return projection.threads.filter { thread in
-            threadTitle(thread).lowercased().contains(sidebarNeedle)
-                || thread.id.lowercased().contains(sidebarNeedle)
-                || (projection.projectBinding(threadID: thread.id)?.name.lowercased().contains(sidebarNeedle) == true)
-        }
-    }
-
-    private var groupedSidebarThreads: [(key: String, title: String, threads: [CodexThread])] {
-        var groups: [String: (title: String, threads: [CodexThread])] = [:]
-        var order: [String] = []
-        for thread in filteredSidebarThreads {
-            let binding = projection.projectBinding(threadID: thread.id)
-            let key = binding?.projectID ?? "ungrouped"
-            if groups[key] == nil {
-                groups[key] = (binding?.name ?? "Ungrouped history", [])
-                order.append(key)
-            }
-            groups[key]?.threads.append(thread)
-        }
-        return order.sorted {
-            let left = groups[$0]?.title ?? $0
-            let right = groups[$1]?.title ?? $1
-            if $0 == "ungrouped" { return false }
-            if $1 == "ungrouped" { return true }
-            return left.localizedCaseInsensitiveCompare(right) == .orderedAscending
-        }.compactMap { key in
-            guard let group = groups[key] else { return nil }
-            return (key, group.title, group.threads)
-        }
-    }
-
-    private var paletteItems: [ZeroBotPaletteItem] {
-        var items: [ZeroBotPaletteItem] = []
-        items += projection.threads.map { thread in
-            ZeroBotPaletteItem(
-                id: "thread:\(thread.id)",
-                title: threadTitle(thread),
-                subtitle: projection.projectBinding(threadID: thread.id)?.name ?? "Ungrouped history",
-                kind: .thread
-            )
-        }
-        items += projection.registeredProjects.map { project in
-            ZeroBotPaletteItem(
-                id: "project:\(project.id)",
-                title: project.name,
-                subtitle: project.path,
-                kind: .project
-            )
-        }
-        items += projection.modelOptions(mode: mode).map { option in
-            ZeroBotPaletteItem(
-                id: "model:\(option.id)",
-                title: option.label,
-                subtitle: option.advertised ? "Advertised model" : "Policy default",
-                kind: .model
-            )
-        }
-        return items
-    }
-
-    private var filteredPaletteItems: [ZeroBotPaletteItem] {
-        ZeroBotPalette.filter(query: paletteQuery, items: paletteItems)
-    }
-
-    private var statusStripItems: [ZeroBotStatusItem] {
-        ZeroBotStatusStrip.items(
-            connectionLabel: projection.connectionPresentation.label,
-            projectPath: projection.projectBinding(threadID: selectedThreadID)?.path,
-            modelID: projection.settings(threadID: selectedThreadID)?.model ?? selectedModelID,
-            usageGlance: selectedThread?.tokenUsage == .null ? nil : "Usage reported",
-            syncState: model.runtimeConnection == .live ? "Live" : "Retained evidence"
-        )
-    }
-
-    private func applyPaletteItem(_ item: ZeroBotPaletteItem) {
-        let prefix = item.kind == .thread ? "thread:" : item.kind == .project ? "project:" : "model:"
-        let rawID = item.id.hasPrefix(prefix) ? String(item.id.dropFirst(prefix.count)) : item.id
-        switch item.kind {
-        case .thread:
-            selectedThreadID = rawID
-            if let binding = projection.projectBinding(threadID: rawID) {
-                selectedProjectID = binding.projectID
-            }
-        case .project:
-            selectedProjectID = rawID
-        case .model:
-            if projection.isAdvertisedModel(rawID) { selectedModelID = rawID }
-        }
-        paletteOpen = false
-        paletteQuery = ""
     }
 
     private var connectionSymbol: String {
@@ -2302,8 +937,6 @@ public struct ZeroBotView: View {
 
     private func connect() {
         guard !actionInFlight else { return }
-        storeThreadProjects([:])
-        selectedThreadID = nil
         actionInFlight = true
         localNotice = nil
         Task {
@@ -2313,30 +946,14 @@ public struct ZeroBotView: View {
         }
     }
 
-    private func connectOpenCode() {
-        guard !actionInFlight else { return }
-        selectedOpenCodeSessionID = nil
-        actionInFlight = true
-        localNotice = nil
-        Task {
-            let connected = await model.connectOpenCode()
-            actionInFlight = false
-            if connected { localNotice = "Connected. No session or prompt was started." }
-        }
-    }
-
     private func startThread() {
         guard !actionInFlight,
               let selectedProjectID,
-              let project = projection.registeredProjects.first(where: { $0.id == selectedProjectID }),
               projection.canStartThread(projectID: selectedProjectID, modelID: selectedModelID) else { return }
         actionInFlight = true
         localNotice = nil
         Task {
             if let id = await model.startCodexThread(projectID: selectedProjectID, model: selectedModelID, mode: mode) {
-                var bindings = threadProjects
-                bindings[id] = ZeroBotProjectBinding(project)
-                storeThreadProjects(bindings)
                 selectedThreadID = id
                 localNotice = "Created Project Zero-owned thread \(id)."
             }
@@ -2345,29 +962,9 @@ public struct ZeroBotView: View {
     }
 
     private func sendIntent() {
-        if harness == .opencode {
-            localNotice = "OpenCode sending is not wired in this build; switch to the Codex harness to send."
-            return
-        }
-        if let mismatch = composerHarnessMismatch {
-            let entry = "\(mismatch) Mirrored, not sent."
-            harnessWarnings.append(entry)
-            writeMirrorFile(
-                for: harness,
-                threadID: selectedThreadID ?? "unbound",
-                model: selectedModelID,
-                note: entry
-            )
-            localNotice = "Harness mismatch mirrored; nothing was sent."
-            return
-        }
         guard !actionInFlight,
               let selectedThreadID,
-              projection.canSend(
-                threadID: selectedThreadID,
-                selectedProjectID: selectedProjectID,
-                text: intent
-              ) else { return }
+              projection.canSend(threadID: selectedThreadID, text: intent) else { return }
         let submitted = intent.trimmingCharacters(in: .whitespacesAndNewlines)
         actionInFlight = true
         localNotice = nil
@@ -2395,8 +992,6 @@ public struct ZeroBotView: View {
 
     private func answer(_ approval: CodexApproval, approve: Bool) {
         guard !actionInFlight,
-              projection.approvalAvailability(approval, selectedThreadID: selectedThreadID) == .actionable,
-              !ZeroBotProjection.jsonText(approval.params).truncated,
               let response = ZeroBotProjection.approvalResponse(method: approval.method, approve: approve) else { return }
         actionInFlight = true
         localNotice = nil
@@ -2405,10 +1000,6 @@ public struct ZeroBotView: View {
             localNotice = "\(approve ? "Accepted" : "Declined") exact request \(ZeroBotProjection.requestIDLabel(approval.id))."
         }
         actionInFlight = false
-    }
-
-    private func storeThreadProjects(_ bindings: [String: ZeroBotProjectBinding]) {
-        encodedThreadProjects = ZeroBotProjectBindingCodec.encode(bindings)
     }
 
     private func threadTitle(_ thread: CodexThread) -> String {
@@ -2440,9 +1031,9 @@ public struct ZeroBotView: View {
         switch category {
         case .operatorMessage: ZeroTheme.navigation.opacity(0.48)
         case .agentMessage: Color.white
-        case .reasoning: ZeroTheme.cardCream
+        case .reasoning: Color(red: 0.95, green: 0.94, blue: 0.88)
         case .plan: ZeroTheme.frameBand.opacity(0.42)
-        case .command, .tool: ZeroTheme.navCream
+        case .command, .tool: Color(red: 0.94, green: 0.94, blue: 0.96)
         case .fileChange: ZeroTone.healthy.color.opacity(0.06)
         case .other: ZeroTheme.workstation
         }
@@ -2492,10 +1083,10 @@ private struct ZeroBotSectionHeader: View {
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             Text(title)
-                .font(ZeroBotTypography.font(.callout, weight: .black))
+                .font(.system(size: 12, weight: .black))
             Spacer(minLength: 5)
             Text(badge)
-                .font(ZeroBotTypography.font(.caption2, weight: .bold, design: .monospaced))
+                .font(.system(size: 8, weight: .bold, design: .monospaced))
                 .foregroundStyle(ZeroTheme.secondaryInk)
                 .padding(.horizontal, 5)
                 .padding(.vertical, 3)
@@ -2511,11 +1102,11 @@ private struct ZeroBotPolicyRow: View {
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             Text(label.uppercased())
-                .font(ZeroBotTypography.font(.caption2, weight: .bold, design: .monospaced))
+                .font(.system(size: 8, weight: .bold, design: .monospaced))
                 .foregroundStyle(ZeroTheme.secondaryInk)
             Spacer(minLength: 6)
             Text(value)
-                .font(ZeroBotTypography.font(.caption2, weight: .semibold, design: .monospaced))
+                .font(.system(size: 9, weight: .semibold, design: .monospaced))
                 .multilineTextAlignment(.trailing)
                 .textSelection(.enabled)
         }
@@ -2530,18 +1121,18 @@ private struct ZeroBotCodeWell: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 5) {
             Text(title)
-                .font(ZeroBotTypography.font(.caption2, weight: .bold, design: .monospaced))
+                .font(.system(size: 8, weight: .bold, design: .monospaced))
                 .foregroundStyle(tone.color)
             ScrollView(.horizontal, showsIndicators: true) {
                 Text(content)
-                    .font(ZeroBotTypography.font(.caption, design: .monospaced))
+                    .font(.system(size: 10, design: .monospaced))
                     .textSelection(.enabled)
                     .fixedSize(horizontal: true, vertical: false)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
         .padding(8)
-        .background(ZeroTheme.cardCream, in: RoundedRectangle(cornerRadius: 5))
+        .background(Color(red: 0.93, green: 0.93, blue: 0.95), in: RoundedRectangle(cornerRadius: 5))
         .overlay(RoundedRectangle(cornerRadius: 5).strokeBorder(tone.color.opacity(0.22)))
     }
 }
@@ -2554,9 +1145,9 @@ private struct ZeroBotEmpty: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             Label(title, systemImage: symbol)
-                .font(ZeroBotTypography.font(.callout, weight: .bold))
+                .font(.system(size: 11, weight: .bold))
             Text(detail)
-                .font(ZeroBotTypography.font(.caption, weight: .medium))
+                .font(.system(size: 10, weight: .medium))
                 .foregroundStyle(ZeroTheme.secondaryInk)
                 .fixedSize(horizontal: false, vertical: true)
         }
