@@ -102,6 +102,117 @@ final class CockpitModelTests: XCTestCase {
         XCTAssertEqual(model.deliveryState, .delivered)
     }
 
+    func testWaitingApprovalRemainsQueuedAndBecomesStaleAfterDenial() async {
+        let fixture = RuntimeSnapshotFixture(snapshot: snapshotData(
+            revision: 10,
+            invocations: [("old-render", "SUCCEEDED")]
+        ))
+        let commands = RuntimeCommandRecorder(statuses: ["WAITING_APPROVAL", "SUCCEEDED"])
+        let model = makeModel(commands: commands, client: fixture.client())
+        model.applicationDidStart()
+        await fixture.waitUntilLive(model.runtime)
+
+        let proposed = await model.pauseFocus()
+
+        XCTAssertTrue(proposed)
+        XCTAssertEqual(model.deliveryState, .queued)
+        XCTAssertEqual(model.attentionCount, 1)
+        XCTAssertFalse(model.hasUncertainRuntimeCommand)
+
+        let recordedRequest = await commands.lastRequest()
+        let request = try! XCTUnwrap(recordedRequest)
+        fixture.setSnapshot(snapshotData(
+            revision: 11,
+            invocations: [("old-render", "SUCCEEDED")],
+            runtimeInvocations: [(request.id, "session.pause", "WAITING_APPROVAL")],
+            approvalIDs: [request.id]
+        ))
+        model.runtime.refresh()
+        await fixture.waitForRevision(11, client: model.runtime)
+
+        XCTAssertEqual(model.deliveryState, .queued)
+        XCTAssertEqual(model.attentionCount, 1, "The proposal and bounded approval row are the same attention item")
+
+        let denied = await model.resolveRuntimeApproval(id: request.id, approve: false)
+        XCTAssertTrue(denied)
+
+        fixture.setSnapshot(snapshotData(
+            revision: 12,
+            invocations: [("old-render", "SUCCEEDED")],
+            runtimeInvocations: [(request.id, "session.pause", "CANCELLED")]
+        ))
+        model.runtime.refresh()
+        await fixture.waitForRevision(12, client: model.runtime)
+
+        XCTAssertEqual(model.deliveryState, .stale)
+        XCTAssertEqual(model.attentionCount, 0)
+        XCTAssertNotEqual(model.deliveryState, .committedLocally)
+        XCTAssertNotEqual(model.deliveryState, .delivered)
+    }
+
+    func testPersistedAmbiguousRetryRecoversOnlyExactExistingDeliveryEvidence() async {
+        let suiteName = "CockpitModelTests.\(UUID().uuidString)"
+        let defaults = try! XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let socketPath = "/tmp/project-zero-retry-\(UUID().uuidString).sock"
+        let transport = AmbiguousThenCachedRuntimeCommandTransport()
+        let firstFixture = RuntimeSnapshotFixture(snapshot: snapshotData(
+            revision: 10,
+            invocations: [("old-render", "SUCCEEDED")]
+        ))
+        var firstModel: CockpitModel? = CockpitModel(
+            socketPath: socketPath,
+            client: firstFixture.client(),
+            codex: CodexAppServer(transport: RecordingCodexTransport()),
+            sendCommand: { request in try await transport.send(request) },
+            resolveProject: { _ in throw ZeroError("unused") },
+            userDefaults: defaults
+        )
+        firstModel?.applicationDidStart()
+        await firstFixture.waitUntilLive(try! XCTUnwrap(firstModel).runtime)
+
+        let confirmed = await firstModel?.pauseFocus()
+        XCTAssertEqual(confirmed, false)
+        XCTAssertTrue(try! XCTUnwrap(firstModel).hasUncertainRuntimeCommand)
+        let recordedRequest = await transport.lastRequest()
+        let commandID = try! XCTUnwrap(recordedRequest?.id)
+        firstModel = nil
+
+        let recoveredFixture = RuntimeSnapshotFixture(snapshot: snapshotData(
+            revision: 11,
+            invocations: [
+                ("\(commandID):desk", "DISPATCHED"),
+                ("unrelated-new-render", "SUCCEEDED"),
+            ]
+        ))
+        let recoveredModel = CockpitModel(
+            socketPath: socketPath,
+            client: recoveredFixture.client(),
+            codex: CodexAppServer(transport: RecordingCodexTransport()),
+            sendCommand: { request in try await transport.send(request) },
+            resolveProject: { _ in throw ZeroError("unused") },
+            userDefaults: defaults
+        )
+        recoveredModel.applicationDidStart()
+        await recoveredFixture.waitUntilLive(recoveredModel.runtime)
+
+        XCTAssertTrue(recoveredModel.hasUncertainRuntimeCommand)
+        let retried = await recoveredModel.retryPendingRuntimeCommand()
+        XCTAssertTrue(retried)
+        XCTAssertEqual(recoveredModel.deliveryState, .awaitingDelivery)
+
+        recoveredFixture.setSnapshot(snapshotData(
+            revision: 12,
+            invocations: [
+                ("\(commandID):desk", "SUCCEEDED"),
+                ("unrelated-new-render", "SUCCEEDED"),
+            ]
+        ))
+        recoveredModel.runtime.refresh()
+        await recoveredFixture.waitForRevision(12, client: recoveredModel.runtime)
+        XCTAssertEqual(recoveredModel.deliveryState, .delivered)
+    }
+
     func testRetryIsSerializedAndCannotCreateALateFailureAfterSuccess() async {
         let fixture = RuntimeSnapshotFixture(snapshot: snapshotData())
         let commands = HeldRuntimeCommandTransport()
@@ -205,15 +316,22 @@ final class CockpitModelTests: XCTestCase {
     private func snapshotData(
         revision: UInt64 = 2,
         invocations: [(String, String)] = [],
+        runtimeInvocations: [(String, String, String)] = [],
         approvals: Int = 0,
+        approvalIDs: [String]? = nil,
         firings: Int = 0,
         truncatedAttention: Bool = false
     ) -> Data {
-        let invocationJSON = invocations.map {
+        let displayInvocationJSON = invocations.map {
             #"{"id":"\#($0.0)","principal":"owner","node":"desk","capability":"display.render","status":"\#($0.1)","approved":1,"deadline":"","attempts":1}"#
-        }.joined(separator: ",")
-        let approvalsJSON = (0..<approvals).map {
-            #"{"id":"approval-\#($0)","node":"runtime","capability":"session.pause","status":"WAITING_APPROVAL"}"#
+        }
+        let runtimeInvocationJSON = runtimeInvocations.map {
+            #"{"id":"\#($0.0)","principal":"owner","node":"runtime","capability":"\#($0.1)","status":"\#($0.2)","approved":0,"deadline":"","attempts":0}"#
+        }
+        let invocationJSON = (displayInvocationJSON + runtimeInvocationJSON).joined(separator: ",")
+        let resolvedApprovalIDs = approvalIDs ?? (0..<approvals).map { "approval-\($0)" }
+        let approvalsJSON = resolvedApprovalIDs.map {
+            #"{"id":"\#($0)","node":"runtime","capability":"session.pause","status":"WAITING_APPROVAL"}"#
         }.joined(separator: ",")
         let firingsJSON = (0..<firings).map {
             #"{"id":"firing-\#($0)","state":"PENDING"}"#
@@ -225,9 +343,19 @@ final class CockpitModelTests: XCTestCase {
 private actor RuntimeCommandRecorder {
     private var requests: [RuntimeCommandRequest] = []
     private var responses: [RuntimeCommandResponse] = []
+    private var statuses: [String]
+
+    init(status: String = "SUCCEEDED") {
+        statuses = [status]
+    }
+
+    init(statuses: [String]) {
+        self.statuses = statuses
+    }
 
     func send(_ request: RuntimeCommandRequest) throws -> RuntimeCommandResponse {
-        let response = RuntimeCommandResponse(version: "0.1", id: request.id, status: "SUCCEEDED")
+        let status = statuses.count > 1 ? statuses.removeFirst() : (statuses.first ?? "SUCCEEDED")
+        let response = RuntimeCommandResponse(version: "0.1", id: request.id, status: status)
         requests.append(request)
         responses.append(response)
         return response
@@ -236,6 +364,20 @@ private actor RuntimeCommandRecorder {
     func callCount() -> Int { requests.count }
     func lastRequest() -> RuntimeCommandRequest? { requests.last }
     func lastResponse() -> RuntimeCommandResponse? { responses.last }
+}
+
+private actor AmbiguousThenCachedRuntimeCommandTransport {
+    private var requests: [RuntimeCommandRequest] = []
+
+    func send(_ request: RuntimeCommandRequest) throws -> RuntimeCommandResponse {
+        requests.append(request)
+        if requests.count == 1 {
+            throw ZeroError("command response was lost")
+        }
+        return RuntimeCommandResponse(version: "0.1", id: request.id, status: "SUCCEEDED")
+    }
+
+    func lastRequest() -> RuntimeCommandRequest? { requests.last }
 }
 
 private actor HeldRuntimeCommandTransport {
