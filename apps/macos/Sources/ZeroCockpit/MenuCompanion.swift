@@ -27,7 +27,7 @@ public struct MenuCompanion: View {
             statusRow(title: "Delivery", value: delivery.label, symbol: delivery.symbol, tone: delivery.tone)
             statusRow(
                 title: "Attention",
-                value: String(model.attentionCount),
+                value: model.attentionLabel,
                 symbol: model.attentionCount == 0 ? "checkmark.shield" : "exclamationmark.triangle",
                 tone: model.attentionCount == 0 ? .healthy : .attention
             )
@@ -63,6 +63,7 @@ public struct MenuCompanion: View {
         .background(ZeroTheme.workstation)
         .foregroundStyle(ZeroTheme.ink)
         .preferredColorScheme(.light)
+        .onAppear { model.applicationDidStart() }
     }
 
     private var focusSummary: String {
