@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import ZeroCockpit
 import ZeroKit
 import UserNotifications
 
@@ -218,8 +219,7 @@ struct ApprovalRow: View {
  }
 }
 @main struct ZeroMenuApp: App {
- @StateObject private var model = ZeroModel()
  var body: some Scene {
-  MenuBarExtra { ZeroPanel(model: model) } label: { Label(model.connected ? "Zero \(model.timer)\(model.pendingCount > 0 ? " •" : "")" : "Zero offline", systemImage: "circle.dotted") }.menuBarExtraStyle(.window)
+  CockpitAppRoot()
  }
 }
