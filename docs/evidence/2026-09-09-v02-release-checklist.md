@@ -1,15 +1,15 @@
 # v0.2 release evidence — 2026-09-09
 
-Product release: 0.2.0. Runtime, CLI, app and desk firmware now report build 0.2.0-5. Implementation and installation are distinct from full acceptance. No scheduled AI checks were added.
+Product release: 0.2.0. Desk firmware build 0.2.0-4; Mac currently 0.2.0-3 with build 4 upgrade waiting for Keychain preflight. Implementation and installation are distinct from full acceptance. No scheduled AI checks were added.
 
 | Requirement | Status | Evidence / remaining work |
 | --- | --- | --- |
-| Shared release, production paths, daemon instance lock | Passed | Manifest-generated metadata; installed CLI and doctor; one production daemon; paired device advertises build 0.2.0-4. Matching installed build 5 subsequently verified. |
+| Shared release, production paths, daemon instance lock | Passed | Manifest-generated metadata; installed CLI and doctor; one production daemon; paired device advertises build 0.2.0-4. Temporary compatible build skew is explicit pending Mac upgrade. |
 | Repeat signed upgrade and preserved database/identity | Passed | Repeat upgrades health checked; audit chain VALID; existing device reconnects without pairing. Backups in production recovery directory. |
-| Keychain approval | Passed | User allowed signed runtime; subsequent upgrade completed, but builds 4 and 5 again waited at Keychain preflight before completing. Stable permission retention is therefore not yet established across every replacement. |
+| Keychain approval | Passed | User allowed signed runtime; subsequent upgrade completed, but build 4 again waits at Keychain preflight. Stable permission retention is therefore not yet established across every replacement. |
 | Spotify artwork and text | Passed | Real local Spotify metadata and validated 32×32 artwork observed; user reviewed physical screen. Artwork is a user-approved scope amendment. |
 | Native setup notification | Passed | User explicitly confirmed “Zero setup check” notification. This is a manual setup test, not evidence of a 45-minute firing. |
-| New artist spacing and bass trace | Passed physical review | User reported flat trace in build 3. Native levels independently verified varying (56 samples, amplitude and bass both span 0–255). Firmware queue contention found and isolated into a coalescing audio queue; device accepted 335/335 audio frames at 23 ms age, heap 41,740 bytes (minimum 37,208), playback playing. User explicitly confirmed the trace now moves. Mac upgrades 4 and 5 subsequently completed. |
+| New artist spacing and bass trace | Passed physical review | User reported flat trace in build 3. Native levels independently verified varying (56 samples, amplitude and bass both span 0–255). Firmware queue contention found and isolated into a coalescing audio queue; device accepted 335/335 audio frames at 23 ms age, heap 41,740 bytes (minimum 37,208), playback playing. User explicitly confirmed the trace now moves. Mac build 4 upgrade awaiting Keychain preflight. |
 | Go race, native transport, firmware | Passed | go test -race ./...; seven Swift tests including live production UDS; host protocol fixtures and ESP-IDF build; go vet ./... . |
 | Installer rollback failure handling | Passed automated / pending physical | Three Python tests include consistent WAL backup and failed-health restoration. A full installed rollback has not been exercised. |
 | Protocol additions | Passed tested subset | Duplicate keys/depth validation, strict owner bodies, shared Go/C display fixtures, bounded audio parser. This does not establish exhaustive conformance for every CLI/API body. |

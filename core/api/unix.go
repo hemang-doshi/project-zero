@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -108,8 +109,27 @@ func ServeUnix(ctx context.Context, r *runtime.Runtime, path string, ca *identit
 			DryRun bool   `json:"dry_run"`
 		}
 		q.Body = http.MaxBytesReader(w, q.Body, 1024)
-		if e := json.NewDecoder(q.Body).Decode(&b); e != nil {
+		if e := decodeStrict(q.Body, &b); e != nil {
 			fail(w, e)
+			return
+		}
+		if b.ID != "git" && b.ID != "spotify" {
+			fail(w, fmt.Errorf("VALIDATION: unsupported integration"))
+			return
+		}
+		integrations, err := r.Integrations(q.Context())
+		if err != nil {
+			fail(w, err)
+			return
+		}
+		enabled := false
+		for _, integration := range integrations {
+			if integration.ID == b.ID {
+				enabled = integration.Enabled
+			}
+		}
+		if !enabled {
+			fail(w, fmt.Errorf("AUTHORIZATION: integration disabled"))
 			return
 		}
 		if b.DryRun {
@@ -185,7 +205,7 @@ func ServeUnix(ctx context.Context, r *runtime.Runtime, path string, ca *identit
 	mux.HandleFunc("POST /v0.1/commands", func(w http.ResponseWriter, q *http.Request) {
 		var v runtime.Request
 		q.Body = http.MaxBytesReader(w, q.Body, 8192)
-		if e := json.NewDecoder(q.Body).Decode(&v); e != nil {
+		if e := decodeStrict(q.Body, &v); e != nil {
 			fail(w, e)
 			return
 		}
@@ -231,7 +251,7 @@ func ServeUnix(ctx context.Context, r *runtime.Runtime, path string, ca *identit
 		}
 		q.Body = http.MaxBytesReader(w, q.Body, 8192)
 		var b pairing
-		if e := json.NewDecoder(q.Body).Decode(&b); e != nil {
+		if e := decodeStrict(q.Body, &b); e != nil {
 			fail(w, e)
 			return
 		}
@@ -278,4 +298,17 @@ func (l *ownerListener) Accept() (net.Conn, error) {
 		}
 		c.Close()
 	}
+}
+
+func decodeStrict(reader io.Reader, v any) error {
+	decoder := json.NewDecoder(reader)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(v); err != nil {
+		return fmt.Errorf("VALIDATION: %w", err)
+	}
+	var extra any
+	if err := decoder.Decode(&extra); err != io.EOF {
+		return fmt.Errorf("VALIDATION: trailing JSON")
+	}
+	return nil
 }

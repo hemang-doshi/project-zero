@@ -14,7 +14,7 @@ func TestAudioLevelsRequirePermissionFreshnessAndEnabledSource(t *testing.T) {
 	now := time.Now()
 	r.Now = func() time.Time { return now }
 	r.Enroll(ctx, "desk", "fp", []string{"display.render"})
-	r.Advertise(ctx, "desk", json.RawMessage(`{"render_schema":"0.2","audio":"levels-v2","capabilities":["display.render"]}`))
+	r.Advertise(ctx, "desk", json.RawMessage(`{"render_schema":"0.2","audio":"levels-v1","capabilities":["display.render"]}`))
 	command(t, r, "spotify-on", "integrations.connect", map[string]string{"id": "spotify"})
 	r.setAudio(100, 180, "ACTIVE")
 	if _, ok := r.AudioLevels(ctx, "desk"); ok {

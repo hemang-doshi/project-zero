@@ -49,6 +49,12 @@
     "media": {
       "type": "string",
       "maxLength": 64
+    },
+    "artwork_rgb565": {
+      "type": "string",
+      "contentEncoding": "base64",
+      "maxLength": 2732,
+      "description": "Negotiated rgb565-32 only: empty or exactly 2048 decoded big-endian RGB565 bytes."
     }
   }
 }

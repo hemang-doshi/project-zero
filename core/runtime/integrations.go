@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"os/exec"
@@ -77,6 +78,12 @@ func (r *Runtime) integrationAction(ctx context.Context, tx *sql.Tx, q Request, 
 			return fmt.Errorf("VALIDATION: observation fields")
 		}
 		for k, val := range b.Data {
+			if k == "artwork_rgb565" && b.ID == "spotify" {
+				if !validArtwork(val) {
+					return fmt.Errorf("VALIDATION: artwork bounds")
+				}
+				continue
+			}
 			if len(k) > 32 || len(val) > 256 {
 				return fmt.Errorf("VALIDATION: observation bounds")
 			}
@@ -89,6 +96,20 @@ func (r *Runtime) integrationAction(ctx context.Context, tx *sql.Tx, q Request, 
 			if s.ProjectID != b.ProjectID {
 				return fmt.Errorf("CONFLICT: focus project changed")
 			}
+		}
+		if image := b.Data["artwork_rgb565"]; image != "" {
+			digest := hash(image)
+			var exists int
+			if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM entities WHERE kind='artwork' AND key=?", digest).Scan(&exists); err != nil {
+				return err
+			}
+			if exists == 0 {
+				if err := saveEntity(ctx, tx, q.ID+":art", "artwork", digest, map[string]string{"rgb565": image}, r.Now()); err != nil {
+					return err
+				}
+			}
+			delete(b.Data, "artwork_rgb565")
+			b.Data["artwork_id"] = digest
 		}
 		old = b
 		old.Enabled = true
@@ -131,6 +152,12 @@ func (r *Runtime) Integrations(ctx context.Context) ([]Integration, error) {
 		v, e := readIntegration(ctx, tx, id)
 		if e != nil {
 			return nil, e
+		}
+		if id == "spotify" {
+			if v.Data == nil {
+				v.Data = map[string]string{}
+			}
+			v.Data["audio_capture"] = r.audioHealth()
 		}
 		if id == "codex" {
 			v.Status = "UNAVAILABLE"
@@ -233,32 +260,33 @@ func (r *Runtime) SyncIntegration(ctx context.Context, id string) error {
 	return e
 }
 func (r *Runtime) RunIntegrations(ctx context.Context) {
-	ticker := time.NewTicker(time.Second)
-	defer ticker.Stop()
-	var tick int
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			tick++
-			_ = r.TickAutomations(ctx)
-			if tick%15 == 0 {
-				policies, _ := r.Policies(ctx)
-				for _, p := range policies {
-					if p.ID == "git-refresh" && p.Enabled {
-						s, _ := r.Session(ctx)
-						if s.State == "RUNNING" && s.ProjectID != "" {
-							result := r.SyncIntegration(ctx, "git")
-							r.recordGitFiring(ctx, result)
-						}
+	jobs := []periodicWorker{
+		{time.Second, func(ctx context.Context) { _ = r.TickAutomations(ctx) }},
+		{2 * time.Second, func(ctx context.Context) { _ = r.SyncIntegration(ctx, "spotify") }},
+		{15 * time.Second, func(ctx context.Context) {
+			policies, _ := r.Policies(ctx)
+			for _, p := range policies {
+				if p.ID == "git-refresh" && p.Enabled {
+					s, _ := r.Session(ctx)
+					if s.State == "RUNNING" && s.ProjectID != "" {
+						result := r.SyncIntegration(ctx, "git")
+						r.recordGitFiring(ctx, result)
 					}
 				}
 			}
-			if tick%2 == 0 {
-				_ = r.SyncIntegration(ctx, "spotify")
-			}
-		}
+		}},
 	}
+	runWorkers(ctx, jobs)
 }
 func integrationPrincipal(p string) string { return strings.TrimPrefix(p, "integration:") }
+
+func validArtwork(encoded string) bool {
+	if encoded == "" {
+		return true
+	}
+	if len(encoded) != 2732 {
+		return false
+	}
+	pixels, err := base64.StdEncoding.Strict().DecodeString(encoded)
+	return err == nil && len(pixels) == 2048
+}

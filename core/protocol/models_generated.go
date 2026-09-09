@@ -35,4 +35,5 @@ var messageTypes = map[string]bool{
 	"sync.request":         true,
 	"ack":                  true,
 	"session.error":        true,
+	"display.telemetry":    true,
 }

@@ -30,15 +30,6 @@ func (r *Runtime) audioHealth() string {
 	return r.audioStatus
 }
 
-// AudioSequence exposes the latest frame counter without touching the
-// database, so connection polls can skip AudioLevels while no new frame
-// could possibly be delivered.
-func (r *Runtime) AudioSequence() uint64 {
-	r.audioMu.Lock()
-	defer r.audioMu.Unlock()
-	return r.audio.Sequence
-}
-
 // AudioLevels is transient: no PCM, retry queue, database writes or historical playback.
 func (r *Runtime) AudioLevels(ctx context.Context, node string) (AudioFrame, bool) {
 	r.audioMu.Lock()
@@ -56,7 +47,7 @@ func (r *Runtime) AudioLevels(ctx context.Context, node string) (AudioFrame, boo
 	defer tx.Rollback()
 	var raw []byte
 	var profile map[string]string
-	if tx.QueryRowContext(ctx, "SELECT e.value FROM entities e JOIN nodes n ON n.id=e.key WHERE e.kind='node_profile' AND e.key=? AND n.revoked=0", node).Scan(&raw) != nil || json.Unmarshal(raw, &profile) != nil || profile["audio"] != "levels-v2" {
+	if tx.QueryRowContext(ctx, "SELECT e.value FROM entities e JOIN nodes n ON n.id=e.key WHERE e.kind='node_profile' AND e.key=? AND n.revoked=0", node).Scan(&raw) != nil || json.Unmarshal(raw, &profile) != nil || profile["audio"] != "levels-v1" {
 		return frame, false
 	}
 	source, e := readIntegration(ctx, tx, "spotify")

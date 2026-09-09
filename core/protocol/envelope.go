@@ -27,7 +27,11 @@ func Decode(b []byte, source string, now time.Time) (Envelope, error) {
 	if len(b) > MaxFrame {
 		return e, fmt.Errorf("RESOURCE: frame exceeds %d", MaxFrame)
 	}
-	if err := json.Unmarshal(b, &e); err != nil {
+	if err := ValidateJSON(b); err != nil {
+		return e, err
+	}
+	decoder := json.NewDecoder(bytes.NewReader(b))
+	if err := decoder.Decode(&e); err != nil {
 		return e, fmt.Errorf("VALIDATION: invalid JSON")
 	}
 
