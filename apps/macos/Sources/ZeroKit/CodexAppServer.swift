@@ -71,32 +71,40 @@ public final class CodexProcessTransport: CodexTransport {
         input = stdin.fileHandleForWriting
         output = stdout.fileHandleForReading
         errors = stderr.fileHandleForReading
-        output?.readabilityHandler = { [weak self] handle in
-            let data = handle.availableData
-            if data.isEmpty { handle.readabilityHandler = nil; return }
-            Task { @MainActor [weak self] in
-                guard self?.generation == session else { return }
-                self?.receive?(.data(data))
-            }
-        }
-        errors?.readabilityHandler = { [weak self] handle in
-            let data = handle.availableData
-            if data.isEmpty { handle.readabilityHandler = nil; return }
-            let message = String(decoding: data.suffix(4096), as: UTF8.self)
-            Task { @MainActor [weak self] in
-                guard self?.generation == session else { return }
-                self?.receive?(.diagnostic(message))
-            }
-        }
-        child.terminationHandler = { [weak self] child in
-            let status = child.terminationStatus
-            Task { @MainActor [weak self] in
-                guard self?.generation == session else { return }
-                self?.receive?(.exited(status))
-            }
-        }
         process = child
         do { try child.run() } catch { stop(); throw error }
+        let errorHandle = stderr.fileHandleForReading
+        let diagnostics = Task.detached(priority: .utility) { [weak self] in
+            do {
+                while let data = try errorHandle.read(upToCount: 4096), !data.isEmpty {
+                    let message = String(decoding: data, as: UTF8.self)
+                    guard await self?.deliver(.diagnostic(message), session: session) == true else { return }
+                }
+            } catch {
+                _ = await self?.deliver(.failed(error.localizedDescription), session: session)
+            }
+        }
+        let outputHandle = stdout.fileHandleForReading
+        Task.detached(priority: .utility) { [weak self] in
+            do {
+                // One reader awaits delivery of each chunk. No termination callback
+                // can overtake buffered stdout or enqueue an unbounded stream.
+                while let data = try outputHandle.read(upToCount: 16_384), !data.isEmpty {
+                    guard await self?.deliver(.data(data), session: session) == true else { return }
+                }
+                child.waitUntilExit()
+                await diagnostics.value
+                _ = await self?.deliver(.exited(child.terminationStatus), session: session)
+            } catch {
+                _ = await self?.deliver(.failed(error.localizedDescription), session: session)
+            }
+        }
+    }
+
+    private func deliver(_ event: CodexTransportEvent, session: UUID) -> Bool {
+        guard generation == session else { return false }
+        receive?(event)
+        return generation == session
     }
 
     public func send(_ data: Data) throws {
@@ -121,9 +129,6 @@ public final class CodexProcessTransport: CodexTransport {
         generation = UUID()
         receive = nil
         queuedWrites = 0
-        output?.readabilityHandler = nil
-        errors?.readabilityHandler = nil
-        process?.terminationHandler = nil
         if process?.isRunning == true { process?.terminate() }
         try? input?.close()
         try? output?.close()
@@ -185,12 +190,14 @@ public final class CodexAppServer: ObservableObject {
                 "clientInfo": .object(["name": .string("project_zero"), "title": .string("Project Zero"), "version": .string(ZeroRelease.version)]),
                 "capabilities": .object(["experimentalApi": .bool(false)])
             ]))
+            try transport.send(CodexLineCodec.encode(.object(["method": .string("initialized")])))
             let modelList = try await request("model/list", params: .object(["limit": .integer(100)]))
             models = modelList["data"].array
             let threadList = try await request("thread/list", params: .object(["limit": .integer(100)]))
             for thread in threadList["data"].array {
-                store.reduce(.notification(method: "thread/started", params: .object(["thread": thread])))
+                reduce(.notification(method: "thread/started", params: .object(["thread": thread])))
             }
+            guard state == .connecting else { throw CodexBridgeError.disconnected }
             state = .connected
         } catch {
             if generation == session, state == .connecting { fail(error.localizedDescription) }
@@ -220,8 +227,8 @@ public final class CodexAppServer: ObservableObject {
             "config": .object(["model_reasoning_effort": .string(settings.effort)])
         ]))
         guard let id = result["thread"]["id"].string else { throw CodexBridgeError.invalidMessage }
-        threadSettings[id] = settings
-        store.reduce(.notification(method: "thread/started", params: result))
+        if state == .connected { threadSettings[id] = settings }
+        reduce(.notification(method: "thread/started", params: result))
         return id
     }
 
@@ -235,7 +242,7 @@ public final class CodexAppServer: ObservableObject {
             "input": .array([.object(["type": .string("text"), "text": .string(text), "text_elements": .array([])])])
         ]))
         guard let id = result["turn"]["id"].string else { throw CodexBridgeError.invalidMessage }
-        store.reduce(.notification(method: "turn/started", params: .object(["threadId": .string(threadID), "turn": result["turn"]])))
+        reduce(.notification(method: "turn/started", params: .object(["threadId": .string(threadID), "turn": result["turn"]])))
         return id
     }
 
@@ -274,7 +281,9 @@ public final class CodexAppServer: ObservableObject {
             do { try transport.send(data) }
             catch { fail(error.localizedDescription) }
         }
-        guard generation == session, state == .connecting || state == .connected else { throw CodexBridgeError.disconnected }
+        // A response already delivered before a natural process exit remains
+        // valid. Explicit disconnect/reconnect or failure still fences it out.
+        guard generation == session else { throw CodexBridgeError.disconnected }
         return result
     }
 
@@ -283,9 +292,10 @@ public final class CodexAppServer: ObservableObject {
         case .diagnostic(let message): lastDiagnostic = String(message.suffix(4096))
         case .failed(let message): fail(message)
         case .exited(let code):
-            generation = UUID()
             transport.stop()
             failPending(CodexBridgeError.transport("Codex exited with status \(code)"))
+            serverRequests.removeAll()
+            threadSettings.removeAll()
             state = .exited(code)
         case .data(let data):
             do { for value in try codec.append(data) { try receiveMessage(value) } }
@@ -298,10 +308,10 @@ public final class CodexAppServer: ObservableObject {
             if let id = CodexRequestID(value["id"]) {
                 guard serverRequests.count < maximumPendingRequests else { throw CodexBridgeError.pendingLimit }
                 serverRequests.insert(id)
-                store.reduce(.request(id: id, method: method, params: value["params"]))
+                reduce(.request(id: id, method: method, params: value["params"]))
             } else if value["id"] == .null {
                 if method == "serverRequest/resolved", let id = CodexRequestID(value["params"]["requestId"]) { serverRequests.remove(id) }
-                store.reduce(.notification(method: method, params: value["params"]))
+                reduce(.notification(method: method, params: value["params"]))
             } else { throw CodexBridgeError.invalidMessage }
             return
         }
@@ -318,6 +328,11 @@ public final class CodexAppServer: ObservableObject {
         guard let request = pending.removeValue(forKey: id) else { return }
         request.timeout.cancel()
         request.continuation.resume(with: result)
+    }
+
+    private func reduce(_ event: CodexEvent) {
+        store.reduce(event)
+        threadSettings = threadSettings.filter { store.threads[$0.key] != nil }
     }
 
     private func failPending(_ error: Error) {
