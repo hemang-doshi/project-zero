@@ -339,6 +339,11 @@ func (r *Runtime) invoke(ctx context.Context, tx *sql.Tx, p, id string, f effect
 	}
 	for k, value := range input {
 		switch k {
+		case "artwork_rgb565":
+			encoded, ok := value.(string)
+			if !ok || !validArtwork(encoded) || !supportsArtwork(ctx, tx, f.Node) {
+				return fmt.Errorf("VALIDATION: artwork requires negotiated 32x32 RGB565")
+			}
 		case "git", "agent", "track", "artist", "media":
 			value, ok := value.(string)
 			if !ok || len(value) > 64 || !hybrid(ctx, tx, f.Node) {

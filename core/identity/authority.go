@@ -169,3 +169,15 @@ func Load(service string) (*Authority, error) {
 	}
 	return a, nil
 }
+
+// CheckExisting verifies access without generating or replacing signing material.
+func CheckExisting(service string) error {
+	_, found, e := keychainRead(service)
+	if e != nil {
+		return e
+	}
+	if !found {
+		return fmt.Errorf("runtime identity is missing; restore pairing identity before installation")
+	}
+	return nil
+}

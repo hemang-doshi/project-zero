@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"projectzero.local/zero/core/protocol"
 	"projectzero.local/zero/core/storage"
 	"strings"
 	"sync"
@@ -15,6 +16,10 @@ import (
 
 type Runtime struct {
 	MacObserver string
+	MacAudio    string
+	audioMu     sync.Mutex
+	audio       AudioFrame
+	audioStatus string
 	db          *sql.DB
 	mu          sync.Mutex
 	Now         func() time.Time
@@ -148,9 +153,15 @@ func (r *Runtime) Execute(ctx context.Context, principal string, q Request) (Res
 	}
 	var body map[string]json.RawMessage
 	if len(q.Body) > 0 {
+		if e := protocol.ValidateJSON(q.Body); e != nil {
+			return v, fmt.Errorf("VALIDATION: %w", e)
+		}
 		if e := json.Unmarshal(q.Body, &body); e != nil {
 			return v, fmt.Errorf("VALIDATION: body")
 		}
+	}
+	if e := validatePersonalFields(q.Op, body); e != nil {
+		return v, e
 	}
 	signature := hash(struct {
 		P, O string

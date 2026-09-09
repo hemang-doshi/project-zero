@@ -1,0 +1,9 @@
+1	{"project":"Zero","state":"RUNNING","elapsed_ms":10,"since_ms":1,"revision":2,"git":"MAIN","agent":"UNAVAILABLE","track":"Song","artist":"Artist","media":"paused"}
+1	{"state":"IDLE"}
+0	{"track":42}
+0	{"elapsed_ms":-1}
+0	{"revision":1.5}
+0	{"state":"DONE"}
+0	{"unexpected":true}
+0	{"track":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}
+0	{"track":"one","track":"two"}

@@ -1,6 +1,6 @@
 import Foundation
 import Darwin
-public struct ZeroError: LocalizedError {public let message:String;public var errorDescription:String?{message};public init(_ message:String){self.message=message}}
+public struct ZeroError: LocalizedError {public let message:String;public let rejected:Bool;public var errorDescription:String?{message};public init(_ message:String,rejected:Bool=false){self.message=message;self.rejected=rejected}}
 public enum UnixHTTP {
  public static func decode(_ bytes:Data)throws->Any {
   let marker=Data("\r\n\r\n".utf8);guard let split=bytes.range(of:marker),let headers=String(data:bytes[..<split.lowerBound],encoding:.utf8) else{throw ZeroError("Invalid runtime response")}
@@ -9,7 +9,7 @@ public enum UnixHTTP {
    while true {guard let line=rest.range(of:Data("\r\n".utf8)),let countText=String(data:rest[..<line.lowerBound],encoding:.utf8),let count=Int(countText.split(separator:";").first ?? "",radix:16),count>=0 else{throw ZeroError("Invalid response chunk")};rest=Data(rest[line.upperBound...]);if count==0{break};guard count<=rest.count-2 else{throw ZeroError("Truncated response chunk")};body.append(rest.prefix(count));rest=Data(rest.dropFirst(count+2))}
   }
   let value=try JSONSerialization.jsonObject(with:body)
-  guard headers.split(separator:" ").dropFirst().first=="200" else{throw ZeroError((value as? [String:Any])?["error"] as? String ?? "Runtime rejected action")};return value
+  guard headers.split(separator:" ").dropFirst().first=="200" else{throw ZeroError((value as? [String:Any])?["error"] as? String ?? "Runtime rejected action",rejected:true)};return value
  }
  public static func call(socketPath:String,path:String,body:[String:Any]?=nil)async throws->Any {
   try await withCheckedThrowingContinuation { continuation in

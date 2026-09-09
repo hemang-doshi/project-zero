@@ -32,10 +32,13 @@ static char key[512], csr[1024], fingerprint[65], cert[2048], ca[2048],
 static char rx[8193], serial_line[8193];
 static size_t rx_used, serial_used;
 static bool serial_overflow;
-static QueueHandle_t messages;
+static QueueHandle_t messages, audio_messages;
 static esp_websocket_client_handle_t ws;
 static volatile bool connected, wifi_ready;
 static bool welcomed;
+static uint64_t audio_sequence;
+static unsigned audio_received, audio_accepted;
+static int64_t audio_age;
 static char session_id[129];
 static zero_view view;
 static uint32_t sequence;
@@ -101,7 +104,9 @@ static void websocket_event(void *arg, esp_event_base_t base, int32_t id,
     rx_used += e->data_len;
     if (e->payload_offset + e->data_len == e->payload_len && e->fin) {
       rx[rx_used] = 0;
-      if (xQueueSend(messages, rx, 0) != pdTRUE)
+      if(rx_used<1024 && strstr(rx,"\"type\":\"display.telemetry\"")) {
+        char latest[1024]={0};memcpy(latest,rx,rx_used+1);xQueueOverwrite(audio_messages,latest);
+      } else if (xQueueSend(messages, rx, 0) != pdTRUE)
         connected = false;
       rx_used = 0;
     }
@@ -125,8 +130,10 @@ static void handle(const char *message) {
     return;
   struct tm runtime_time = {0};
   const char *stamp = str(root, "time");
-  if (strptime(stamp, "%Y-%m-%dT%H:%M:%S", &runtime_time)) {
+  const char *fraction = strptime(stamp, "%Y-%m-%dT%H:%M:%S", &runtime_time);
+  if (fraction && !strcmp(str(root,"type"),"session.welcome")) {
     struct timeval tv = {.tv_sec = mktime(&runtime_time)};
+    if (*fraction=='.') { int scale=100000; for(fraction++; *fraction>='0'&&*fraction<='9'&&scale;fraction++,scale/=10)tv.tv_usec+=(*fraction-'0')*scale; }
     if (tv.tv_sec > 1700000000)
       settimeofday(&tv, NULL);
   }
@@ -138,10 +145,26 @@ static void handle(const char *message) {
       return;
     strcpy(session_id, s);
     welcomed = true;
-    send_message("node.register", "{\"render_schema\":\"0.2\",\"firmware\":"
+    audio_sequence=0;
+    send_message("node.register", "{\"render_schema\":\"0.2\",\"artwork\":\"rgb565-32\",\"audio\":\"levels-v1\",\"firmware\":"
                                   "\"" ZERO_VERSION "\",\"build\":\"" ZERO_BUILD "\",\"capabilities\":["
                                   "\"display.render\",\"display.clear\"]}");
     printf("ZERO ONLINE heap=%lu\n", (unsigned long)esp_get_free_heap_size());
+  } else if (!strcmp(type,"display.telemetry") && welcomed) {
+    audio_received++;
+    if(!fraction)return;
+    struct timeval current;gettimeofday(&current,NULL);
+    int64_t sent=(int64_t)mktime(&runtime_time)*1000;
+    if(*fraction=='.'){int scale=100;for(fraction++;*fraction>='0'&&*fraction<='9'&&scale;fraction++,scale/=10)sent+=(*fraction-'0')*scale;}
+    int64_t age=(int64_t)current.tv_sec*1000+current.tv_usec/1000-sent;
+    audio_age=age;
+    if(age< -1000||age>500)return;
+    zero_levels levels;
+    if(zero_audio_object(body,&levels)&&!strcmp(levels.session_id,session_id)&&levels.sequence>audio_sequence){
+      audio_accepted++;
+      audio_sequence=levels.sequence;
+      display_levels(levels.level,levels.bass,esp_timer_get_time()/1000);
+    }
   } else if (!strcmp(type, "capability.invoke") && welcomed) {
     const char *id = str(body, "id"), *cap = str(body, "capability");
     if (!safe_id(id))
@@ -226,7 +249,9 @@ void app_main(void) {
   display_pairing(fingerprint);
   printf("ZERO READY reset=%d fingerprint=%s\n", esp_reset_reason(),
          fingerprint);
-  messages = xQueueCreate(1, 8193);
+  messages = xQueueCreate(2, 8193);
+  audio_messages=xQueueCreate(1,1024);
+  configASSERT(audio_messages);
   configASSERT(messages);
   gpio_config_t button = {.pin_bit_mask = 1ULL << 0,
                           .mode = GPIO_MODE_INPUT,
@@ -329,6 +354,8 @@ void app_main(void) {
     was_connected = connected;
     if (xQueueReceive(messages, message, 0) == pdTRUE)
       handle(message);
+    char audio_message[1024];
+    if(xQueueReceive(audio_messages,audio_message,0)==pdTRUE)handle(audio_message);
     if (zero_button_update(&button_state, gpio_get_level(0) == 0, now) &&
         welcomed) {
       char body[256];
@@ -345,7 +372,7 @@ void app_main(void) {
                (unsigned long)esp_get_minimum_free_heap_size(),
                esp_reset_reason());
       send_message("node.heartbeat", body);
-      printf("ZERO HEALTH %s\n", body);
+      printf("ZERO HEALTH %s audio_rx=%u audio_ok=%u audio_age=%lld media=%s\n", body,audio_received,audio_accepted,(long long)audio_age,view.media);
       last_heartbeat = now;
     }
     if (cert[0] && now - last_screen >= 1000) {
@@ -353,6 +380,7 @@ void app_main(void) {
                      view_elapsed + (view.running ? now - view_at : 0));
       last_screen = now;
     }
+    if(cert[0])display_animate(now,welcomed);
     esp_task_wdt_reset();
     vTaskDelay(pdMS_TO_TICKS(10));
   }

@@ -4,7 +4,8 @@
 #include <stdint.h>
 typedef struct {
   char project[65];
-  bool running, idle;
+  bool running, idle, has_artwork;
+  uint8_t artwork[2048];
   char git[65], agent[65], track[65], artist[65], media[65];
   int64_t elapsed_ms, since_ms, revision;
 } zero_view;
@@ -16,3 +17,6 @@ cJSON *zero_json(const char *text);
 bool zero_view_object(const cJSON *object, zero_view *view);
 bool zero_parse_view(const char *text, zero_view *view);
 bool zero_button_update(zero_button *b, bool down, int64_t now_ms);
+
+typedef struct { char session_id[129]; uint64_t sequence; uint8_t level, bass; } zero_levels;
+bool zero_audio_object(const cJSON *object, zero_levels *levels);

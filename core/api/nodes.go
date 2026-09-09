@@ -57,6 +57,9 @@ func NewNodeHandler(r *runtime.Runtime) http.Handler {
 		}
 		send := func(kind string, body any) error {
 			e := protocol.New(kind, "runtime", "node:"+id, body)
+			if kind == "display.telemetry" {
+				e.TTL = 500
+			}
 			b, _ := json.Marshal(e)
 			wc, done := context.WithTimeout(ctx, 3*time.Second)
 			defer done()
@@ -78,7 +81,9 @@ func NewNodeHandler(r *runtime.Runtime) http.Handler {
 			send("session.error", map[string]string{"error": "restore rejected"})
 		}
 		go func() {
-			ticker := time.NewTicker(250 * time.Millisecond)
+			ticker := time.NewTicker(50 * time.Millisecond)
+			var ticks int
+			var audioSequence uint64
 			defer ticker.Stop()
 			for {
 				select {
@@ -88,6 +93,17 @@ func NewNodeHandler(r *runtime.Runtime) http.Handler {
 					if !r.Known(ctx, id, fp) {
 						cancel()
 						return
+					}
+					if frame, ok := r.AudioLevels(ctx, id); ok && frame.Sequence != audioSequence {
+						if e := send("display.telemetry", map[string]any{"session_id": sessionID, "sequence": frame.Sequence, "level": frame.Level, "bass": frame.Bass}); e != nil {
+							cancel()
+							return
+						}
+						audioSequence = frame.Sequence
+					}
+					ticks++
+					if ticks%2 != 0 {
+						continue
 					}
 					work, e := r.Pending(ctx, id)
 					if e != nil {

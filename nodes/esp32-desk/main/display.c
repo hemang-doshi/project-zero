@@ -1,13 +1,17 @@
 #include "display.h"
+#ifndef ZERO_DISPLAY_PREVIEW
 #include "driver/gpio.h"
 #include "driver/spi_master.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#endif
+#include "zero_release.h"
 #include <ctype.h>
 #include <stdio.h>
 #include <string.h>
-static spi_device_handle_t lcd;
 static uint16_t pixels[128 * 160];
+#ifndef ZERO_DISPLAY_PREVIEW
+static spi_device_handle_t lcd;
 static void bytes(int dc, const void *p, size_t n) {
   gpio_set_level(16, dc);
   spi_transaction_t t = {.length = n * 8, .tx_buffer = p};
@@ -25,6 +29,9 @@ static void flush(void) {
   cmd(0x2c, NULL, 0);
   bytes(1, pixels, sizeof(pixels));
 }
+#else
+static void flush(void){printf("P6\n128 160\n255\n");for(int i=0;i<128*160;i++){uint16_t c=(pixels[i]>>8)|(pixels[i]<<8);unsigned char rgb[3]={(unsigned char)(((c>>11)&31)*255/31),(unsigned char)(((c>>5)&63)*255/63),(unsigned char)((c&31)*255/31)};fwrite(rgb,1,3,stdout);}}
+#endif
 // Five-column glyphs for the compact uppercase status surface.
 static const uint8_t glyphs[36][5] = {{0x3e, 0x51, 0x49, 0x45, 0x3e},
                                       {0, 0x42, 0x7f, 0x40, 0},
@@ -75,7 +82,8 @@ static void text(int x, int y, const char *s, int scale, uint16_t color) {
     }
     if (c == ' ') continue;
     static const uint8_t fallback[5] = {0x02,0x01,0x51,0x09,0x06};
-    const uint8_t *shape = idx < 0 ? fallback : glyphs[idx];
+    static const uint8_t colon[5]={0,0x36,0x36,0,0},dot[5]={0,0x60,0x60,0,0},dash[5]={8,8,8,8,8},slash[5]={0x20,0x10,8,4,2};
+    const uint8_t *shape = c==':'?colon:c=='.'?dot:(c=='-'||c=='_')?dash:c=='/'?slash:idx < 0 ? fallback : glyphs[idx];
     for (int a = 0; a < 5; a++)
       for (int b = 0; b < 7; b++)
         if (shape[a] & (1 << b))
@@ -88,6 +96,7 @@ static void text(int x, int y, const char *s, int scale, uint16_t color) {
   }
 }
 void display_init(void) {
+#ifndef ZERO_DISPLAY_PREVIEW
   gpio_set_direction(16, GPIO_MODE_OUTPUT);
   gpio_set_direction(17, GPIO_MODE_OUTPUT);
   gpio_set_level(17, 0);
@@ -114,6 +123,7 @@ void display_init(void) {
   cmd(0x13, NULL, 0);
   cmd(0x29, NULL, 0);
   vTaskDelay(pdMS_TO_TICKS(100));
+#endif
 }
 static void line(int y, const char *s, uint16_t color) {
   char visible[20];
@@ -126,26 +136,50 @@ static void line(int y, const char *s, uint16_t color) {
   visible[n] = 0;
   text(6, y, visible, 1, color);
 }
+static void rect(int x,int y,int w,int h,uint16_t color){color=(color>>8)|(color<<8);for(int row=y;row<y+h&&row<160;row++)for(int col=x;col<x+w&&col<128;col++)if(row>=0&&col>=0)pixels[row*128+col]=color;}
+static void segment(int x,int y,const char *s,size_t skip,size_t count,uint16_t color){char clean[65];size_t n=0;for(const unsigned char *p=(const unsigned char*)s;*p&&n<64;p++){if((*p&0xc0)==0x80)continue;clean[n++]=(*p>=32&&*p<=126)?*p:'?';}clean[n]=0;if(skip>=n)return;char shown[20];size_t take=n-skip<count?n-skip:count;if(take>19)take=19;memcpy(shown,clean+skip,take);shown[take]=0;if(skip+take<n&&skip>0&&take>=2){shown[take-1]='.';shown[take-2]='.';}text(x,y,shown,1,color);}
+static int wave_y=101;
+static bool media_playing;
+static int64_t audio_at=-1000, animation_at;
+static float amplitude, velocity;
+static uint8_t audio_level, audio_bass, history[14];
+void display_levels(uint8_t level,uint8_t bass,int64_t now){audio_level=level;audio_bass=bass;audio_at=now;}
+void display_animate(int64_t now,bool online){
+ if(now-animation_at<50)return;
+ animation_at=now;
+ float target=online&&media_playing&&now-audio_at<500?(audio_level*0.25f+audio_bass*0.75f)*4.0f/255.0f:0;
+ velocity=(velocity+(target-amplitude)*0.34f)*0.72f;amplitude+=velocity;
+ if(amplitude<0)amplitude=0;
+ if(amplitude>4)amplitude=4;
+ memmove(history,history+1,13);history[13]=(uint8_t)(amplitude+0.5f);
+ rect(90,wave_y-4,28,9,0x10a4);
+ for(int i=0;i<14;i++)rect(90+i*2,wave_y-history[i],1,history[i]*2+1,0x5f37);
+#ifndef ZERO_DISPLAY_PREVIEW
+ uint16_t patch[28*9];for(int y=0;y<9;y++)memcpy(patch+y*28,pixels+(wave_y-4+y)*128+90,56);
+ uint8_t x[]={0,90,0,117},y[]={0,wave_y-4,0,wave_y+4};cmd(0x2a,x,4);cmd(0x2b,y,4);cmd(0x2c,NULL,0);bytes(1,patch,sizeof(patch));
+#endif
+}
 void display_status(const zero_view *v, bool online, int64_t elapsed) {
-  memset(pixels, 0, sizeof(pixels));
-  line(6, "PROJECT ZERO", 0x07ff);
-  line(22, v->project[0] ? v->project : "NO FOCUS", 0xffff);
-  line(38,
-       v->idle      ? "IDLE"
-       : v->running ? "RUNNING"
-                    : "PAUSED",
-       v->running ? 0x07e0 : 0xffe0);
-  char b[32];
-  snprintf(b, sizeof(b), "%lld MIN %02lld SEC", (long long)(elapsed / 60000),
-           (long long)((elapsed / 1000) % 60));
-  line(53, b, 0xffff);
-  line(72, v->git[0] ? v->git : "GIT UNAVAILABLE", 0x07ff);
-  line(86, "AGENT UNAVAILABLE", 0x8410);
-  line(104, v->track[0] ? v->track : "SPOTIFY UNAVAILABLE", 0xffff);
-  line(117, v->artist, 0x8410);
-  line(130, v->media, 0x07e0);
-  line(148, online ? "CONNECTED" : "OFFLINE", online ? 0x07e0 : 0xf800);
-  flush();
+ const uint16_t bg=0x0842,panel=0x10a4,muted=0x94b2,accent=0x5f37,amber=0xfdc8;
+ rect(0,0,128,160,bg);
+ segment(6,7,v->project[0]?v->project:"CHOOSE A PROJECT",0,19,0xffff);
+ rect(6,20,116,1,0x2945);
+ char b[48];snprintf(b,sizeof(b),"FOCUS %s",v->idle?"IDLE":v->running?"RUNNING":"PAUSED");line(27,b,v->running?accent:amber);
+ long long seconds=elapsed/1000;
+ if(seconds<6000){snprintf(b,sizeof(b),"%02lld:%02lld",seconds/60,seconds%60);text(6,40,b,3,0xffff);}else{snprintf(b,sizeof(b),"%lld:%02lld:%02lld",seconds/3600,(seconds/60)%60,seconds%60);text(6,42,b,2,0xffff);}
+ rect(2,70,124,51,panel);text(6,74,"SPOTIFY",1,muted);segment(60,74,!strcmp(v->media,"playing")?"PLAYING":!strcmp(v->media,"paused")?"PAUSED":!strcmp(v->media,"stopped")?"STOPPED":!strcmp(v->media,"not_running")?"CLOSED":"NO DATA",0,10,accent);
+ if(v->has_artwork){for(int row=0;row<32;row++)for(int col=0;col<32;col++){int pos=(row*32+col)*2;pixels[(85+row)*128+6+col]=((uint16_t)v->artwork[pos+1]<<8)|v->artwork[pos];}}
+ else {rect(6,85,32,32,0x2127);text(15,97,"S",1,muted);}
+ size_t title_chars=0;for(const unsigned char *p=(const unsigned char*)v->track;*p;p++)if((*p&0xc0)!=0x80)title_chars++;
+ int artist_y=title_chars>13?109:97;
+ segment(44,86,v->track[0]?v->track:"NO TRACK",0,13,0xffff);if(title_chars>13)segment(44,97,v->track,13,13,0xffff);
+ segment(44,artist_y,v->artist,0,7,muted);
+ wave_y=artist_y+3;media_playing=!strcmp(v->media,"playing");
+ for(int i=0;i<14;i++)rect(90+i*2,wave_y-history[i],1,history[i]*2+1,accent);
+ snprintf(b,sizeof(b),"GIT %.35s",v->git[0]?v->git:"UNAVAILABLE");segment(6,128,b,0,19,muted);
+ snprintf(b,sizeof(b),"CODEX %.33s",v->agent[0]?v->agent:"UNAVAILABLE");segment(6,139,b,0,19,muted);
+ rect(6,151,4,4,online?accent:0xf800);text(15,150,online?"ONLINE":"OFFLINE",1,online?accent:0xf800);text(86,150,ZERO_VERSION,1,muted);
+ flush();
 }
 void display_pairing(const char *fp) {
   memset(pixels, 0, sizeof(pixels));

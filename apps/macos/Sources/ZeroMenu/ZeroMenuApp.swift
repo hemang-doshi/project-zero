@@ -45,12 +45,13 @@ import UserNotifications
  }
  func retryPending()async {
   guard !busy,compatible,let request=uncertain else{return};busy=true;error="";defer{busy=false}
-  do{_ = try await UnixHTTP.call(socketPath:socket,path:"commands",body:request);uncertain=nil;UserDefaults.standard.removeObject(forKey:"pending:"+socket);await refresh()}catch{self.error="Action not confirmed: \(error.localizedDescription). Retry uses the same request identity."}
+  do{_ = try await UnixHTTP.call(socketPath:socket,path:"commands",body:request);uncertain=nil;UserDefaults.standard.removeObject(forKey:"pending:"+socket);await refresh()}catch{if let rejection=error as? ZeroError,rejection.rejected {uncertain=nil;UserDefaults.standard.removeObject(forKey:"pending:"+socket);self.error=rejection.localizedDescription;return};self.error="Action not confirmed: \(error.localizedDescription). Retry uses the same request identity."}
  }
  func parse(_ text:String)async {do{var allowed=CharacterSet.urlQueryAllowed;allowed.remove(charactersIn:"&+=?#");let encoded=text.addingPercentEncoding(withAllowedCharacters:allowed) ?? "";proposal=try await get("intent/parse?text="+encoded) as? [String:Any]}catch{self.error=error.localizedDescription}}
  func enableNotifications() async {
   do {let granted=try await UNUserNotificationCenter.current().requestAuthorization(options:[.alert]);if !granted{error="Notifications are disabled in macOS settings; reminders remain visible here."}} catch {self.error=error.localizedDescription}
  }
+ func testNotification()async{do{let content=UNMutableNotificationContent();content.title="Zero setup check";content.body="Desktop reminders are working. This is a manual setup test.";try await UNUserNotificationCenter.current().add(UNNotificationRequest(identifier:"zero-setup-test",content:content,trigger:nil))}catch{self.error=error.localizedDescription}}
  func deliverReminders() async {
   let center=UNUserNotificationCenter.current();let settings=await center.notificationSettings()
   guard settings.authorizationStatus == .authorized else{return}
@@ -139,6 +140,7 @@ struct ZeroPanel: View {
     Divider()
     Text("Automations").font(.headline)
     Button("Allow macOS reminders") {Task {await model.enableNotifications()}}
+    Button("Send setup test reminder") {Task {await model.testNotification()}}
     ForEach(model.policies.indices, id: \.self) { i in PolicyRow(model: model, item: model.policies[i]) }
     ForEach(Array(model.firings.prefix(8).enumerated()), id: \.offset) { _, record in
      if let f = record["value"] as? [String: Any], f["state"] as? String != "CANCELLED" { FiringRow(model: model, item: f) }
