@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/coder/websocket"
+	"log"
 	"net/http"
 	"projectzero.local/zero/core/identity"
 	"projectzero.local/zero/core/protocol"
@@ -48,6 +49,7 @@ func NewNodeHandler(r *runtime.Runtime) http.Handler {
 			defer done()
 			kind, b, e := c.Read(rc)
 			if e != nil {
+				log.Printf("node %s: receive failed: %v", id, e)
 				return protocol.Envelope{}, e
 			}
 			if kind != websocket.MessageText {
@@ -61,9 +63,13 @@ func NewNodeHandler(r *runtime.Runtime) http.Handler {
 				e.TTL = 500
 			}
 			b, _ := json.Marshal(e)
-			wc, done := context.WithTimeout(ctx, 3*time.Second)
+			wc, done := context.WithTimeout(ctx, 10*time.Second)
 			defer done()
-			return c.Write(wc, websocket.MessageText, b)
+			err := c.Write(wc, websocket.MessageText, b)
+			if err != nil {
+				log.Printf("node %s: send %s failed: %v", id, kind, err)
+			}
+			return err
 		}
 		hello, e := read(5 * time.Second)
 		if e != nil || hello.Type != "session.hello" {
@@ -80,9 +86,9 @@ func NewNodeHandler(r *runtime.Runtime) http.Handler {
 		if e = r.Restore(ctx, id, sessionID); e != nil {
 			send("session.error", map[string]string{"error": "restore rejected"})
 		}
+		var audioWindow telemetryWindow
 		go func() {
-			ticker := time.NewTicker(50 * time.Millisecond)
-			var ticks int
+			ticker := time.NewTicker(100 * time.Millisecond)
 			var audioSequence uint64
 			defer ticker.Stop()
 			for {
@@ -94,16 +100,12 @@ func NewNodeHandler(r *runtime.Runtime) http.Handler {
 						cancel()
 						return
 					}
-					if frame, ok := r.AudioLevels(ctx, id); ok && frame.Sequence != audioSequence {
+					if frame, ok := r.AudioLevels(ctx, id); ok && frame.Sequence != audioSequence && audioWindow.start(frame.Sequence) {
 						if e := send("display.telemetry", map[string]any{"session_id": sessionID, "sequence": frame.Sequence, "level": frame.Level, "bass": frame.Bass}); e != nil {
 							cancel()
 							return
 						}
 						audioSequence = frame.Sequence
-					}
-					ticks++
-					if ticks%2 != 0 {
-						continue
 					}
 					work, e := r.Pending(ctx, id)
 					if e != nil {
@@ -129,6 +131,15 @@ func NewNodeHandler(r *runtime.Runtime) http.Handler {
 			}
 			r.Seen(ctx, id)
 			switch m.Type {
+			case "display.telemetry.ack":
+				var receipt struct {
+					SessionID string `json:"session_id"`
+					Sequence  uint64 `json:"sequence"`
+				}
+				if e = json.Unmarshal(m.Body, &receipt); e == nil && receipt.SessionID == sessionID {
+					audioWindow.ack(receipt.Sequence)
+				}
+
 			case "node.register", "capability.advertise":
 				e = r.Advertise(ctx, id, m.Body)
 				if e == nil {

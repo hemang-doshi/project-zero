@@ -6,3 +6,7 @@ void display_pairing(const char *fingerprint);
 
 void display_levels(uint8_t level, uint8_t bass, int64_t now);
 void display_animate(int64_t now, bool online);
+
+void display_test(void);
+
+void display_gray_test(void);

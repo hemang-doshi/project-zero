@@ -116,7 +116,16 @@ void display_init(void) {
   cmd(0x01, NULL, 0);
   vTaskDelay(pdMS_TO_TICKS(150));
   cmd(0x11, NULL, 0);
-  vTaskDelay(pdMS_TO_TICKS(150));
+  vTaskDelay(pdMS_TO_TICKS(500));
+  // Match Times Gate's Adafruit initR(BLACKTAB) timing/power sequence.
+  static const uint8_t frame[]={1,0x2c,0x2d},partial[]={1,0x2c,0x2d,1,0x2c,0x2d};
+  static const uint8_t inversion[]={7},power1[]={0xa2,2,0x84},power2[]={0xc5},power3[]={0x0a,0},power4[]={0x8a,0x2a},power5[]={0x8a,0xee},vcom[]={0x0e};
+  static const uint8_t gamma_positive[]={2,0x1c,7,0x12,0x37,0x32,0x29,0x2d,0x29,0x25,0x2b,0x39,0,1,3,0x10};
+  static const uint8_t gamma_negative[]={3,0x1d,7,6,0x2e,0x2c,0x29,0x2d,0x2e,0x2e,0x37,0x3f,0,0,2,0x10};
+  cmd(0xb1,frame,sizeof(frame));cmd(0xb2,frame,sizeof(frame));cmd(0xb3,partial,sizeof(partial));
+  cmd(0xb4,inversion,sizeof(inversion));cmd(0xc0,power1,sizeof(power1));cmd(0xc1,power2,sizeof(power2));
+  cmd(0xc2,power3,sizeof(power3));cmd(0xc3,power4,sizeof(power4));cmd(0xc4,power5,sizeof(power5));cmd(0xc5,vcom,sizeof(vcom));
+  cmd(0x20,NULL,0);cmd(0xe0,gamma_positive,sizeof(gamma_positive));cmd(0xe1,gamma_negative,sizeof(gamma_negative));
   uint8_t color = 5, rotation = 0xc0;
   cmd(0x3a, &color, 1);
   cmd(0x36, &rotation, 1);
@@ -168,13 +177,13 @@ void display_status(const zero_view *v, bool online, int64_t elapsed) {
  long long seconds=elapsed/1000;
  if(seconds<6000){snprintf(b,sizeof(b),"%02lld:%02lld",seconds/60,seconds%60);text(6,40,b,3,0xffff);}else{snprintf(b,sizeof(b),"%lld:%02lld:%02lld",seconds/3600,(seconds/60)%60,seconds%60);text(6,42,b,2,0xffff);}
  rect(2,70,124,51,panel);text(6,74,"SPOTIFY",1,muted);segment(60,74,!strcmp(v->media,"playing")?"PLAYING":!strcmp(v->media,"paused")?"PAUSED":!strcmp(v->media,"stopped")?"STOPPED":!strcmp(v->media,"not_running")?"CLOSED":"NO DATA",0,10,accent);
- if(v->has_artwork){for(int row=0;row<32;row++)for(int col=0;col<32;col++){int pos=(row*32+col)*2;pixels[(85+row)*128+6+col]=((uint16_t)v->artwork[pos+1]<<8)|v->artwork[pos];}}
- else {rect(6,85,32,32,0x2127);text(15,97,"S",1,muted);}
+ if(v->has_artwork){for(int row=0;row<32;row++)for(int col=0;col<32;col++){int pos=(row*32+col)*2;pixels[(85+row)*128+48+col]=((uint16_t)v->artwork[pos+1]<<8)|v->artwork[pos];}}
+ else {rect(48,85,32,32,0x2127);text(61,97,"S",1,muted);}
  size_t title_chars=0;for(const unsigned char *p=(const unsigned char*)v->track;*p;p++)if((*p&0xc0)!=0x80)title_chars++;
- int artist_y=title_chars>13?109:97;
- segment(44,86,v->track[0]?v->track:"NO TRACK",0,13,0xffff);if(title_chars>13)segment(44,97,v->track,13,13,0xffff);
- segment(44,artist_y,v->artist,0,7,muted);
- wave_y=artist_y+3;media_playing=!strcmp(v->media,"playing");
+ int artist_y=title_chars>7?109:97;
+ segment(4,86,v->track[0]?v->track:"NO SONG",0,7,0xffff);if(title_chars>7)segment(4,97,v->track,7,7,0xffff);
+ segment(4,artist_y,v->artist,0,7,muted);
+ wave_y=101;media_playing=!strcmp(v->media,"playing");
  for(int i=0;i<14;i++)rect(90+i*2,wave_y-history[i],1,history[i]*2+1,accent);
  snprintf(b,sizeof(b),"GIT %.35s",v->git[0]?v->git:"UNAVAILABLE");segment(6,128,b,0,19,muted);
  snprintf(b,sizeof(b),"CODEX %.33s",v->agent[0]?v->agent:"UNAVAILABLE");segment(6,139,b,0,19,muted);
@@ -189,3 +198,7 @@ void display_pairing(const char *fp) {
   text(8, 140, "USB SETUP", 1, 0xffe0);
   flush();
 }
+
+void display_test(void){rect(0,0,128,160,0xffff);flush();}
+
+void display_gray_test(void){rect(0,0,128,160,0x8410);flush();}

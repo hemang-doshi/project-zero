@@ -29,7 +29,8 @@
         "sync.request",
         "ack",
         "session.error",
-        "display.telemetry"
+        "display.telemetry",
+        "display.telemetry.ack"
       ]
     },
     "id": {

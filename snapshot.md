@@ -1,10 +1,12 @@
 # Current working snapshot
 
-Updated: **2026-09-09 10:37 IST**. Read [handoff.md](handoff.md) for project context and recovery details. Every agent must refresh both files after substantive work.
+Updated: **2026-09-09 12:33 IST**. Read [handoff.md](handoff.md) for project context and recovery details. Every agent must refresh both files after substantive work.
 
 ## User’s latest direction
 
-Leave the display band alone. Prepare these handoff documents so work can continue in a new chat. **Do not resume flashing, panel tests, connection experiments or model/soak checks merely because unfinished work is listed here.**
+The native macOS application is the primary Project Zero cockpit. The current menu-bar window must not carry the main project-selection, intent-entry or coding workflow; keep the menu surface compact for status, permissions/approvals and genuinely useful quick controls. The native app must render accumulated focus time with hours rather than hundreds of minutes. A menu pause/resume taking roughly 20 seconds to appear on the desk display is unacceptable and must be treated as a transport/recovery failure, not normal latency.
+
+For the future conversational layer, use the existing Codex ChatGPT login through the supported Codex app-server when practical. Route general typed input and transcribed voice plus model-assisted intent understanding to GPT-5.6 Luna at medium reasoning; route actual repository coding work to GPT-5.6 Sol at medium reasoning. There is no advertised GPT-6 Luna model. Preserve deterministic handling for known commands. These are product/architecture directions, not authorization in this documentation-only turn to build, deploy, flash or start autonomous model calls. Leave the display band alone.
 
 ## Checkout and installed state
 
@@ -13,8 +15,9 @@ Leave the display band alone. Prepare these handoff documents so work can contin
 - Source manifest and installed runtime/CLI/app/desk: **0.2.0, build 0.2.0-7**. Wire protocol `0.1`, render schemas `0.1`/`0.2`, migration level `2`. Desk advertises `artwork=rgb565-32`, `audio=levels-v2`.
 - Production app: `~/Applications/Zero.app`; data/socket: `~/Library/Application Support/ProjectZero/{zero.db,zero.sock}`. `zero` resolves through `/opt/homebrew/bin/zero` to the bundled CLI.
 - Services: `dev.projectzero.zerod` and `dev.projectzero.menu`. Latest read-only check found one runtime and one menu process. No upgrade preflight remained pending; build 7 installed successfully.
-- `zero doctor` at handoff: runtime RUNNING, audit chain VALID, desk ONLINE, old simulator OFFLINE. **ONLINE is a point-in-time result, not proof of stable connectivity.**
-- Focus session `1788913498387-dfc67f5f489247d2685e37b0`: project `project-zero`, state RUNNING, revision 10. Elapsed was 16,875,899 ms when read; it continues advancing. No session command was issued for this handoff.
+- `zero doctor` at 12:33 IST: runtime RUNNING, audit chain VALID, desk OFFLINE with last seen `2026-09-09T06:29:42.141Z`, old simulator OFFLINE. This is a point-in-time result; the desk has moved between online and offline during the unresolved incident.
+- Focus session `1788913498387-dfc67f5f489247d2685e37b0`: project `project-zero`, state RUNNING, revision 13. Elapsed was 23,710,248 ms when read; it continues advancing. No session command was issued in this review.
+- Codex CLI remains `0.153.4` and reports `Logged in using ChatGPT`. Its supported `app-server --stdio` initialized successfully and a live `model/list` returned GPT-6 Astra, GPT-5.6 Sol, Terra and Luna, and GPT-5.5 with their supported reasoning efforts. The bounded probe exited; no Codex coding turn or model response was started.
 
 ## Uncommitted implementation inventory
 
@@ -28,14 +31,14 @@ Leave the display band alone. Prepare these handoff documents so work can contin
 ## Latest results and open failures
 
 - Software: full Go race suite, seven native tests (including live UDS), ESP-IDF build/host protocol tests and two actual-renderer pixel tests passed during build 7 work. Logs: `.runtime/flow-go-tests.log`, `flow-swift-tests.log`, `flow-build.log`. These are historical runs, not tests rerun by the handoff task.
-- **Connection issue NOT fixed.** Last build-7 physical capture, `.runtime/flow-acceptance.log`, reached 340 audio frames / 313 accepted, then `ZERO COMMAND QUEUE OVERFLOW`; firmware set socket/welcomed false and remained offline for the rest of that capture. Later doctor sees it online again. Do not claim the receipt window established stability.
+- **Connection issue NOT fixed.** Last build-7 physical capture, `.runtime/flow-acceptance.log`, reached 340 audio frames / 313 accepted, then `ZERO COMMAND QUEUE OVERFLOW`; firmware set socket/welcomed false and remained offline for the rest of that capture. At 12:33 IST, `zero doctor` reported the desk OFFLINE with last seen `2026-09-09T06:29:42.141Z`; the daemon log contains repeated `capability.invoke` write timeouts and closed-connection failures. The command commits locally and the connected-node loop polls pending display work every 100 ms, so the user-observed roughly 20-second pause/resume delay is evidence of broken link/retry/reconnect behavior, not the intended dispatch cadence. Do not claim the receipt window established stability.
 - **Display band unresolved, user says leave it.** The supplied photo shows a dark horizontal band through the header and into the background. White was clean; stationary gray retained the band with drawing paused. Full reference initialization did not remove it. Panel/cover/controller behavior is implicated; exact physical cause is not established.
-- Full desktop Codex outcomes remain blocked by the missing supported attachment contract. Optional model parsing remains disabled because complete tool/context isolation was not proven.
+- The earlier desktop-attachment blocker has materially changed: this installed Codex now exposes a supported app-server transport that can reuse the existing ChatGPT login and list/start model-backed work for a custom frontend. End-to-end Project Zero thread handling, approvals, cancellation, tool isolation and voice transcription are not implemented or proven. Optional model parsing remains disabled in the current runtime.
 - Keychain access eventually succeeded across upgrades, but prompts recurred. Unattended permission retention across replacements is **not proven**.
 - User confirmed BOOT operation earlier, moving waveform on an earlier build, and the manual “Zero setup check” notification. This does not prove latest-build stability or an actual 45-minute reminder firing.
 
 ## Processes, evidence and next action
 
-The last bounded serial capture is no longer an active tool session; no new collector was started for this handoff. Do not restart the paused hourly AI automation or obsolete soak collector. Production services were left running and user state unchanged.
+The last bounded serial capture is no longer an active tool session; no new collector was started for this handoff. The read-only Codex app-server/model-list probe exited normally. Production services were left running and user state unchanged. `git diff --check -- snapshot.md handoff.md` passed after documenting this review. Do not restart the paused hourly AI automation or obsolete soak collector.
 
-If the user asks to resume engineering: first inspect the preserved diff and current health. For connectivity, start with the observed command-queue overflow and how its failure path changes `connected` without closing/resetting the real WebSocket; review ACK traffic, dispatch bursts and flow-control invariants. Reproduce before another patch/flash. Keep the display band parked unless the user reopens it. See the full handoff for all remaining v0.2 gates.
+If the user asks to resume engineering: first inspect the preserved diff and current health. Separate the work into (1) restoring and instrumenting reliable sub-second focus-state delivery, (2) specifying and building the native cockpit plus compact menu companion, and (3) a bounded Codex app-server adapter with the agreed model routes. For connectivity, start with the observed command-queue overflow and how its failure path changes `connected` without closing/resetting the real WebSocket; review ACK traffic, dispatch bursts and flow-control invariants. Reproduce before another patch/flash. Keep the display band parked unless the user reopens it. See the full handoff for all remaining v0.2 gates.
