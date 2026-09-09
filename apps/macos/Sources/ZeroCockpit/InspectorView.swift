@@ -58,7 +58,10 @@ public struct InspectorView: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer(minLength: 8)
-                ZeroStatusBadge(item.decision, tone: .attention)
+                VStack(alignment: .trailing, spacing: 5) {
+                    ZeroStatusBadge(item.decision, tone: .attention)
+                    ZeroStatusBadge(freshnessLabel(item), tone: freshnessTone(item))
+                }
             }
 
             HStack(spacing: 7) {
@@ -80,28 +83,30 @@ public struct InspectorView: View {
             .accessibilityValue(item.requestID)
 
             VStack(alignment: .leading, spacing: 7) {
-                Text("AUTHORITATIVE ROUTING FIELDS")
+                Text("ACTION ROUTING AUTHORITY")
                     .font(.caption2.weight(.bold).monospaced())
                     .foregroundStyle(ZeroTheme.secondaryInk)
-                inspectorDatum("Action", item.action, authoritative: true)
-                inspectorDatum("Target", item.target, authoritative: true)
-                inspectorDatum("Source", item.source, authoritative: true)
-                inspectorDatum("Deadline", item.deadline, authoritative: true)
-                inspectorDatum("Decision", item.decision, authoritative: true)
+                ForEach(item.evidence.filter { $0.isAuthoritative && $0.label != "Request ID" }) { field in
+                    inspectorDatum(field.label, field.value, authoritative: true)
+                }
+                if item.evidence.allSatisfy({ !$0.isAuthoritative || $0.label == "Request ID" }) {
+                    Text("Only the exact request ID routes this action. All summaries below are display evidence.")
+                        .font(.caption)
+                        .foregroundStyle(ZeroTheme.secondaryInk)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
 
             Divider().overlay(ZeroTheme.line)
 
             VStack(alignment: .leading, spacing: 7) {
-                Text("BOUNDED DISPLAY EVIDENCE")
+                Text("DISPLAY EVIDENCE · NEVER ROUTING AUTHORITY")
                     .font(.caption2.weight(.bold).monospaced())
                     .foregroundStyle(ZeroTheme.secondaryInk)
-                ForEach(Array(item.evidence.enumerated()), id: \.offset) { _, field in
-                    if !["Request ID", "Action", "Target", "Source", "Deadline", "Decision"].contains(field.label) {
-                        inspectorDatum(field.label, field.value, authoritative: field.isAuthoritative)
-                    }
+                ForEach(item.evidence.filter { !$0.isAuthoritative }) { field in
+                    inspectorDatum(field.label, field.value, authoritative: false)
                 }
-                if item.evidence.allSatisfy({ ["Request ID", "Action", "Target", "Source", "Deadline", "Decision"].contains($0.label) }) {
+                if item.evidence.allSatisfy(\.isAuthoritative) {
                     Text("No additional display-safe evidence was projected.")
                         .font(.caption)
                         .foregroundStyle(ZeroTheme.secondaryInk)
@@ -116,8 +121,8 @@ public struct InspectorView: View {
             }
             if item.displayTruncated {
                 warning(
-                    title: "Visible evidence is truncated",
-                    detail: "The action response contains no clipped display text. Review the originating work surface if the missing context matters."
+                    title: "Summary field is abbreviated",
+                    detail: "The full exact request parameters remain visible above as display evidence. No abbreviated text becomes part of the response."
                 )
             }
             if let reason = item.responseUnavailableReason {
@@ -154,6 +159,22 @@ public struct InspectorView: View {
         .accessibilityElement(children: .combine)
         .accessibilityLabel(label)
         .accessibilityValue(value)
+    }
+
+    private func freshnessLabel(_ item: AirlockApprovalItem) -> String {
+        switch item.freshness {
+        case .live: return "LIVE"
+        case .retained: return "CACHED · ACTIONS DISABLED"
+        case .expired: return "EXPIRED · APPROVE DISABLED"
+        }
+    }
+
+    private func freshnessTone(_ item: AirlockApprovalItem) -> ZeroTone {
+        switch item.freshness {
+        case .live: return .healthy
+        case .retained: return .neutral
+        case .expired: return .error
+        }
     }
 
     private func warning(title: String, detail: String, neutral: Bool = false) -> some View {
