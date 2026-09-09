@@ -232,6 +232,18 @@ public struct RuntimeView: View {
                         if let count = facts.authoritativeSnapshot?.approvals.count, count > 2 {
                             DeskRuntimeMonoValue("\(count - 2) more approval request\(count - 2 == 1 ? "" : "s") · inspect in Airlock")
                         }
+                        ForEach(Array(facts.activeFirings.prefix(3).enumerated()), id: \.offset) { _, firing in
+                            let state = runtimeText(firing, keys: ["state"])?.uppercased() ?? "UNKNOWN"
+                            workRow(
+                                status: state,
+                                title: runtimeText(firing, keys: ["message", "name", "automation", "policy", "id"]) ?? "Active automation firing",
+                                rows: safeEvidenceRows(firing, keys: ["id", "policy", "project_id", "scheduled_at", "at"]),
+                                tone: firingTone(state)
+                            )
+                        }
+                        if facts.activeFiringCount > 3 {
+                            DeskRuntimeMonoValue("\(facts.activeFiringCount - 3) more active firing\(facts.activeFiringCount - 3 == 1 ? "" : "s") · inspect below")
+                        }
                         if let session = facts.authoritativeSnapshot?.session, session.state != "IDLE" {
                             workRow(
                                 status: session.state,

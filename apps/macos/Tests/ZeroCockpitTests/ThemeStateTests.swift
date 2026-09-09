@@ -25,6 +25,11 @@ final class ThemeStateTests: XCTestCase {
         XCTAssertLessThan(ZeroControlMotion.pressScale(reduceMotion: false, isPressed: true), 1)
     }
 
+    func testProminentControlTypographyUsesDynamicTypeTextStyles() {
+        XCTAssertEqual(ZeroControlTypography.buttonTextStyle, .callout)
+        XCTAssertEqual(ZeroControlTypography.statusTextStyle, .caption2)
+    }
+
     func testAuthorityTextMeetsNormalTextContrastInEveryEnabledState() {
         for contrast in [ColorSchemeContrast.standard, .increased] {
             for scheme in [ColorScheme.light, .dark] {

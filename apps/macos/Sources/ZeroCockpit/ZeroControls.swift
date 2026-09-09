@@ -49,6 +49,14 @@ enum ZeroControlMotion {
     }
 }
 
+enum ZeroControlTypography {
+    static let buttonTextStyle = Font.TextStyle.callout
+    static let statusTextStyle = Font.TextStyle.caption2
+
+    static let button = Font.system(buttonTextStyle, design: .default).weight(.semibold)
+    static let status = Font.system(statusTextStyle, design: .monospaced).weight(.semibold)
+}
+
 struct ZeroAuthorityPresentation {
     let isPressed: Bool
     let contrast: ColorSchemeContrast
@@ -98,7 +106,7 @@ public struct ZeroButtonStyle: ButtonStyle {
 
         var body: some View {
             configuration.label
-                .font(.system(size: 12, weight: .semibold))
+                .font(ZeroControlTypography.button)
                 .foregroundStyle(kind == .authority && enabled ? authority.foreground : ZeroTheme.ink)
                 .padding(.horizontal, 12)
                 .frame(minHeight: 32)
@@ -138,7 +146,7 @@ public struct ZeroStatusBadge: View {
 
     public var body: some View {
         Label(label, systemImage: symbol)
-            .font(.system(size: 10, weight: .semibold, design: .monospaced))
+            .font(ZeroControlTypography.status)
             .foregroundStyle(tone.color)
             .padding(.horizontal, 7)
             .padding(.vertical, 4)
