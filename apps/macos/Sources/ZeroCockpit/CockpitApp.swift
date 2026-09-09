@@ -45,6 +45,7 @@ private struct CockpitCommands: Commands {
 
 private struct CockpitWindow: View {
     @ObservedObject var model: CockpitModel
+    @State private var lifecycleRegistered = false
 
     var body: some View {
         CockpitShell(
@@ -55,8 +56,16 @@ private struct CockpitWindow: View {
             CockpitRoutePlaceholder(model: model)
         }
         .frame(minWidth: 900, minHeight: 640)
-        .onAppear { model.windowDidAppear() }
-        .onDisappear { model.windowDidDisappear() }
+        .onAppear {
+            guard !lifecycleRegistered else { return }
+            lifecycleRegistered = true
+            model.windowDidAppear()
+        }
+        .onDisappear {
+            guard lifecycleRegistered else { return }
+            lifecycleRegistered = false
+            model.windowDidDisappear()
+        }
     }
 }
 
