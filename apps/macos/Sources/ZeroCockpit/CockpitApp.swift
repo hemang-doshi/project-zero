@@ -53,7 +53,7 @@ private struct CockpitWindow: View {
             status: model.runtimeStatusLabel,
             version: "v\(ZeroRelease.version) · \(ZeroRelease.build)"
         ) {
-            CockpitRoutePlaceholder(model: model)
+            CockpitRouteContent(model: model)
         }
         .frame(minWidth: 900, minHeight: 640)
         .onAppear {
@@ -69,28 +69,25 @@ private struct CockpitWindow: View {
     }
 }
 
-private struct CockpitRoutePlaceholder: View {
+private struct CockpitRouteContent: View {
     @ObservedObject var model: CockpitModel
 
+    @ViewBuilder
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text(model.selection.route.title)
-                .font(.system(size: 28, weight: .black))
-            ZeroStatusBadge(
-                model.runtimeStatusLabel,
-                symbol: model.runtimeConnection == .live ? "checkmark.circle.fill" : "wifi.slash",
-                tone: model.runtimeStatusTone
-            )
-            Text("No durable \(model.selection.route.title.lowercased()) view is attached yet.")
-                .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(ZeroTheme.secondaryInk)
-            Text("Project Zero shows only committed runtime and explicitly connected Codex state.")
-                .font(.system(size: 11, design: .monospaced))
-                .foregroundStyle(ZeroTheme.secondaryInk)
+        switch model.selection.route {
+        case .desk:
+            DeskView(model: model)
+        case .runtime:
+            RuntimeView(model: model)
+        case .network:
+            NetworkView(model: model)
+        case .flightRecorder:
+            FlightRecorderView(model: model)
+        case .airlock:
+            AirlockView(model: model)
+        case .zeroBot:
+            ZeroBotView(model: model)
         }
-        .padding(28)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background(ZeroTheme.workstation)
     }
 }
 
