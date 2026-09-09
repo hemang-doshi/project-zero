@@ -8,15 +8,9 @@ final class NetworkFlightViewTests: XCTestCase {
         let facts = NetworkFacts(snapshot: snapshot, connection: .live)
 
         XCTAssertTrue(facts.isLive)
-        XCTAssertEqual(facts.registeredNodeCountLabel, "3+")
-        XCTAssertEqual(facts.activeNodeCount, 2)
-        XCTAssertEqual(facts.revokedNodeCount, 1)
+        XCTAssertEqual(facts.registeredNodeCountLabel, "2+")
         XCTAssertEqual(facts.onlineNodeCount, 1)
-        XCTAssertEqual(facts.capabilityCount, 4)
-        XCTAssertEqual(facts.nodes.map(\.id), ["desk", "sensor", "old"])
-        XCTAssertEqual(facts.lifecycleStatus(for: facts.nodes[2]), "REVOKED")
-        XCTAssertEqual(facts.delivery(for: facts.nodes[2]).label, "Revoked")
-        XCTAssertTrue(facts.topologyNotice.contains("including 1 revoked"))
+        XCTAssertEqual(facts.capabilityCount, 3)
         XCTAssertEqual(facts.evidenceRows.map(\.target), ["desk"])
         XCTAssertEqual(facts.evidenceRows.map(\.evidenceID), ["invoke-1"])
         XCTAssertEqual(facts.delivery(for: facts.nodes[0]).label, "Delivered")
@@ -29,7 +23,7 @@ final class NetworkFlightViewTests: XCTestCase {
 
         XCTAssertFalse(facts.isLive)
         XCTAssertEqual(facts.freshnessLabel, "CACHED · 2026-09-10T00:00:00Z")
-        XCTAssertEqual(facts.nodes.count, 3)
+        XCTAssertEqual(facts.nodes.count, 2)
     }
 
     func testFlightProjectionSeparatesOriginsAndDoesNotExposeUnknownCodexFields() throws {
@@ -55,99 +49,6 @@ final class NetworkFlightViewTests: XCTestCase {
         let codexFields = projection.records.first { $0.origin == .codex }?.fields.map { $0.1 }.joined(separator: " ") ?? ""
         XCTAssertFalse(codexFields.contains("must-not-appear"))
         XCTAssertTrue(codexFields.contains("thread-7"))
-        XCTAssertEqual(projection.records.first { $0.origin == .codex }?.originLabel, "CODEX LIVE MEMORY")
-    }
-
-    func testRetainedCodexRowsNeverClaimToBeLiveAfterFailureOrExit() {
-        var codex = CodexEventStore()
-        codex.reduce(.notification(method: "future/state", params: .object([
-            "threadId": .string("thread-retained"),
-            "status": .string("waiting")
-        ])))
-
-        let failed = FlightProjection(
-            snapshot: nil,
-            runtimeConnection: .offline,
-            codexStore: codex,
-            codexConnection: .failed("private transport detail")
-        )
-        let exited = FlightProjection(
-            snapshot: nil,
-            runtimeConnection: .offline,
-            codexStore: codex,
-            codexConnection: .exited(9)
-        )
-
-        XCTAssertEqual(failed.records.first?.originLabel, "CODEX RETAINED MEMORY · FAILED")
-        XCTAssertEqual(exited.records.first?.originLabel, "CODEX RETAINED MEMORY · EXITED 9")
-        XCTAssertFalse(failed.historyNotice.localizedCaseInsensitiveContains("live Codex"))
-        XCTAssertFalse(failed.historyNotice.contains("private transport detail"))
-        XCTAssertTrue(failed.historyNotice.contains("retained"))
-    }
-
-    func testUnknownCodexRecordIdentitySurvivesOldestEventEviction() {
-        var codex = CodexEventStore(maximumUnknownEvents: 2)
-        codex.reduce(unknownCodexEvent("event-a"))
-        codex.reduce(unknownCodexEvent("event-b"))
-        let before = FlightProjection(snapshot: nil, runtimeConnection: .offline,
-                                      codexStore: codex, codexConnection: .connected)
-        let retainedID = before.records.first { record in
-            record.fields.contains { $0.0 == "itemId" && $0.1 == "event-b" }
-        }?.id
-
-        codex.reduce(unknownCodexEvent("event-c"))
-        let after = FlightProjection(snapshot: nil, runtimeConnection: .offline,
-                                     codexStore: codex, codexConnection: .connected)
-
-        XCTAssertNotNil(retainedID)
-        XCTAssertEqual(after.records.first { record in
-            record.fields.contains { $0.0 == "itemId" && $0.1 == "event-b" }
-        }?.id, retainedID)
-        XCTAssertNil(after.records.first { record in
-            record.fields.contains { $0.0 == "itemId" && $0.1 == "event-a" }
-        })
-    }
-
-    func testFlightSelectionUsesExactSharedIdentityWithoutFallbackRetargeting() throws {
-        let snapshot = try CockpitSnapshot.decode(Data(snapshotJSON.utf8))
-        let projection = FlightProjection(snapshot: snapshot, runtimeConnection: .live,
-                                          codexStore: CodexEventStore(), codexConnection: .disconnected)
-        let visible = projection.filtered(category: .invocations, outcome: .all, query: "")
-
-        XCTAssertEqual(
-            FlightSelectionState.resolve(selectionID: "runtime-event-event-9", all: projection.records, visible: visible),
-            .filtered("runtime-event-event-9")
-        )
-        XCTAssertEqual(
-            FlightSelectionState.resolve(selectionID: "missing-record", all: projection.records, visible: visible),
-            .unavailable("missing-record")
-        )
-        XCTAssertEqual(
-            FlightSelectionState.resolve(selectionID: nil, all: projection.records, visible: visible),
-            .none
-        )
-    }
-
-    func testFlightRowCustomFocusPresentationIsVisibleAndAccessible() {
-        let presentation = FlightRowPresentation(isSelected: true, isFocused: true)
-
-        XCTAssertTrue(presentation.hasCustomFocusRing)
-        XCTAssertEqual(presentation.focusRingWidth, 2)
-        XCTAssertEqual(presentation.accessibilityValue, "Selected, keyboard focused")
-    }
-
-    func testNetworkTargetPresentationPreservesFullCanonicalIdentity() {
-        let target = "terrarium-display-authority-node-01.local/project-zero/primary"
-
-        XCTAssertGreaterThan(NetworkTargetPresentation.width, 160)
-        XCTAssertEqual(NetworkTargetPresentation.accessibilityValue(target), target)
-        XCTAssertTrue(NetworkTargetPresentation.wrapsFullIdentity)
-    }
-
-    func testUpcomingNodesAreGated() {
-        let nodes = buildTopologyNodes(snapshotNodes: [])
-        XCTAssertTrue(nodes.contains(where: { $0.kind == .upcoming }))
-        XCTAssertEqual(gatedUpcomingCount(nodes), nodes.filter { $0.kind == .upcoming }.count)
     }
 
     func testFlightFiltersAreCombinedWithoutInventingRows() throws {
@@ -179,27 +80,6 @@ final class NetworkFlightViewTests: XCTestCase {
             "runtime-event-event-9",
             "runtime-invocation-invoke-1"
         ])
-    }
-
-    func testRenderClockNoiseHiddenByDefault() throws {
-        func record(kind: String) throws -> RuntimeRecord {
-            try JSONDecoder().decode(RuntimeRecord.self, from: Data(#"{"kind":"\#(kind)"}"#.utf8))
-        }
-        XCTAssertTrue(isNoiseRecord(try record(kind: "display.telemetry")))
-        XCTAssertTrue(isNoiseRecord(try record(kind: "display.render")))
-        XCTAssertTrue(isNoiseRecord(try record(kind: "clock.tick")))
-        XCTAssertTrue(isNoiseRecord(try record(kind: "sse.keepalive")))
-        XCTAssertTrue(isNoiseRecord(try record(kind: "ready")))
-        XCTAssertFalse(isNoiseRecord(try record(kind: "approval.requested")))
-    }
-
-    private func unknownCodexEvent(_ itemID: String) -> CodexEvent {
-        .notification(method: "future/itemState", params: .object([
-            "threadId": .string("thread-7"),
-            "turnId": .string("turn-2"),
-            "itemId": .string(itemID),
-            "status": .string("waiting")
-        ]))
     }
 
     private let snapshotJSON = #"""

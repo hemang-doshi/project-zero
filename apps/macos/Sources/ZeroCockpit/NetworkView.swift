@@ -37,29 +37,16 @@ struct NetworkDelivery {
     let tone: ZeroTone
 }
 
-struct NetworkTargetPresentation {
-    static let width: CGFloat = 280
-    static let wrapsFullIdentity = true
-
-    static func accessibilityValue(_ target: String) -> String { target }
-}
-
 struct NetworkFacts {
     let snapshot: CockpitSnapshot?
     let connection: RuntimeConnectionState
     let nodes: [CockpitNode]
     let evidenceRows: [NetworkEvidenceRow]
-    /// First display-capable evidence row per target node. Replaces the
-    /// previous per-node linear scan of `evidenceRows` (O(nodes × rows)
-    /// per topology render); first-in-row-order wins, exactly as before.
-    private let deliveryIndex: [String: NetworkEvidenceRow]
-    /// Node profiles by node id; first-in-snapshot-order wins, as before.
-    private let profileIndex: [String: RuntimeRecord]
 
     init(snapshot: CockpitSnapshot?, connection: RuntimeConnectionState) {
         self.snapshot = snapshot
         self.connection = connection
-        nodes = snapshot?.nodes ?? []
+        nodes = snapshot?.nodes.filter { !$0.revoked } ?? []
         evidenceRows = snapshot?.invocations.compactMap { record in
             guard let id = networkRuntimeText(record, keys: ["id"]),
                   let target = networkRuntimeText(record, keys: ["node"]),
@@ -74,25 +61,6 @@ struct NetworkFacts {
                 attempts: networkRuntimeText(record, keys: ["attempts"]) ?? "Unavailable"
             )
         } ?? []
-        var deliveryIndex: [String: NetworkEvidenceRow] = [:]
-        deliveryIndex.reserveCapacity(evidenceRows.count)
-        for row in evidenceRows {
-            if (row.capability == "display.render" || row.capability == "display.clear"),
-               deliveryIndex[row.target] == nil {
-                deliveryIndex[row.target] = row
-            }
-        }
-        self.deliveryIndex = deliveryIndex
-        var profileIndex: [String: RuntimeRecord] = [:]
-        if let profiles = snapshot?.nodeProfiles {
-            profileIndex.reserveCapacity(profiles.count)
-            for record in profiles {
-                if let id = networkRuntimeText(record, keys: ["id"]), profileIndex[id] == nil {
-                    profileIndex[id] = record
-                }
-            }
-        }
-        self.profileIndex = profileIndex
     }
 
     @MainActor
@@ -101,9 +69,7 @@ struct NetworkFacts {
     }
 
     var isLive: Bool { connection == .live && snapshot != nil }
-    var activeNodeCount: Int { nodes.filter { !$0.revoked }.count }
-    var revokedNodeCount: Int { nodes.filter(\.revoked).count }
-    var onlineNodeCount: Int { nodes.filter { !$0.revoked && $0.status == "ONLINE" }.count }
+    var onlineNodeCount: Int { nodes.filter { $0.status == "ONLINE" }.count }
     var capabilityCount: Int { Set(nodes.flatMap(\.capabilities)).count }
     var registeredNodeCountLabel: String {
         guard snapshot != nil else { return "Unavailable" }
@@ -115,11 +81,10 @@ struct NetworkFacts {
     }
     var topologyNotice: String {
         guard let snapshot else { return "Topology is unavailable until the owner-local runtime provides a snapshot." }
-        let lifecycle = "including \(revokedNodeCount) revoked"
         if snapshot.truncated["nodes"] == true {
-            return "Showing \(nodes.count) registered nodes, \(lifecycle), as a lower bound from the bounded snapshot."
+            return "Showing \(nodes.count) registered nodes as a lower bound from the bounded snapshot."
         }
-        return "Showing all \(nodes.count) registered nodes, \(lifecycle), in the current bounded snapshot."
+        return "Showing all \(nodes.count) registered nodes in the current bounded snapshot."
     }
     var evidenceNotice: String {
         guard let snapshot else { return "Capability evidence is unavailable." }
@@ -130,21 +95,10 @@ struct NetworkFacts {
     }
 
     func profile(for node: CockpitNode) -> RuntimeRecord? {
-        profileIndex[node.id]
-    }
-
-    func lifecycleStatus(for node: CockpitNode) -> String {
-        node.revoked ? "REVOKED" : node.status
+        snapshot?.nodeProfiles.first { networkRuntimeText($0, keys: ["id"]) == node.id }
     }
 
     func delivery(for node: CockpitNode) -> NetworkDelivery {
-        if node.revoked {
-            return NetworkDelivery(
-                label: "Revoked",
-                detail: "Registration is retained as lifecycle evidence; this node has no active delivery authority.",
-                tone: .error
-            )
-        }
         guard isLive else {
             return NetworkDelivery(label: "Stale or uncertain", detail: "Snapshot retained while the stream is not live.", tone: .attention)
         }
@@ -157,7 +111,9 @@ struct NetworkFacts {
         guard node.capabilities.contains("display.render") || node.capabilities.contains("display.clear") else {
             return NetworkDelivery(label: "Connected", detail: "The daemon reports this node online.", tone: .healthy)
         }
-        guard let row = deliveryIndex[node.id] else {
+        guard let row = evidenceRows.first(where: {
+            $0.target == node.id && ($0.capability == "display.render" || $0.capability == "display.clear")
+        }) else {
             return NetworkDelivery(label: "Connected", detail: "Online; no projected display invocation proves delivery.", tone: .healthy)
         }
         switch row.status.uppercased() {
@@ -199,15 +155,13 @@ public struct NetworkView: View {
         .accessibilityLabel("Network topology and node authority")
     }
 
-    private var facts: NetworkFacts {
-        ProjectionCache.shared.networkFacts(snapshot: model.snapshot, connection: model.runtimeConnection)
-    }
+    private var facts: NetworkFacts { NetworkFacts(model: model) }
 
     @ViewBuilder
     private func header(layout: NetworkLayout) -> some View {
         let title = VStack(alignment: .leading, spacing: 8) {
             Text("Network: Spatial Topology & Node Authority")
-                .font(.zero(size: layout == .compact ? 27 : 35, weight: .black))
+                .font(.system(size: layout == .compact ? 27 : 35, weight: .black))
                 .tracking(-1.05)
                 .minimumScaleFactor(0.68)
                 .lineLimit(2)
@@ -215,12 +169,12 @@ public struct NetworkView: View {
                 Text("This Mac:")
                 Text(facts.isLive ? "Authoritative Ring-0 Runtime" : "Authority Snapshot Retained")
                     .padding(.horizontal, 5)
-                    .background(ZeroTheme.markerYellow.opacity(0.78))
+                    .background(Color(red: 0.96, green: 0.75, blue: 0.28).opacity(0.78))
                     .rotationEffect(.degrees(-0.7))
             }
-            .font(.zero(size: 12, weight: .bold))
+            .font(.system(size: 12, weight: .bold))
             Text("Local node registration, projected capabilities, lifecycle freshness, and delivery evidence. No public relay or unsupported bus operation is inferred.")
-                .font(.zero(size: 12, weight: .medium))
+                .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(ZeroTheme.secondaryInk)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -231,9 +185,9 @@ public struct NetworkView: View {
                 VStack(alignment: .trailing, spacing: 7) {
                     ZeroStatusBadge(facts.freshnessLabel,
                                     symbol: facts.isLive ? "lock.shield.fill" : "clock.badge.questionmark",
-                                    tone: facts.isLive ? .healthy : .attention).equatable()
+                                    tone: facts.isLive ? .healthy : .attention)
                     Text("Enrollment changes are unavailable in this display projection.")
-                        .font(.zeroMono(size: 9, weight: .medium))
+                        .font(.system(size: 9, weight: .medium, design: .monospaced))
                         .foregroundStyle(ZeroTheme.secondaryInk)
                 }
             }
@@ -242,9 +196,9 @@ public struct NetworkView: View {
                 title
                 ZeroStatusBadge(facts.freshnessLabel,
                                 symbol: facts.isLive ? "lock.shield.fill" : "clock.badge.questionmark",
-                                tone: facts.isLive ? .healthy : .attention).equatable()
+                                tone: facts.isLive ? .healthy : .attention)
                 Text("Enrollment changes are unavailable in this display projection.")
-                    .font(.zeroMono(size: 9, weight: .medium))
+                    .font(.system(size: 9, weight: .medium, design: .monospaced))
                     .foregroundStyle(ZeroTheme.secondaryInk)
             }
         }
@@ -256,7 +210,7 @@ public struct NetworkView: View {
             NetworkFlightMetricCard(
                 label: "Registered nodes",
                 value: facts.registeredNodeCountLabel,
-                detail: facts.snapshot == nil ? "No node projection" : "\(facts.activeNodeCount) active · \(facts.onlineNodeCount) online · \(facts.revokedNodeCount) revoked",
+                detail: facts.snapshot == nil ? "No node projection" : "\(facts.onlineNodeCount) online",
                 badge: facts.isLive ? "LIVE" : "CACHED",
                 tone: facts.isLive ? .healthy : .attention
             )
@@ -277,7 +231,7 @@ public struct NetworkView: View {
             NetworkFlightMetricCard(
                 label: "Capabilities",
                 value: facts.snapshot == nil ? "Unavailable" : "\(facts.capabilityCount) projected",
-                detail: "Across active and revoked registrations; not lease count",
+                detail: "Enrollment ceilings, not active lease count",
                 badge: "BOUNDED",
                 tone: .neutral
             )
@@ -287,11 +241,10 @@ public struct NetworkView: View {
     private func topology(layout: NetworkLayout) -> some View {
         NetworkFlightPanel {
             VStack(alignment: .leading, spacing: 14) {
-                NetworkFlightSectionHeader("Spatial Topology Grid", badge: facts.isLive ? "OWNER-LOCAL LIVE" : "HISTORICAL SNAPSHOT").equatable()
+                NetworkFlightSectionHeader("Spatial Topology Grid", badge: facts.isLive ? "OWNER-LOCAL LIVE" : "HISTORICAL SNAPSHOT")
                 Text(facts.topologyNotice)
-                    .font(.zeroMono(size: 10, weight: .medium))
+                    .font(.system(size: 10, weight: .medium, design: .monospaced))
                     .foregroundStyle(ZeroTheme.secondaryInk)
-                TopologySceneView(nodes: buildTopologyNodes(snapshotNodes: facts.nodes)).equatable()
                 if layout == .wide {
                     HStack(alignment: .top, spacing: 12) {
                         authorityCard
@@ -308,7 +261,7 @@ public struct NetworkView: View {
                         }
                     }
                 } else {
-                    LazyVStack(spacing: 12) {
+                    VStack(spacing: 12) {
                         authorityCard
                         ForEach(facts.nodes) { node in nodeCard(node) }
                     }
@@ -321,20 +274,20 @@ public struct NetworkView: View {
         VStack(alignment: .leading, spacing: 13) {
             HStack(alignment: .top, spacing: 10) {
                 Image(systemName: "desktopcomputer")
-                    .font(.zero(size: 22, weight: .semibold))
+                    .font(.system(size: 22, weight: .semibold))
                     .foregroundStyle(ZeroTheme.orangePressed)
                     .frame(width: 42, height: 42)
                     .background(ZeroTheme.orange.opacity(0.11), in: RoundedRectangle(cornerRadius: 7))
                 VStack(alignment: .leading, spacing: 3) {
-                    Text("This Mac").font(.zero(size: 17, weight: .black))
+                    Text("This Mac").font(.system(size: 17, weight: .black))
                     Text("OWNER-LOCAL RUNTIME AUTHORITY")
-                        .font(.zeroMono(size: 9, weight: .bold))
+                        .font(.system(size: 9, weight: .bold, design: .monospaced))
                         .foregroundStyle(ZeroTheme.secondaryInk)
                 }
                 Spacer()
                 ZeroStatusBadge(facts.isLive ? "AUTHORITATIVE" : "UNCONFIRMED",
                                 symbol: facts.isLive ? "checkmark.seal.fill" : "clock.badge.questionmark",
-                                tone: facts.isLive ? .authority : .attention).equatable()
+                                tone: facts.isLive ? .authority : .attention)
             }
             NetworkFlightEvidenceRows(rows: [
                 ("Runtime", facts.snapshot?.runtimeVersion ?? "Unavailable"),
@@ -343,7 +296,7 @@ public struct NetworkView: View {
                 ("Transport", facts.connection.rawValue.uppercased())
             ])
             Text("The snapshot does not project host latency, key-enclave state, or authority transfer. Those claims are intentionally absent.")
-                .font(.zero(size: 10, weight: .medium))
+                .font(.system(size: 10, weight: .medium))
                 .foregroundStyle(ZeroTheme.secondaryInk)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -356,37 +309,34 @@ public struct NetworkView: View {
     private func nodeCard(_ node: CockpitNode) -> some View {
         let delivery = facts.delivery(for: node)
         let profile = facts.profile(for: node)
-        let lifecycleStatus = facts.lifecycleStatus(for: node)
         return VStack(alignment: .leading, spacing: 11) {
             HStack(alignment: .top, spacing: 8) {
                 Image(systemName: node.capabilities.contains(where: { $0.hasPrefix("display.") }) ? "display" : "point.3.connected.trianglepath.dotted")
-                    .font(.zero(size: 16, weight: .semibold))
+                    .font(.system(size: 16, weight: .semibold))
                     .foregroundStyle(delivery.tone.color)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(node.id)
-                        .font(.zeroMono(size: 12, weight: .black))
+                        .font(.system(size: 12, weight: .black, design: .monospaced))
                         .textSelection(.enabled)
                     Text(profileSummary(profile))
-                        .font(.zeroMono(size: 9, weight: .medium))
+                        .font(.system(size: 9, weight: .medium, design: .monospaced))
                         .foregroundStyle(ZeroTheme.secondaryInk)
                         .lineLimit(2)
                 }
                 Spacer(minLength: 4)
-                ZeroStatusBadge(lifecycleStatus, tone: networkTone(lifecycleStatus))
+                ZeroStatusBadge(node.status, tone: networkTone(node.status))
             }
             NetworkFlightEvidenceRows(rows: [
-                ("Lifecycle", lifecycleStatus),
-                ("Daemon status", node.status),
                 ("Last seen", node.lastSeen ?? "Unavailable"),
                 ("Delivery", delivery.label)
             ])
             Text(delivery.detail)
-                .font(.zero(size: 9, weight: .medium))
+                .font(.system(size: 9, weight: .medium))
                 .foregroundStyle(ZeroTheme.secondaryInk)
                 .fixedSize(horizontal: false, vertical: true)
             if node.capabilities.isEmpty {
                 Text("NO PROJECTED CAPABILITIES")
-                    .font(.zeroMono(size: 9, weight: .bold))
+                    .font(.system(size: 9, weight: .bold, design: .monospaced))
                     .foregroundStyle(ZeroTheme.secondaryInk)
             } else {
                 FlowChips(values: node.capabilities)
@@ -395,18 +345,15 @@ public struct NetworkView: View {
         .padding(13)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color.white, in: RoundedRectangle(cornerRadius: 8))
-        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(networkTone(lifecycleStatus).color.opacity(0.28)))
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel("Node \(node.id), lifecycle \(lifecycleStatus)")
-        .accessibilityValue("Daemon status \(node.status); \(node.capabilities.count) projected capabilities; last seen \(node.lastSeen ?? "unavailable"); delivery \(delivery.label)")
+        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(networkTone(node.status).color.opacity(0.28)))
     }
 
     private var capabilityEvidence: some View {
         NetworkFlightPanel {
             VStack(alignment: .leading, spacing: 12) {
-                NetworkFlightSectionHeader("Capability Invocation & Delivery Evidence", badge: facts.snapshot?.truncated["invocations"] == true ? "LOWER BOUND" : "BOUNDED").equatable()
+                NetworkFlightSectionHeader("Capability Invocation & Delivery Evidence", badge: facts.snapshot?.truncated["invocations"] == true ? "LOWER BOUND" : "BOUNDED")
                 Text(facts.evidenceNotice)
-                    .font(.zero(size: 10, weight: .medium))
+                    .font(.system(size: 10, weight: .medium))
                     .foregroundStyle(ZeroTheme.secondaryInk)
                 if facts.evidenceRows.isEmpty {
                     NetworkFlightEmptyState(
@@ -416,15 +363,9 @@ public struct NetworkView: View {
                     )
                 } else {
                     ScrollView(.horizontal, showsIndicators: true) {
-                        LazyVStack(spacing: 0) {
+                        VStack(spacing: 0) {
                             networkEvidenceHeader
-                            ForEach(facts.evidenceRows.prefix(100)) { row in networkEvidenceRow(row) }
-                            if facts.evidenceRows.count > 100 {
-                                Text("+\(facts.evidenceRows.count - 100) more rows in the bounded snapshot")
-                                    .font(.zeroMono(size: 9, weight: .medium))
-                                    .foregroundStyle(ZeroTheme.secondaryInk)
-                                    .padding(.vertical, 6)
-                            }
+                            ForEach(facts.evidenceRows) { row in networkEvidenceRow(row) }
                         }
                         .frame(minWidth: 1_030)
                     }
@@ -436,7 +377,7 @@ public struct NetworkView: View {
     private var networkEvidenceHeader: some View {
         HStack(spacing: 0) {
             networkCell("SOURCE", width: 130, header: true)
-            networkTargetCell("TARGET NODE", header: true)
+            networkCell("TARGET NODE", width: 160, header: true)
             networkCell("CAPABILITY SCOPE", width: 210, header: true)
             networkCell("DEADLINE", width: 210, header: true)
             networkCell("STATUS", width: 130, header: true)
@@ -449,7 +390,7 @@ public struct NetworkView: View {
     private func networkEvidenceRow(_ row: NetworkEvidenceRow) -> some View {
         HStack(spacing: 0) {
             networkCell(row.source, width: 130)
-            networkTargetCell(row.target)
+            networkCell(row.target, width: 160)
             networkCell(row.capability, width: 210)
             networkCell(row.deadline, width: 210)
             networkCell(row.status, width: 130, tone: invocationTone(row.status))
@@ -457,30 +398,11 @@ public struct NetworkView: View {
             networkCell(row.evidenceID, width: 190)
         }
         .overlay(alignment: .bottom) { ZeroTheme.line.opacity(0.7).frame(height: 1) }
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel("Invocation \(row.evidenceID), target node \(row.target)")
-        .accessibilityValue("\(row.capability), \(row.status), \(row.attempts) attempts")
-    }
-
-    private func networkTargetCell(_ value: String, header: Bool = false) -> some View {
-        Text(value)
-            .font(.zeroMono(size: header ? 9 : 10, weight: header ? .bold : .medium))
-            .foregroundStyle(header ? ZeroTheme.secondaryInk : ZeroTheme.ink)
-            .textSelection(.enabled)
-            .lineLimit(nil)
-            .fixedSize(horizontal: false, vertical: true)
-            .frame(width: NetworkTargetPresentation.width, alignment: .leading)
-            .frame(minHeight: 38, alignment: .leading)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 9)
-            .accessibilityLabel(header ? "Target node column" : "Target node")
-            .accessibilityValue(NetworkTargetPresentation.accessibilityValue(value))
-            .help(value)
     }
 
     private func networkCell(_ value: String, width: CGFloat, header: Bool = false, tone: ZeroTone? = nil) -> some View {
         Text(value)
-            .font(.zeroMono(size: header ? 9 : 10, weight: header ? .bold : .medium))
+            .font(.system(size: header ? 9 : 10, weight: header ? .bold : .medium, design: .monospaced))
             .foregroundStyle(tone?.color ?? (header ? ZeroTheme.secondaryInk : ZeroTheme.ink))
             .textSelection(.enabled)
             .lineLimit(1)
@@ -514,7 +436,7 @@ struct NetworkFlightPanel<Content: View>: View {
     }
 }
 
-struct NetworkFlightMetricCard: View, Equatable {
+struct NetworkFlightMetricCard: View {
     let label: String
     let value: String
     let detail: String
@@ -526,17 +448,17 @@ struct NetworkFlightMetricCard: View, Equatable {
             VStack(alignment: .leading, spacing: 9) {
                 HStack(alignment: .top) {
                     Text(label.uppercased())
-                        .font(.zeroMono(size: 9, weight: .bold))
+                        .font(.system(size: 9, weight: .bold, design: .monospaced))
                         .foregroundStyle(ZeroTheme.secondaryInk)
                     Spacer()
-                    ZeroStatusBadge(badge, tone: tone).equatable()
+                    ZeroStatusBadge(badge, tone: tone)
                 }
                 Text(value)
-                    .font(.zero(size: 21, weight: .black))
+                    .font(.system(size: 21, weight: .black, design: .rounded))
                     .minimumScaleFactor(0.65)
                     .lineLimit(1)
                 Text(detail)
-                    .font(.zero(size: 10, weight: .medium))
+                    .font(.system(size: 10, weight: .medium))
                     .foregroundStyle(ZeroTheme.secondaryInk)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -544,7 +466,7 @@ struct NetworkFlightMetricCard: View, Equatable {
     }
 }
 
-struct NetworkFlightSectionHeader: View, Equatable {
+struct NetworkFlightSectionHeader: View {
     let title: String
     let badge: String?
 
@@ -555,11 +477,11 @@ struct NetworkFlightSectionHeader: View, Equatable {
 
     var body: some View {
         HStack(alignment: .firstTextBaseline) {
-            Text(title).font(.zero(size: 15, weight: .black))
+            Text(title).font(.system(size: 15, weight: .black))
             Spacer()
             if let badge {
                 Text(badge)
-                    .font(.zeroMono(size: 9, weight: .bold))
+                    .font(.system(size: 9, weight: .bold, design: .monospaced))
                     .foregroundStyle(ZeroTheme.secondaryInk)
             }
         }
@@ -569,24 +491,19 @@ struct NetworkFlightSectionHeader: View, Equatable {
     }
 }
 
-struct NetworkFlightEvidenceRows: View, Equatable {
+struct NetworkFlightEvidenceRows: View {
     let rows: [(String, String)]
 
-    static func == (lhs: NetworkFlightEvidenceRows, rhs: NetworkFlightEvidenceRows) -> Bool {
-        guard lhs.rows.count == rhs.rows.count else { return false }
-        return zip(lhs.rows, rhs.rows).allSatisfy { $0 == $1 }
-    }
-
     var body: some View {
-        LazyVStack(spacing: 0) {
-            ForEach(Array(rows.prefix(100).enumerated()), id: \.offset) { index, row in
+        VStack(spacing: 0) {
+            ForEach(Array(rows.enumerated()), id: \.offset) { index, row in
                 HStack(alignment: .top, spacing: 10) {
                     Text(row.0.uppercased())
-                        .font(.zeroMono(size: 8, weight: .bold))
+                        .font(.system(size: 8, weight: .bold, design: .monospaced))
                         .foregroundStyle(ZeroTheme.secondaryInk)
                         .frame(width: 76, alignment: .leading)
                     Text(row.1)
-                        .font(.zeroMono(size: 9, weight: .medium))
+                        .font(.system(size: 9, weight: .medium, design: .monospaced))
                         .textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
@@ -599,7 +516,7 @@ struct NetworkFlightEvidenceRows: View, Equatable {
     }
 }
 
-struct NetworkFlightEmptyState: View, Equatable {
+struct NetworkFlightEmptyState: View {
     let symbol: String
     let title: String
     let detail: String
@@ -607,11 +524,11 @@ struct NetworkFlightEmptyState: View, Equatable {
     var body: some View {
         VStack(alignment: .leading, spacing: 9) {
             Image(systemName: symbol)
-                .font(.zero(size: 23, weight: .semibold))
+                .font(.system(size: 23, weight: .semibold))
                 .foregroundStyle(ZeroTheme.secondaryInk)
-            Text(title).font(.zero(size: 16, weight: .bold))
+            Text(title).font(.system(size: 16, weight: .bold))
             Text(detail)
-                .font(.zero(size: 11, weight: .medium))
+                .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(ZeroTheme.secondaryInk)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -634,7 +551,7 @@ private struct FlowChips: View {
     @ViewBuilder private var chips: some View {
         ForEach(values, id: \.self) { value in
             Text(value)
-                .font(.zeroMono(size: 8, weight: .bold))
+                .font(.system(size: 8, weight: .bold, design: .monospaced))
                 .foregroundStyle(ZeroTheme.secondaryInk)
                 .padding(.horizontal, 6)
                 .padding(.vertical, 4)
