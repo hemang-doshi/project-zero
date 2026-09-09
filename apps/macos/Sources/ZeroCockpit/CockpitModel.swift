@@ -126,14 +126,26 @@ public final class CockpitModel: ObservableObject {
         let deliveryBaseline: DeliveryBaseline?
     }
 
+    private enum ApprovalResolution: String, Codable, Sendable {
+        case waiting
+        case approved
+        case denied
+    }
+
+    private struct ApprovalDeliveryLifecycle: Codable, Sendable {
+        let baseline: DeliveryBaseline
+        var resolution: ApprovalResolution
+    }
+
     private let sendCommand: @Sendable (RuntimeCommandRequest) async throws -> RuntimeCommandResponse
     private let resolveProject: @Sendable (String) async throws -> RuntimeProjectResponse
     private let userDefaults: UserDefaults?
     private let pendingDefaultsKey: String
+    private let approvalDefaultsKey: String
     private var pendingCommand: RuntimeCommandRequest?
     private var pendingDeliveryBaseline: DeliveryBaseline?
     private var committedDeliveryBaseline: DeliveryBaseline?
-    private var approvalDeliveryBaseline: DeliveryBaseline?
+    private var approvalDeliveryLifecycle: ApprovalDeliveryLifecycle?
     private var activeSubmissionID: UUID?
     private var clockTask: Task<Void, Never>?
     private var subscriptions: Set<AnyCancellable> = []
@@ -174,8 +186,10 @@ public final class CockpitModel: ObservableObject {
         }
         self.userDefaults = userDefaults
         self.pendingDefaultsKey = "pending:\(resolvedSocket)"
+        self.approvalDefaultsKey = "approval-delivery:\(resolvedSocket)"
 
         restorePendingCommand()
+        restoreApprovalDeliveryLifecycle()
         bindOwnedClients()
     }
 
@@ -252,9 +266,12 @@ public final class CockpitModel: ObservableObject {
             $0["capability"].string == "display.render" || $0["capability"].string == "display.clear"
         }
         let latest: RuntimeRecord?
-        if let baseline = approvalDeliveryBaseline {
+        if let lifecycle = effectiveApprovalDeliveryLifecycle {
+            let baseline = lifecycle.baseline
             if let invocation = matchingDisplayInvocation(for: baseline, in: displayInvocations) {
                 latest = invocation
+            } else if lifecycle.resolution == .denied {
+                return .stale
             } else if let proposal = snapshot.invocations.first(where: {
                 $0["id"].string == baseline.commandID && $0["capability"].string?.hasPrefix("session.") == true
             }) {
@@ -265,7 +282,11 @@ public final class CockpitModel: ObservableObject {
                 default: return .stale
                 }
             } else {
-                return .queued
+                if lifecycle.resolution == .waiting,
+                   snapshot.revision <= baseline.snapshotRevision {
+                    return .queued
+                }
+                return .stale
             }
         } else if let baseline = committedDeliveryBaseline {
             guard snapshot.revision > baseline.snapshotRevision else { return .committedLocally }
@@ -430,6 +451,11 @@ public final class CockpitModel: ObservableObject {
             commandState = .blocked(operation: "approvals", message: "That exact approval is no longer pending.")
             return false
         }
+        if approvalDeliveryLifecycle?.baseline.commandID != id,
+           let lifecycle = reconstructedApprovalDeliveryLifecycle(id: id) {
+            approvalDeliveryLifecycle = lifecycle
+            persistApprovalDeliveryLifecycle()
+        }
         return await command(approve ? "approvals.approve" : "approvals.deny", ["id": .string(id)])
     }
 
@@ -533,11 +559,23 @@ public final class CockpitModel: ObservableObject {
             switch response.status.uppercased() {
             case "SUCCEEDED":
                 if operation.hasPrefix("session.") {
-                    approvalDeliveryBaseline = nil
+                    approvalDeliveryLifecycle = nil
+                    clearPersistedApprovalDeliveryLifecycle()
                     committedDeliveryBaseline = pendingDeliveryBaseline ?? deliveryBaseline(commandID: id)
+                } else if operation == "approvals.approve" || operation == "approvals.deny",
+                          case .string(let approvalID) = request.body["id"],
+                          approvalDeliveryLifecycle?.baseline.commandID == approvalID {
+                    approvalDeliveryLifecycle?.resolution = operation == "approvals.approve" ? .approved : .denied
+                    persistApprovalDeliveryLifecycle()
                 }
             case "WAITING_APPROVAL" where operation.hasPrefix("session."):
-                approvalDeliveryBaseline = pendingDeliveryBaseline ?? deliveryBaseline(commandID: id)
+                if let baseline = pendingDeliveryBaseline ?? deliveryBaseline(commandID: id) {
+                    approvalDeliveryLifecycle = ApprovalDeliveryLifecycle(
+                        baseline: baseline,
+                        resolution: .waiting
+                    )
+                    persistApprovalDeliveryLifecycle()
+                }
             default:
                 throw ZeroError("Runtime returned an unsupported command status: \(response.status)")
             }
@@ -572,6 +610,12 @@ public final class CockpitModel: ObservableObject {
     private func bindOwnedClients() {
         runtime.objectWillChange
             .sink { [weak self] _ in self?.objectWillChange.send() }
+            .store(in: &subscriptions)
+        runtime.$snapshot
+            .compactMap { $0 }
+            .sink { [weak self] snapshot in
+                self?.reconcileApprovalDeliveryLifecycle(with: snapshot)
+            }
             .store(in: &subscriptions)
         codex.objectWillChange
             .sink { [weak self] _ in self?.objectWillChange.send() }
@@ -610,17 +654,74 @@ public final class CockpitModel: ObservableObject {
         userDefaults?.set(data, forKey: pendingDefaultsKey)
     }
 
+    private var effectiveApprovalDeliveryLifecycle: ApprovalDeliveryLifecycle? {
+        if let approvalDeliveryLifecycle {
+            return approvalDeliveryLifecycle
+        }
+        guard let snapshot,
+              let approval = snapshot.approvals.first(where: {
+            guard let id = $0["id"].string, !id.isEmpty,
+                  $0["capability"].string?.hasPrefix("session.") == true else {
+                return false
+            }
+            return $0["status"].string?.uppercased() == "WAITING_APPROVAL"
+        }), let id = approval["id"].string else {
+            return nil
+        }
+        guard let lifecycle = reconstructedApprovalDeliveryLifecycle(id: id) else {
+            return nil
+        }
+        return lifecycle
+    }
+
+    private func reconstructedApprovalDeliveryLifecycle(id: String) -> ApprovalDeliveryLifecycle? {
+        guard let snapshot else { return nil }
+        return reconstructedApprovalDeliveryLifecycle(id: id, snapshot: snapshot)
+    }
+
+    private func reconstructedApprovalDeliveryLifecycle(
+        id: String,
+        snapshot: CockpitSnapshot
+    ) -> ApprovalDeliveryLifecycle? {
+        guard snapshot.approvals.contains(where: {
+            $0["id"].string == id
+                && $0["capability"].string?.hasPrefix("session.") == true
+                && $0["status"].string?.uppercased() == "WAITING_APPROVAL"
+        }), let baseline = deliveryBaseline(commandID: id, snapshot: snapshot) else {
+            return nil
+        }
+        return ApprovalDeliveryLifecycle(baseline: baseline, resolution: .waiting)
+    }
+
+    private func reconcileApprovalDeliveryLifecycle(with snapshot: CockpitSnapshot) {
+        guard let approval = snapshot.approvals.first(where: {
+            guard let id = $0["id"].string, !id.isEmpty,
+                  $0["capability"].string?.hasPrefix("session.") == true else {
+                return false
+            }
+            return $0["status"].string?.uppercased() == "WAITING_APPROVAL"
+        }), let id = approval["id"].string,
+              approvalDeliveryLifecycle?.baseline.commandID != id,
+              let lifecycle = reconstructedApprovalDeliveryLifecycle(id: id, snapshot: snapshot) else {
+            return
+        }
+        approvalDeliveryLifecycle = lifecycle
+        persistApprovalDeliveryLifecycle()
+    }
+
     private var approvalProposalIsInSnapshot: Bool {
-        guard let commandID = approvalDeliveryBaseline?.commandID else { return false }
+        guard let commandID = effectiveApprovalDeliveryLifecycle?.baseline.commandID else { return false }
         return snapshot?.approvals.contains(where: { $0["id"].string == commandID }) == true
     }
 
     private var approvalProposalNeedsAttention: Bool {
-        guard let commandID = approvalDeliveryBaseline?.commandID else { return false }
+        guard let lifecycle = effectiveApprovalDeliveryLifecycle else { return false }
+        guard lifecycle.resolution == .waiting else { return false }
+        let commandID = lifecycle.baseline.commandID
         guard let invocation = snapshot?.invocations.first(where: {
             $0["id"].string == commandID && $0["capability"].string?.hasPrefix("session.") == true
         }) else {
-            return true
+            return (snapshot?.revision ?? 0) <= lifecycle.baseline.snapshotRevision
         }
         switch invocation["status"].string?.uppercased() {
         case "SUCCEEDED", "FAILED", "REJECTED", "EXPIRED", "TIMED_OUT", "CANCELLED": return false
@@ -633,13 +734,22 @@ public final class CockpitModel: ObservableObject {
         in invocations: [RuntimeRecord]
     ) -> RuntimeRecord? {
         invocations.first(where: { invocation in
-            guard let id = invocation["id"].string else { return false }
-            return id.hasPrefix(baseline.commandID + ":") && !baseline.displayInvocationIDs.contains(id)
+            guard let id = invocation["id"].string,
+                  let node = invocation["node"].string,
+                  !node.isEmpty else {
+                return false
+            }
+            return id == baseline.commandID + ":" + node
+                && !baseline.displayInvocationIDs.contains(id)
         })
     }
 
     private func deliveryBaseline(commandID: String) -> DeliveryBaseline? {
         guard let snapshot else { return nil }
+        return deliveryBaseline(commandID: commandID, snapshot: snapshot)
+    }
+
+    private func deliveryBaseline(commandID: String, snapshot: CockpitSnapshot) -> DeliveryBaseline? {
         let ids = Set(snapshot.invocations.compactMap { invocation -> String? in
             guard invocation["capability"].string == "display.render" || invocation["capability"].string == "display.clear" else {
                 return nil
@@ -651,6 +761,27 @@ public final class CockpitModel: ObservableObject {
 
     private func clearPersistedCommand() {
         userDefaults?.removeObject(forKey: pendingDefaultsKey)
+    }
+
+    private func restoreApprovalDeliveryLifecycle() {
+        guard let data = userDefaults?.data(forKey: approvalDefaultsKey),
+              let lifecycle = try? JSONDecoder().decode(ApprovalDeliveryLifecycle.self, from: data),
+              !lifecycle.baseline.commandID.isEmpty else {
+            return
+        }
+        approvalDeliveryLifecycle = lifecycle
+    }
+
+    private func persistApprovalDeliveryLifecycle() {
+        guard let approvalDeliveryLifecycle,
+              let data = try? JSONEncoder().encode(approvalDeliveryLifecycle) else {
+            return
+        }
+        userDefaults?.set(data, forKey: approvalDefaultsKey)
+    }
+
+    private func clearPersistedApprovalDeliveryLifecycle() {
+        userDefaults?.removeObject(forKey: approvalDefaultsKey)
     }
 
     private static func commandLineSocketPath() -> String {

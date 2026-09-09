@@ -150,6 +150,178 @@ final class CockpitModelTests: XCTestCase {
         XCTAssertNotEqual(model.deliveryState, .delivered)
     }
 
+    func testWaitingApprovalSurvivesModelRecreationWithoutUsingHistoricalDelivery() async {
+        let suiteName = "CockpitModelTests.\(UUID().uuidString)"
+        let defaults = try! XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let socketPath = "/tmp/project-zero-approval-\(UUID().uuidString).sock"
+        let commands = RuntimeCommandRecorder(status: "WAITING_APPROVAL")
+        let firstFixture = RuntimeSnapshotFixture(snapshot: snapshotData(
+            revision: 10,
+            invocations: [("old-render", "SUCCEEDED")]
+        ))
+        var firstModel: CockpitModel? = CockpitModel(
+            socketPath: socketPath,
+            client: firstFixture.client(),
+            codex: CodexAppServer(transport: RecordingCodexTransport()),
+            sendCommand: { request in try await commands.send(request) },
+            resolveProject: { _ in throw ZeroError("unused") },
+            userDefaults: defaults
+        )
+        firstModel?.applicationDidStart()
+        await firstFixture.waitUntilLive(try! XCTUnwrap(firstModel).runtime)
+
+        let proposed = await firstModel?.pauseFocus()
+        XCTAssertEqual(proposed, true)
+        let recordedRequest = await commands.lastRequest()
+        let commandID = try! XCTUnwrap(recordedRequest?.id)
+        XCTAssertEqual(firstModel?.deliveryState, .queued)
+        firstModel = nil
+
+        let recoveredFixture = RuntimeSnapshotFixture(snapshot: snapshotData(
+            revision: 11,
+            invocations: [("old-render", "SUCCEEDED")],
+            runtimeInvocations: [(commandID, "session.pause", "WAITING_APPROVAL")],
+            approvalIDs: [commandID]
+        ))
+        let recoveredModel = CockpitModel(
+            socketPath: socketPath,
+            client: recoveredFixture.client(),
+            codex: CodexAppServer(transport: RecordingCodexTransport()),
+            sendCommand: { request in try await commands.send(request) },
+            resolveProject: { _ in throw ZeroError("unused") },
+            userDefaults: defaults
+        )
+        recoveredModel.applicationDidStart()
+        await recoveredFixture.waitUntilLive(recoveredModel.runtime)
+
+        XCTAssertEqual(recoveredModel.deliveryState, .queued)
+        XCTAssertEqual(recoveredModel.attentionCount, 1)
+        XCTAssertNotEqual(recoveredModel.deliveryState, .delivered)
+    }
+
+    func testCurrentApprovalReconstructsLifecycleBeforeBoundedEvidenceDisappears() async {
+        let fixture = RuntimeSnapshotFixture(snapshot: snapshotData(
+            revision: 11,
+            invocations: [("old-render", "SUCCEEDED")],
+            runtimeInvocations: [("proposal-1", "session.pause", "WAITING_APPROVAL")],
+            approvalIDs: ["proposal-1"]
+        ))
+        let model = makeModel(client: fixture.client())
+        model.applicationDidStart()
+        await fixture.waitUntilLive(model.runtime)
+
+        XCTAssertEqual(model.deliveryState, .queued)
+
+        fixture.setSnapshot(snapshotData(
+            revision: 12,
+            invocations: [("old-render", "SUCCEEDED")]
+        ))
+        model.runtime.refresh()
+        await fixture.waitForRevision(12, client: model.runtime)
+
+        XCTAssertEqual(model.deliveryState, .stale)
+        XCTAssertEqual(model.attentionCount, 0)
+        XCTAssertNotEqual(model.deliveryState, .delivered)
+    }
+
+    func testDeniedApprovalRemainsStaleWhenTerminalInvocationFallsOutsideBoundedHistory() async {
+        let suiteName = "CockpitModelTests.\(UUID().uuidString)"
+        let defaults = try! XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let socketPath = "/tmp/project-zero-denial-\(UUID().uuidString).sock"
+        let commands = RuntimeCommandRecorder(statuses: ["WAITING_APPROVAL", "SUCCEEDED"])
+        let fixture = RuntimeSnapshotFixture(snapshot: snapshotData(
+            revision: 10,
+            invocations: [("old-render", "SUCCEEDED")]
+        ))
+        var model: CockpitModel? = CockpitModel(
+            socketPath: socketPath,
+            client: fixture.client(),
+            codex: CodexAppServer(transport: RecordingCodexTransport()),
+            sendCommand: { request in try await commands.send(request) },
+            resolveProject: { _ in throw ZeroError("unused") },
+            userDefaults: defaults
+        )
+        model?.applicationDidStart()
+        await fixture.waitUntilLive(try! XCTUnwrap(model).runtime)
+
+        let proposed = await model?.pauseFocus()
+        XCTAssertEqual(proposed, true)
+        let recordedRequest = await commands.lastRequest()
+        let commandID = try! XCTUnwrap(recordedRequest?.id)
+        fixture.setSnapshot(snapshotData(
+            revision: 11,
+            invocations: [("old-render", "SUCCEEDED")],
+            runtimeInvocations: [(commandID, "session.pause", "WAITING_APPROVAL")],
+            approvalIDs: [commandID]
+        ))
+        model?.runtime.refresh()
+        await fixture.waitForRevision(11, client: try! XCTUnwrap(model).runtime)
+
+        let denied = await model?.resolveRuntimeApproval(id: commandID, approve: false)
+        XCTAssertEqual(denied, true)
+        fixture.setSnapshot(snapshotData(
+            revision: 12,
+            invocations: [("old-render", "SUCCEEDED")]
+        ))
+        model?.runtime.refresh()
+        await fixture.waitForRevision(12, client: try! XCTUnwrap(model).runtime)
+        XCTAssertEqual(model?.deliveryState, .stale)
+        XCTAssertEqual(model?.attentionCount, 0)
+        model = nil
+
+        let recoveredFixture = RuntimeSnapshotFixture(snapshot: snapshotData(
+            revision: 12,
+            invocations: [("old-render", "SUCCEEDED")]
+        ))
+        let recoveredModel = CockpitModel(
+            socketPath: socketPath,
+            client: recoveredFixture.client(),
+            codex: CodexAppServer(transport: RecordingCodexTransport()),
+            sendCommand: { request in try await commands.send(request) },
+            resolveProject: { _ in throw ZeroError("unused") },
+            userDefaults: defaults
+        )
+        recoveredModel.applicationDidStart()
+        await recoveredFixture.waitUntilLive(recoveredModel.runtime)
+
+        XCTAssertEqual(recoveredModel.deliveryState, .stale)
+        XCTAssertEqual(recoveredModel.attentionCount, 0)
+    }
+
+    func testRecoveredDeliveryRejectsPrefixedButNonExactInvocationID() async {
+        let fixture = RuntimeSnapshotFixture(snapshot: snapshotData(
+            revision: 10,
+            invocations: [("old-render", "SUCCEEDED")]
+        ))
+        let commands = RuntimeCommandRecorder()
+        let model = makeModel(commands: commands, client: fixture.client())
+        model.applicationDidStart()
+        await fixture.waitUntilLive(model.runtime)
+
+        let paused = await model.pauseFocus()
+        XCTAssertTrue(paused)
+        let recordedRequest = await commands.lastRequest()
+        let commandID = try! XCTUnwrap(recordedRequest?.id)
+        fixture.setSnapshot(snapshotData(
+            revision: 11,
+            invocations: [("\(commandID):desk:extra", "SUCCEEDED"), ("old-render", "SUCCEEDED")]
+        ))
+        model.runtime.refresh()
+        await fixture.waitForRevision(11, client: model.runtime)
+
+        XCTAssertEqual(model.deliveryState, .committedLocally)
+
+        fixture.setSnapshot(snapshotData(
+            revision: 12,
+            invocations: [("\(commandID):desk", "SUCCEEDED"), ("old-render", "SUCCEEDED")]
+        ))
+        model.runtime.refresh()
+        await fixture.waitForRevision(12, client: model.runtime)
+        XCTAssertEqual(model.deliveryState, .delivered)
+    }
+
     func testPersistedAmbiguousRetryRecoversOnlyExactExistingDeliveryEvidence() async {
         let suiteName = "CockpitModelTests.\(UUID().uuidString)"
         let defaults = try! XCTUnwrap(UserDefaults(suiteName: suiteName))
