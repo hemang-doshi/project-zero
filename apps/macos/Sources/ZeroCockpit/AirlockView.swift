@@ -1,8 +1,6 @@
 import SwiftUI
 import ZeroKit
 
-func airlockPendingCount(approvals: [String], firings: [String]) -> Int { approvals.count + firings.count }
-
 enum AirlockOrigin: String, Equatable, Sendable {
     case runtime = "PROJECT ZERO"
     case codex = "CODEX"
@@ -11,12 +9,6 @@ enum AirlockOrigin: String, Equatable, Sendable {
 enum AirlockAuthority: Equatable, Sendable {
     case runtime(id: String)
     case codex(id: CodexRequestID)
-}
-
-enum AirlockEvidenceFreshness: Equatable, Sendable {
-    case live
-    case retained
-    case expired
 }
 
 struct AirlockEvidenceField: Identifiable, Equatable, Sendable {
@@ -47,26 +39,7 @@ struct AirlockApprovalItem: Identifiable, Equatable, Sendable {
     let evidence: [AirlockEvidenceField]
     let inputOmitted: Bool
     let displayTruncated: Bool
-    let freshness: AirlockEvidenceFreshness
-    let isExpired: Bool
-    let allowsApprove: Bool
-    let allowsDeny: Bool
     let responseUnavailableReason: String?
-
-    var accessibilitySummary: String {
-        var parts = [
-            "\(origin.rawValue) approval \(requestID)",
-            "action \(action)",
-            "target \(target)"
-        ]
-        if isExpired {
-            parts.append("deadline expired")
-        }
-        if freshness == .retained {
-            parts.append(origin == .runtime ? "retained cached evidence" : "retained in-memory evidence")
-        }
-        return parts.joined(separator: ", ")
-    }
 }
 
 struct AirlockAuditEntry: Identifiable, Equatable, Sendable {
@@ -99,8 +72,7 @@ struct AirlockProjection {
             snapshot: model.snapshot,
             runtimeConnection: model.runtimeConnection,
             codexStore: model.codex.store,
-            codexConnection: model.codexConnection,
-            now: model.clock
+            codexConnection: model.codexConnection
         )
     }
 
@@ -108,14 +80,12 @@ struct AirlockProjection {
         snapshot: CockpitSnapshot?,
         runtimeConnection: RuntimeConnectionState,
         codexStore: CodexEventStore,
-        codexConnection: CodexConnectionState,
-        now: Date = Date()
+        codexConnection: CodexConnectionState
     ) {
         self.snapshot = snapshot
         self.runtimeConnection = runtimeConnection
         self.codexConnection = codexConnection
-        approvals = Self.runtimeApprovals(snapshot, connection: runtimeConnection, now: now)
-            + Self.codexApprovals(codexStore, connection: codexConnection)
+        approvals = Self.runtimeApprovals(snapshot) + Self.codexApprovals(codexStore)
         audit = Self.auditEntries(snapshot)
         policies = Self.policyEntries(snapshot)
     }
@@ -127,44 +97,14 @@ struct AirlockProjection {
     }
     var runtimeIsLive: Bool { runtimeConnection == .live }
     var codexIsConnected: Bool { codexConnection == .connected }
-    var actionableApprovalCount: Int { approvals.filter { canApprove($0) || canDeny($0) }.count }
-
-    var runtimeConnectionLabel: String {
-        let retained = snapshot == nil ? "" : " · CACHED"
-        switch runtimeConnection {
-        case .live: return "ZEROD LIVE"
-        case .connecting: return "ZEROD CONNECTING\(retained)"
-        case .reconnecting: return "ZEROD RECONNECTING\(retained)"
-        case .offline: return "ZEROD OFFLINE\(retained)"
-        }
-    }
-
-    var codexConnectionLabel: String {
-        switch codexConnection {
-        case .connected: return "CODEX CONNECTED"
-        case .connecting: return "CODEX CONNECTING"
-        case .disconnected: return "CODEX DISCONNECTED"
-        case .exited(let status): return "CODEX EXITED \(status)"
-        case .failed: return "CODEX FAILED"
-        }
-    }
 
     func item(selectionID: String?) -> AirlockApprovalItem? {
         guard let selectionID else { return nil }
         return approvals.first { $0.id == selectionID }
     }
 
-    func canApprove(_ item: AirlockApprovalItem) -> Bool {
-        guard item.authority != nil, item.allowsApprove else { return false }
-        switch item.authority {
-        case .runtime: return runtimeIsLive
-        case .codex: return codexIsConnected
-        case nil: return false
-        }
-    }
-
-    func canDeny(_ item: AirlockApprovalItem) -> Bool {
-        guard item.authority != nil, item.allowsDeny else { return false }
+    func canResolve(_ item: AirlockApprovalItem) -> Bool {
+        guard item.responseUnavailableReason == nil else { return false }
         switch item.authority {
         case .runtime: return runtimeIsLive
         case .codex: return codexIsConnected
@@ -183,42 +123,32 @@ struct AirlockProjection {
         }
     }
 
-    private static func runtimeApprovals(
-        _ snapshot: CockpitSnapshot?,
-        connection: RuntimeConnectionState,
-        now: Date
-    ) -> [AirlockApprovalItem] {
+    private static func runtimeApprovals(_ snapshot: CockpitSnapshot?) -> [AirlockApprovalItem] {
         guard let snapshot else { return [] }
         return snapshot.approvals.enumerated().map { index, record in
-            let authorityID = strictRuntimeString(record["id"])
+            let rawID = networkRuntimeText(record, keys: ["id"])
+            let authorityID = rawID.flatMap { $0.isEmpty ? nil : $0 }
             let requestID = authorityID ?? "Unavailable"
-            let actionValue = strictRuntimeString(record["capability"])
-            let targetValue = strictRuntimeString(record["node"])
-            let deadlineValue = strictRuntimeString(record["deadline"])
-            let decisionValue = strictRuntimeString(record["status"])
-            let action = actionValue ?? "Unavailable"
-            let target = targetValue ?? "Unavailable"
-            let deadline = deadlineValue ?? "Unavailable"
-            let decision = decisionValue ?? "Unavailable"
+            let action = networkRuntimeText(record, keys: ["capability"]) ?? "Unavailable"
+            let target = networkRuntimeText(record, keys: ["node"]) ?? "Unavailable"
+            let deadline = networkRuntimeText(record, keys: ["deadline"]) ?? "Unavailable"
+            let decision = networkRuntimeText(record, keys: ["status"]) ?? "Unavailable"
             let omitted = record["input_omitted"].bool == true
-            let parsedDeadline = deadlineValue.flatMap(parseRuntimeDeadline)
-            let identityIsComplete = authorityID != nil && actionValue != nil && targetValue != nil
-                && parsedDeadline != nil && decisionValue == "WAITING_APPROVAL"
-            let expired = parsedDeadline.map { now >= $0 } ?? false
-            let freshness: AirlockEvidenceFreshness
-            if connection != .live { freshness = .retained }
-            else if expired { freshness = .expired }
-            else { freshness = .live }
+            let identityIsComplete = authorityID != nil
+                && action != "Unavailable"
+                && target != "Unavailable"
+                && deadline != "Unavailable"
+                && decision == "WAITING_APPROVAL"
             var evidence = [
                 AirlockEvidenceField("Request ID", requestID, authoritative: true),
-                AirlockEvidenceField("Action", action),
-                AirlockEvidenceField("Target", target),
-                AirlockEvidenceField("Source", "Project Zero · zerod"),
-                AirlockEvidenceField("Deadline", deadline),
-                AirlockEvidenceField("Decision", decision)
+                AirlockEvidenceField("Action", action, authoritative: true),
+                AirlockEvidenceField("Target", target, authoritative: true),
+                AirlockEvidenceField("Source", "Project Zero · zerod", authoritative: true),
+                AirlockEvidenceField("Deadline", deadline, authoritative: true),
+                AirlockEvidenceField("Decision", decision, authoritative: true)
             ]
             if let hash = networkRuntimeText(record, keys: ["hash"]) {
-                evidence.append(AirlockEvidenceField("Invocation hash", hash))
+                evidence.append(AirlockEvidenceField("Invocation hash", hash, authoritative: true))
             }
             if case .object(let input) = record["input"] {
                 for (ordinal, key) in input.keys.sorted().enumerated() {
@@ -236,78 +166,59 @@ struct AirlockProjection {
                 source: "Project Zero · zerod",
                 deadline: deadline,
                 decision: decision,
-                detail: runtimeDetail(connection: connection, expired: expired, omitted: omitted),
+                detail: omitted
+                    ? "The daemon retained the full invocation. This bounded display projection omits one or more input fields."
+                    : "The daemon is holding this exact invocation for an explicit owner decision.",
                 authority: identityIsComplete ? authorityID.map(AirlockAuthority.runtime(id:)) : nil,
                 evidence: evidence,
                 inputOmitted: omitted,
                 displayTruncated: false,
-                freshness: freshness,
-                isExpired: expired,
-                allowsApprove: identityIsComplete && !expired,
-                allowsDeny: identityIsComplete,
-                responseUnavailableReason: identityIsComplete
-                    ? nil
-                    : "Required runtime identity, state, or RFC3339 deadline fields are unavailable or have the wrong type."
+                responseUnavailableReason: identityIsComplete ? nil : "Required authoritative identity fields are unavailable."
             )
         }
     }
 
-    private static func codexApprovals(
-        _ store: CodexEventStore,
-        connection: CodexConnectionState
-    ) -> [AirlockApprovalItem] {
+    private static func codexApprovals(_ store: CodexEventStore) -> [AirlockApprovalItem] {
         store.approvals.map { approval in
             let requestID = codexRequestLabel(approval.id)
             let params = approval.params
-            let threadID = strictCodexString(params["threadId"])
-            let turnID = strictCodexString(params["turnId"])
-            let itemID = strictCodexString(params["itemId"])
-            let startedAtMS = params["startedAtMs"].integer.flatMap { $0 >= 0 ? $0 : nil }
+            let threadID = codexScalarText(params["threadId"])
+            let turnID = codexScalarText(params["turnId"])
+            let itemID = codexScalarText(params["itemId"])
             let command = boundedCodexText(params["command"].string)
             let cwd = boundedCodexText(params["cwd"].string)
             let grantRoot = boundedCodexText(params["grantRoot"].string)
             let reason = boundedCodexText(params["reason"].string)
             let target = command.value ?? grantRoot.value ?? cwd.value ?? itemID ?? "Unavailable"
             let source = threadID.map { "Codex app-server · thread \($0)" } ?? "Codex app-server"
-            let methodValidation = validateCodexParams(method: approval.method, params: params)
-            let advertised = advertisedDecisions(method: approval.method, params: params)
             var evidence = [
                 AirlockEvidenceField("Request ID", requestID, authoritative: true),
                 AirlockEvidenceField("Action", approval.method, authoritative: true),
-                AirlockEvidenceField("Target", target),
-                AirlockEvidenceField("Source", source),
-                AirlockEvidenceField("Deadline", "Not supplied by app-server"),
-                AirlockEvidenceField("Decision", "AWAITING_RESPONSE")
+                AirlockEvidenceField("Target", target, authoritative: true),
+                AirlockEvidenceField("Source", source, authoritative: true),
+                AirlockEvidenceField("Deadline", "Not supplied by app-server", authoritative: true),
+                AirlockEvidenceField("Decision", "AWAITING_RESPONSE", authoritative: true)
             ]
             for (label, value) in [
                 ("Thread ID", threadID), ("Turn ID", turnID), ("Item ID", itemID),
-                ("Started at (ms)", startedAtMS.map(String.init)),
                 ("Working directory", cwd.value), ("Grant root", grantRoot.value),
                 ("Command", command.value), ("Reason", reason.value),
-                ("Kind", strictCodexString(params["kind"])),
-                ("Approval callback", strictCodexString(params["approvalId"])),
-                ("Environment ID", strictCodexString(params["environmentId"]))
+                ("Kind", codexScalarText(params["kind"])),
+                ("Approval callback", codexScalarText(params["approvalId"])),
+                ("Network host", codexScalarText(params["networkApprovalContext"]["host"]))
             ] {
                 if let value { evidence.append(AirlockEvidenceField(label, value)) }
             }
-            for (label, key) in [
-                ("Additional permissions", "additionalPermissions"),
-                ("Available decisions", "availableDecisions"),
-                ("Command actions", "commandActions"),
-                ("Proposed execpolicy amendment", "proposedExecpolicyAmendment"),
-                ("Proposed network policy amendments", "proposedNetworkPolicyAmendments"),
-                ("Network approval context", "networkApprovalContext")
-            ] where params[key] != .null {
-                evidence.append(AirlockEvidenceField(label, canonicalCodexJSON(params[key])))
-            }
-            evidence.append(AirlockEvidenceField("Full request parameters", canonicalCodexJSON(params)))
             let truncated = command.truncated || cwd.truncated || grantRoot.truncated || reason.truncated
             let supportsBinaryDecision = codexDecisionResponse(method: approval.method, approve: true) != nil
-            let canAnswer = supportsBinaryDecision && methodValidation == nil
-                && threadID != nil && turnID != nil && itemID != nil && startedAtMS != nil
+            let canAnswer = supportsBinaryDecision
+                && target != "Unavailable"
+                && !truncated
             let unavailableReason: String?
-            if let methodValidation {
-                unavailableReason = methodValidation
+            if truncated {
+                unavailableReason = "Open the originating Zero Bot item to review the complete request before responding."
+            } else if target == "Unavailable" {
+                unavailableReason = "The request target is unavailable, so Airlock cannot present a safe decision."
             } else if !canAnswer {
                 unavailableReason = "Respond in Zero Bot with the method-specific workflow."
             } else {
@@ -322,306 +233,16 @@ struct AirlockProjection {
                 source: source,
                 deadline: "Not supplied by app-server",
                 decision: "AWAITING_RESPONSE",
-                detail: codexDetail(connection: connection, advertised: advertised, supported: supportsBinaryDecision),
-                authority: canAnswer ? .codex(id: approval.id) : nil,
+                detail: supportsBinaryDecision
+                    ? "Codex is paused at this exact JSON-RPC request until the owner answers."
+                    : "This request uses a method-specific response schema and cannot be safely answered by Airlock's binary decision controls.",
+                authority: .codex(id: approval.id),
                 evidence: evidence,
                 inputOmitted: false,
                 displayTruncated: truncated,
-                freshness: connection == .connected ? .live : .retained,
-                isExpired: false,
-                allowsApprove: canAnswer && advertised.approve,
-                allowsDeny: canAnswer && advertised.deny,
                 responseUnavailableReason: unavailableReason
             )
         }
-    }
-
-    private struct CodexDecisionAvailability {
-        let approve: Bool
-        let deny: Bool
-    }
-
-    private static func strictRuntimeString(_ value: RuntimeValue) -> String? {
-        guard case .string(let text) = value, !text.isEmpty else { return nil }
-        return text
-    }
-
-    private static func strictCodexString(_ value: CodexJSON) -> String? {
-        guard case .string(let text) = value, !text.isEmpty else { return nil }
-        return text
-    }
-
-    private static func parseRuntimeDeadline(_ value: String) -> Date? {
-        let fractional = ISO8601DateFormatter()
-        fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        if let date = fractional.date(from: value) { return date }
-        let wholeSeconds = ISO8601DateFormatter()
-        wholeSeconds.formatOptions = [.withInternetDateTime]
-        return wholeSeconds.date(from: value)
-    }
-
-    private static func runtimeDetail(
-        connection: RuntimeConnectionState,
-        expired: Bool,
-        omitted: Bool
-    ) -> String {
-        if expired, connection != .live {
-            return "The approval deadline has passed. This is retained snapshot evidence while \(runtimeConnectionDescription(connection)). Runtime actions are disabled until a fresh live snapshot arrives; the retained WAITING_APPROVAL row is not treated as a terminal denial."
-        }
-        if connection != .live {
-            return "This is retained snapshot evidence while \(runtimeConnectionDescription(connection)). Runtime actions are disabled until a fresh live snapshot arrives."
-        }
-        if expired {
-            return "The approval deadline has passed. Approval is disabled; the daemon's exact deny operation remains available for this retained WAITING_APPROVAL row, which is not treated as a terminal denial."
-        }
-        if omitted {
-            return "The live daemon retained the full invocation. This bounded display projection omits one or more input fields; actions route only the exact request ID."
-        }
-        return "The live daemon is holding this exact invocation for an explicit owner decision."
-    }
-
-    private static func runtimeConnectionDescription(_ connection: RuntimeConnectionState) -> String {
-        switch connection {
-        case .live: return "zerod is live"
-        case .connecting: return "zerod is connecting"
-        case .reconnecting: return "zerod is reconnecting"
-        case .offline: return "zerod is offline"
-        }
-    }
-
-    private static func codexDetail(
-        connection: CodexConnectionState,
-        advertised: CodexDecisionAvailability,
-        supported: Bool
-    ) -> String {
-        guard connection == .connected else {
-            return "This is retained in-memory request evidence while \(codexConnectionDescription(connection)). Responses are disabled until the same app-server connection is live."
-        }
-        guard supported else {
-            return "This request uses a method-specific response schema and cannot be answered by Airlock's exact accept/decline controls."
-        }
-        if !advertised.approve || !advertised.deny {
-            return "Codex is paused at this exact JSON-RPC request. Only decisions advertised by this request are enabled below."
-        }
-        return "Codex is paused at this exact JSON-RPC request until the owner answers."
-    }
-
-    private static func codexConnectionDescription(_ connection: CodexConnectionState) -> String {
-        switch connection {
-        case .connected: return "Codex is connected"
-        case .connecting: return "Codex is connecting"
-        case .disconnected: return "Codex is disconnected"
-        case .exited(let status): return "Codex exited with status \(status)"
-        case .failed: return "Codex failed"
-        }
-    }
-
-    private static func advertisedDecisions(method: String, params: CodexJSON) -> CodexDecisionAvailability {
-        guard method == "item/commandExecution/requestApproval" else {
-            return CodexDecisionAvailability(
-                approve: method == "item/fileChange/requestApproval",
-                deny: method == "item/fileChange/requestApproval"
-            )
-        }
-        switch params["availableDecisions"] {
-        case .null:
-            // The field is nullable for compatibility; the method's response schema
-            // itself advertises exact accept and decline variants.
-            return CodexDecisionAvailability(approve: true, deny: true)
-        case .array(let decisions):
-            return CodexDecisionAvailability(
-                approve: decisions.contains(.string("accept")),
-                deny: decisions.contains(.string("decline"))
-            )
-        default:
-            return CodexDecisionAvailability(approve: false, deny: false)
-        }
-    }
-
-    private static func validateCodexParams(method: String, params: CodexJSON) -> String? {
-        guard case .object = params else {
-            return "The Codex request parameters are not an object. The request is display-only."
-        }
-        guard strictCodexString(params["threadId"]) != nil,
-              strictCodexString(params["turnId"]) != nil,
-              strictCodexString(params["itemId"]) != nil,
-              let startedAt = params["startedAtMs"].integer,
-              startedAt >= 0 else {
-            return "Required Codex thread, turn, item, or start-time fields are missing or have the wrong type."
-        }
-        switch method {
-        case "item/commandExecution/requestApproval":
-            guard optionalString(params["command"]),
-                  optionalString(params["cwd"]),
-                  optionalString(params["environmentId"]),
-                  optionalString(params["reason"]),
-                  optionalString(params["approvalId"]),
-                  validCommandKind(params["kind"]),
-                  validAdditionalPermissions(params["additionalPermissions"]),
-                  validAvailableDecisions(params["availableDecisions"]),
-                  validCommandActions(params["commandActions"]),
-                  validStringArray(params["proposedExecpolicyAmendment"]),
-                  validNetworkAmendments(params["proposedNetworkPolicyAmendments"]),
-                  validNetworkContext(params["networkApprovalContext"]) else {
-                return "One or more command approval fields do not match the advertised app-server schema."
-            }
-            return nil
-        case "item/fileChange/requestApproval":
-            guard optionalString(params["grantRoot"]), optionalString(params["reason"]) else {
-                return "One or more file-change approval fields do not match the advertised app-server schema."
-            }
-            return nil
-        default:
-            return "Airlock has no exact response schema for this Codex request method."
-        }
-    }
-
-    private static func optionalString(_ value: CodexJSON) -> Bool {
-        switch value { case .null, .string: return true; default: return false }
-    }
-
-    private static func validCommandKind(_ value: CodexJSON) -> Bool {
-        switch value {
-        case .null: return true
-        case .string(let kind): return kind == "command" || kind == "writeStdin"
-        default: return false
-        }
-    }
-
-    private static func validAdditionalPermissions(_ value: CodexJSON) -> Bool {
-        guard case .object(let profile) = value else { return value == .null }
-        return validFileSystemPermissions(profile["fileSystem"] ?? .null)
-            && validNetworkPermissions(profile["network"] ?? .null)
-    }
-
-    private static func validFileSystemPermissions(_ value: CodexJSON) -> Bool {
-        guard case .object(let permissions) = value else { return value == .null }
-        guard validStringArray(permissions["read"] ?? .null),
-              validStringArray(permissions["write"] ?? .null),
-              validFileSystemEntries(permissions["entries"] ?? .null) else { return false }
-        switch permissions["globScanMaxDepth"] ?? .null {
-        case .null: return true
-        case .integer(let depth): return depth >= 1
-        default: return false
-        }
-    }
-
-    private static func validFileSystemEntries(_ value: CodexJSON) -> Bool {
-        guard case .array(let entries) = value else { return value == .null }
-        return entries.allSatisfy { entry in
-            guard case .object(let fields) = entry,
-                  case .string(let access) = fields["access"],
-                  ["read", "write", "deny"].contains(access),
-                  let path = fields["path"] else { return false }
-            return validFileSystemPath(path)
-        }
-    }
-
-    private static func validFileSystemPath(_ value: CodexJSON) -> Bool {
-        guard case .object(let fields) = value, case .string(let type) = fields["type"] else { return false }
-        switch type {
-        case "path": return strictCodexString(fields["path"] ?? .null) != nil
-        case "glob_pattern": return strictCodexString(fields["pattern"] ?? .null) != nil
-        case "special": return validSpecialPath(fields["value"] ?? .null)
-        default: return false
-        }
-    }
-
-    private static func validSpecialPath(_ value: CodexJSON) -> Bool {
-        guard case .object(let fields) = value, case .string(let kind) = fields["kind"] else { return false }
-        switch kind {
-        case "root", "minimal", "tmpdir", "slash_tmp": return true
-        case "project_roots": return optionalString(fields["subpath"] ?? .null)
-        case "unknown":
-            return strictCodexString(fields["path"] ?? .null) != nil
-                && optionalString(fields["subpath"] ?? .null)
-        default: return false
-        }
-    }
-
-    private static func validNetworkPermissions(_ value: CodexJSON) -> Bool {
-        guard case .object(let permissions) = value else { return value == .null }
-        switch permissions["enabled"] ?? .null {
-        case .null, .bool: return true
-        default: return false
-        }
-    }
-
-    private static func validAvailableDecisions(_ value: CodexJSON) -> Bool {
-        guard case .array(let decisions) = value else { return value == .null }
-        return decisions.allSatisfy(validDecision)
-    }
-
-    private static func validDecision(_ value: CodexJSON) -> Bool {
-        if case .string(let decision) = value {
-            return ["accept", "acceptForSession", "decline", "cancel"].contains(decision)
-        }
-        guard case .object(let fields) = value else { return false }
-        if case .object(let amendment) = fields["acceptWithExecpolicyAmendment"] {
-            return validRequiredStringArray(amendment["execpolicy_amendment"] ?? .null)
-        }
-        if case .object(let wrapper) = fields["applyNetworkPolicyAmendment"] {
-            return validNetworkAmendment(wrapper["network_policy_amendment"] ?? .null)
-        }
-        return false
-    }
-
-    private static func validCommandActions(_ value: CodexJSON) -> Bool {
-        guard case .array(let actions) = value else { return value == .null }
-        return actions.allSatisfy { action in
-            guard case .object(let fields) = action,
-                  let type = strictCodexString(fields["type"] ?? .null),
-                  strictCodexString(fields["command"] ?? .null) != nil else { return false }
-            switch type {
-            case "read":
-                return strictCodexString(fields["name"] ?? .null) != nil
-                    && strictCodexString(fields["path"] ?? .null) != nil
-            case "listFiles": return optionalString(fields["path"] ?? .null)
-            case "search":
-                return optionalString(fields["path"] ?? .null)
-                    && optionalString(fields["query"] ?? .null)
-            case "unknown": return true
-            default: return false
-            }
-        }
-    }
-
-    private static func validStringArray(_ value: CodexJSON) -> Bool {
-        guard case .array(let values) = value else { return value == .null }
-        return values.allSatisfy { if case .string = $0 { return true }; return false }
-    }
-
-    private static func validRequiredStringArray(_ value: CodexJSON) -> Bool {
-        guard case .array(let values) = value else { return false }
-        return values.allSatisfy { if case .string = $0 { return true }; return false }
-    }
-
-    private static func validNetworkAmendments(_ value: CodexJSON) -> Bool {
-        guard case .array(let amendments) = value else { return value == .null }
-        return amendments.allSatisfy(validNetworkAmendment)
-    }
-
-    private static func validNetworkAmendment(_ value: CodexJSON) -> Bool {
-        guard case .object(let fields) = value,
-              let host = strictCodexString(fields["host"] ?? .null), !host.isEmpty,
-              case .string(let action) = fields["action"] else { return false }
-        return action == "allow" || action == "deny"
-    }
-
-    private static func validNetworkContext(_ value: CodexJSON) -> Bool {
-        guard case .object(let fields) = value,
-              strictCodexString(fields["host"] ?? .null) != nil,
-              case .string(let networkProtocol) = fields["protocol"] else { return value == .null }
-        return ["http", "https", "socks5Tcp", "socks5Udp"].contains(networkProtocol)
-    }
-
-    private static func canonicalCodexJSON(_ value: CodexJSON) -> String {
-        guard let encoded = try? JSONEncoder().encode(value),
-              let object = try? JSONSerialization.jsonObject(with: encoded),
-              let canonical = try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys, .withoutEscapingSlashes]) else {
-            return "Unavailable"
-        }
-        return String(decoding: canonical, as: UTF8.self)
     }
 
     private static func auditEntries(_ snapshot: CockpitSnapshot?) -> [AirlockAuditEntry] {
@@ -668,6 +289,16 @@ struct AirlockProjection {
         }
     }
 
+    private static func codexScalarText(_ value: CodexJSON) -> String? {
+        switch value {
+        case .string(let text): return text.isEmpty ? nil : text
+        case .integer(let number): return String(number)
+        case .number(let number): return String(number)
+        case .bool(let value): return value ? "true" : "false"
+        default: return nil
+        }
+    }
+
     private static func boundedCodexText(_ value: String?, limit: Int = 8_192) -> (value: String?, truncated: Bool) {
         guard let value, !value.isEmpty else { return (nil, false) }
         guard value.utf8.count > limit else { return (value, false) }
@@ -679,25 +310,10 @@ struct AirlockProjection {
 
 public struct AirlockView: View {
     @ObservedObject private var model: CockpitModel
-    @ObservedObject private var tick: CockpitClockSource
-    @State private var inspectorPanel: PanelSelection = .primary
 
-    public init(model: CockpitModel) {
-        self.model = model
-        _tick = ObservedObject(wrappedValue: model.clockSource)
-    }
+    public init(model: CockpitModel) { self.model = model }
 
-    /// Deadline countdowns read the narrow clock publisher: only Airlock
-    /// re-evaluates per second, not every route sharing the model.
-    private var projection: AirlockProjection {
-        AirlockProjection(
-            snapshot: model.snapshot,
-            runtimeConnection: model.runtimeConnection,
-            codexStore: model.codex.store,
-            codexConnection: model.codexConnection,
-            now: tick.now
-        )
-    }
+    private var projection: AirlockProjection { AirlockProjection(model: model) }
 
     public var body: some View {
         GeometryReader { proxy in
@@ -705,7 +321,7 @@ public struct AirlockView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
                     header(wide: wide)
-                    statsRow(columns: proxy.size.width >= 900 ? 4 : (proxy.size.width >= 620 ? 2 : 1))
+                    metrics(columns: proxy.size.width >= 900 ? 4 : (proxy.size.width >= 620 ? 2 : 1))
                     approvalWorkspace(wide: wide)
                     lowerEvidence(wide: wide)
                 }
@@ -721,11 +337,10 @@ public struct AirlockView: View {
     @ViewBuilder
     private func header(wide: Bool) -> some View {
         let heading = VStack(alignment: .leading, spacing: 7) {
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
+            HStack(spacing: 8) {
                 Text("Airlock: Local Boundary & Outbound Egress Gate")
                     .font(.title2.weight(.black))
                     .tracking(-0.6)
-                    .lineSpacing(2)
                     .fixedSize(horizontal: false, vertical: true)
                 ZeroStatusBadge(
                     "EXPLICIT LOCAL AUTHORITY",
@@ -733,21 +348,21 @@ public struct AirlockView: View {
                     tone: .error
                 )
             }
-            Text("Every visible live or retained request remains attached to its original authority ID. Display-only summaries never become action payloads.")
+            Text("Every pending runtime invocation and Codex approval remains attached to its original authority ID. Display-only summaries never become action payloads.")
                 .font(.body)
                 .foregroundStyle(ZeroTheme.secondaryInk)
                 .fixedSize(horizontal: false, vertical: true)
         }
         let statuses = HStack(spacing: 7) {
             ZeroStatusBadge(
-                projection.runtimeConnectionLabel,
-                symbol: runtimeConnectionSymbol,
-                tone: runtimeConnectionTone
+                projection.runtimeIsLive ? "ZEROD LIVE" : "ZEROD OFFLINE",
+                symbol: projection.runtimeIsLive ? "checkmark.circle.fill" : "wifi.slash",
+                tone: projection.runtimeIsLive ? .healthy : .error
             )
             ZeroStatusBadge(
-                projection.codexConnectionLabel,
+                projection.codexIsConnected ? "CODEX CONNECTED" : "CODEX DISCONNECTED",
                 symbol: projection.codexIsConnected ? "bolt.horizontal.circle.fill" : "bolt.slash",
-                tone: codexConnectionTone
+                tone: projection.codexIsConnected ? .healthy : .neutral
             )
         }
         if wide {
@@ -760,39 +375,37 @@ public struct AirlockView: View {
         }
     }
 
-    private func statsRow(columns: Int) -> some View {
-        // Count directly from the projection arrays: every bounded approval and
-        // firing row is pending evidence, whether or not it carries display IDs.
-        let pending = airlockPendingCount(
-            approvals: projection.approvals.map(\.id),
-            firings: projection.snapshot?.firings.indices.map { "firing-\($0)" } ?? []
-        )
-        return LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: columns), spacing: 10) {
-            statCell(value: "\(pending)", label: "PENDING")
-            statCell(value: String(projection.runtimeApprovalCount), label: "PROJECT ZERO")
-            statCell(value: String(projection.codexApprovalCount), label: "CODEX")
-            statCell(
+    private func metrics(columns: Int) -> some View {
+        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: columns), spacing: 10) {
+            NetworkFlightMetricCard(
+                label: "Pending requests",
+                value: projection.approvalCountLabel,
+                detail: projection.approvals.isEmpty ? "No exact owner decisions are waiting" : "Exact decisions currently requiring attention",
+                badge: projection.approvals.isEmpty ? "CLEAR" : "LOCAL OWNER",
+                tone: projection.approvals.isEmpty ? .healthy : .error
+            )
+            NetworkFlightMetricCard(
+                label: "Project Zero",
+                value: String(projection.runtimeApprovalCount),
+                detail: projection.runtimeIsLive ? "Current zerod projection" : "Retained snapshot; actions disabled",
+                badge: projection.runtimeIsLive ? "LIVE" : "OFFLINE",
+                tone: projection.runtimeIsLive ? .healthy : .error
+            )
+            NetworkFlightMetricCard(
+                label: "Codex callbacks",
+                value: String(projection.codexApprovalCount),
+                detail: projection.codexIsConnected ? "Independent live app-server requests" : "No connected Codex authority",
+                badge: projection.codexIsConnected ? "CONNECTED" : "SEPARATE",
+                tone: projection.codexIsConnected ? .attention : .neutral
+            )
+            NetworkFlightMetricCard(
+                label: "Audited decisions",
                 value: "\(projection.audit.count)\(projection.snapshot?.truncated["audit"] == true ? "+" : "")",
-                label: "AUDITED"
+                detail: "Bounded durable approval decisions",
+                badge: projection.snapshot?.truncated["audit"] == true ? "LOWER BOUND" : "BOUNDED",
+                tone: .neutral
             )
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel("Airlock pending stats")
-    }
-
-    private func statCell(value: String, label: String) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(value)
-                .font(.headline.monospaced())
-                .lineSpacing(2)
-                .fixedSize(horizontal: false, vertical: true)
-            Text(label)
-                .font(.caption2.weight(.bold).monospaced())
-                .foregroundStyle(ZeroTheme.secondaryInk)
-                .lineSpacing(2)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     @ViewBuilder
@@ -800,21 +413,12 @@ public struct AirlockView: View {
         if wide {
             HStack(alignment: .top, spacing: 14) {
                 approvalQueue.frame(maxWidth: .infinity, alignment: .top)
-                ResizablePane(.inspector(key: "airlock.inspector", defaultWidth: 390)) {
-                    PanelHost(selected: $inspectorPanel, options: [.primary]) { _ in
-                        VStack(alignment: .leading, spacing: 8) {
-                            InspectorPopoutButton(kind: .airlock)
-                            InspectorView(model: model)
-                        }
-                    }
-                }
+                InspectorView(model: model).frame(width: 390, alignment: .top)
             }
         } else {
             VStack(alignment: .leading, spacing: 14) {
                 approvalQueue
-                PanelHost(selected: $inspectorPanel, options: [.primary]) { _ in
-                    InspectorView(model: model)
-                }
+                InspectorView(model: model)
             }
         }
     }
@@ -824,7 +428,7 @@ public struct AirlockView: View {
             VStack(alignment: .leading, spacing: 12) {
                 NetworkFlightSectionHeader(
                     "Outbound & Tool Boundary Requests",
-                    badge: projection.approvalCountLabel + " VISIBLE"
+                    badge: projection.approvalCountLabel + " PENDING"
                 )
                 if projection.approvals.isEmpty {
                     NetworkFlightEmptyState(
@@ -848,14 +452,8 @@ public struct AirlockView: View {
     }
 
     private var emptyApprovalDetail: String {
-        if projection.runtimeConnection == .connecting {
-            return "zerod is connecting. No current runtime decision can be inferred from an empty projection."
-        }
-        if projection.runtimeConnection == .reconnecting {
-            return "zerod is reconnecting. No current runtime decision can be inferred from an empty projection."
-        }
         if !projection.runtimeIsLive && !projection.codexIsConnected {
-            return "Neither authority channel is live. No pending decision can be inferred."
+            return "Both authority channels are disconnected. No pending decision can be inferred."
         }
         if !projection.runtimeIsLive {
             return "zerod is offline. Connected Codex approvals would still appear independently here."
@@ -865,7 +463,7 @@ public struct AirlockView: View {
 
     private func approvalCard(_ item: AirlockApprovalItem) -> some View {
         VStack(alignment: .leading, spacing: 11) {
-            HStack(alignment: .firstTextBaseline, spacing: 9) {
+            HStack(alignment: .top, spacing: 9) {
                 Image(systemName: item.origin == .runtime ? "lock.shield.fill" : "terminal.fill")
                     .font(.headline)
                     .foregroundStyle(item.origin == .runtime ? ZeroTheme.orangePressed : ZeroTone.attention.color)
@@ -873,23 +471,15 @@ public struct AirlockView: View {
                 VStack(alignment: .leading, spacing: 3) {
                     Text(item.action)
                         .font(.headline.monospaced())
-                        .lineSpacing(2)
                         .textSelection(.enabled)
                     Text(item.target)
                         .font(.caption.monospaced())
                         .foregroundStyle(ZeroTheme.secondaryInk)
-                        .lineSpacing(2)
                         .textSelection(.enabled)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer(minLength: 8)
-                VStack(alignment: .trailing, spacing: 5) {
-                    ZeroStatusBadge(item.origin.rawValue, tone: item.origin == .runtime ? .authority : .attention)
-                    ZeroStatusBadge(freshnessLabel(item), tone: freshnessTone(item))
-                    if item.isExpired, item.freshness != .expired {
-                        ZeroStatusBadge("EXPIRED", tone: .error)
-                    }
-                }
+                ZeroStatusBadge(item.origin.rawValue, tone: item.origin == .runtime ? .authority : .attention)
             }
 
             LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], alignment: .leading, spacing: 8) {
@@ -932,7 +522,7 @@ public struct AirlockView: View {
                               lineWidth: model.selection.inspectionID == item.id ? 2 : 1)
         }
         .accessibilityElement(children: .contain)
-        .accessibilityLabel(item.accessibilitySummary)
+        .accessibilityLabel("\(item.origin.rawValue) approval \(item.requestID), action \(item.action), target \(item.target)")
     }
 
     @ViewBuilder
@@ -944,48 +534,8 @@ public struct AirlockView: View {
         }
         .buttonStyle(ZeroButtonStyle(.standard, selected: model.selection.inspectionID == item.id))
         .focusEffectDisabled()
-    }
 
-    private var runtimeConnectionTone: ZeroTone {
-        switch projection.runtimeConnection {
-        case .live: return .healthy
-        case .connecting, .reconnecting: return .attention
-        case .offline: return .error
-        }
-    }
-
-    private var runtimeConnectionSymbol: String {
-        switch projection.runtimeConnection {
-        case .live: return "checkmark.circle.fill"
-        case .connecting: return "ellipsis.circle.fill"
-        case .reconnecting: return "arrow.triangle.2.circlepath.circle.fill"
-        case .offline: return "wifi.slash"
-        }
-    }
-
-    private var codexConnectionTone: ZeroTone {
-        switch projection.codexConnection {
-        case .connected: return .healthy
-        case .connecting: return .attention
-        case .disconnected: return .neutral
-        case .exited, .failed: return .error
-        }
-    }
-
-    private func freshnessLabel(_ item: AirlockApprovalItem) -> String {
-        switch item.freshness {
-        case .live: return "LIVE REQUEST"
-        case .retained: return "CACHED EVIDENCE"
-        case .expired: return "EXPIRED"
-        }
-    }
-
-    private func freshnessTone(_ item: AirlockApprovalItem) -> ZeroTone {
-        switch item.freshness {
-        case .live: return .healthy
-        case .retained: return .neutral
-        case .expired: return .error
-        }
+        AirlockDecisionControls(model: model, projection: projection, item: item)
     }
 
     private func authorityDatum(_ label: String, _ value: String) -> some View {
@@ -993,17 +543,16 @@ public struct AirlockView: View {
             Text(label)
                 .font(.caption2.weight(.bold).monospaced())
                 .foregroundStyle(ZeroTheme.secondaryInk)
-                .lineSpacing(2)
             ScrollView(.horizontal, showsIndicators: false) {
                 Text(value)
                     .font(.caption.monospaced())
-                    .lineSpacing(2)
                     .textSelection(.enabled)
                     .fixedSize()
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.vertical, 4)
+        .padding(8)
+        .background(ZeroTheme.navigation.opacity(0.5), in: RoundedRectangle(cornerRadius: 5))
     }
 
     @ViewBuilder
@@ -1011,9 +560,7 @@ public struct AirlockView: View {
         if wide {
             HStack(alignment: .top, spacing: 14) {
                 auditLedger.frame(maxWidth: .infinity)
-                ResizablePane(.explorer(key: "airlock.policy", defaultWidth: 330)) {
-                    policyPanel
-                }
+                policyPanel.frame(width: 330)
             }
         } else {
             VStack(alignment: .leading, spacing: 14) { auditLedger; policyPanel }
@@ -1021,39 +568,28 @@ public struct AirlockView: View {
     }
 
     private var auditLedger: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            NetworkFlightSectionHeader("Historical Approval Ledger", badge: "\(projection.audit.count) VISIBLE")
-            if projection.audit.isEmpty {
-                NetworkFlightEmptyState(
-                    symbol: "clock.arrow.circlepath",
-                    title: "No approval decisions in bounded history",
-                    detail: projection.runtimeIsLive ? "The current snapshot contains no matching durable audit rows." : "Runtime history is unavailable while no retained snapshot is present."
-                )
-            } else {
-                ScrollView(.horizontal, showsIndicators: true) {
-                    LazyVStack(spacing: 0) {
-                        auditRow(time: "TIME", action: "ACTION", target: "TARGET", actor: "ACTOR", decision: "OUTCOME", evidence: "EVIDENCE", header: true)
-                        ForEach(projection.audit.prefix(100)) {
-                            auditRow(time: $0.time, action: $0.action, target: $0.target, actor: $0.actor, decision: $0.decision, evidence: $0.evidence)
+        NetworkFlightPanel {
+            VStack(alignment: .leading, spacing: 10) {
+                NetworkFlightSectionHeader("Historical Approval Ledger", badge: "\(projection.audit.count) VISIBLE")
+                if projection.audit.isEmpty {
+                    NetworkFlightEmptyState(
+                        symbol: "clock.arrow.circlepath",
+                        title: "No approval decisions in bounded history",
+                        detail: projection.runtimeIsLive ? "The current snapshot contains no matching durable audit rows." : "Runtime history is unavailable while no retained snapshot is present."
+                    )
+                } else {
+                    ScrollView(.horizontal, showsIndicators: true) {
+                        LazyVStack(spacing: 0) {
+                            auditRow(time: "TIME", action: "ACTION", target: "TARGET", actor: "ACTOR", decision: "OUTCOME", evidence: "EVIDENCE", header: true)
+                            ForEach(projection.audit) {
+                                auditRow(time: $0.time, action: $0.action, target: $0.target, actor: $0.actor, decision: $0.decision, evidence: $0.evidence)
+                            }
                         }
-                        if projection.audit.count > 100 {
-                            Text("+\(projection.audit.count - 100) more audit rows in the bounded snapshot")
-                                .font(.zeroMono(size: 9, weight: .medium))
-                                .foregroundStyle(ZeroTheme.secondaryInk)
-                                .padding(.vertical, 6)
-                        }
+                        .frame(minWidth: 800)
                     }
-                    .frame(minWidth: 800)
                 }
             }
-            if projection.snapshot?.truncated["audit"] == true {
-                disclosureNotice(
-                    "The daemon reports additional audit decisions beyond this bounded projection. The visible count is a lower bound.",
-                    tone: .attention
-                )
-            }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private func auditRow(time: String, action: String, target: String, actor: String, decision: String, evidence: String, header: Bool = false) -> some View {
@@ -1081,32 +617,34 @@ public struct AirlockView: View {
     }
 
     private var policyPanel: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            NetworkFlightSectionHeader("Runtime Policies", badge: "READ-ONLY")
-            if projection.policies.isEmpty {
-                NetworkFlightEmptyState(
-                    symbol: "checklist.unchecked",
-                    title: "No policies projected",
-                    detail: "Airlock does not fabricate boundary rules or expose an unsupported create-policy control."
-                )
-            } else {
-                ForEach(projection.policies) { policy in
-                    HStack(alignment: .firstTextBaseline, spacing: 9) {
-                        Image(systemName: policy.enabled ? "checkmark.shield.fill" : "shield.slash")
-                            .foregroundStyle(policy.enabled ? ZeroTone.healthy.color : ZeroTheme.secondaryInk)
-                            .accessibilityHidden(true)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(policy.id).font(.caption.weight(.bold).monospaced()).lineSpacing(2).textSelection(.enabled)
-                            Text(policy.status).font(.caption2.monospaced()).foregroundStyle(ZeroTheme.secondaryInk).lineSpacing(2)
+        NetworkFlightPanel {
+            VStack(alignment: .leading, spacing: 10) {
+                NetworkFlightSectionHeader("Runtime Policies", badge: "READ-ONLY")
+                if projection.policies.isEmpty {
+                    NetworkFlightEmptyState(
+                        symbol: "checklist.unchecked",
+                        title: "No policies projected",
+                        detail: "Airlock does not fabricate boundary rules or expose an unsupported create-policy control."
+                    )
+                } else {
+                    ForEach(projection.policies) { policy in
+                        HStack(spacing: 9) {
+                            Image(systemName: policy.enabled ? "checkmark.shield.fill" : "shield.slash")
+                                .foregroundStyle(policy.enabled ? ZeroTone.healthy.color : ZeroTheme.secondaryInk)
+                                .accessibilityHidden(true)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(policy.id).font(.caption.weight(.bold).monospaced()).textSelection(.enabled)
+                                Text(policy.status).font(.caption2.monospaced()).foregroundStyle(ZeroTheme.secondaryInk)
+                            }
+                            Spacer()
+                            ZeroStatusBadge(policy.enabled ? "ENABLED" : policy.status, tone: policy.enabled ? .healthy : .neutral)
                         }
-                        Spacer()
-                        ZeroStatusBadge(policy.enabled ? "ENABLED" : policy.status, tone: policy.enabled ? .healthy : .neutral)
+                        .padding(10)
+                        .background(ZeroTheme.navigation.opacity(0.45), in: RoundedRectangle(cornerRadius: 7))
                     }
-                    .padding(.vertical, 6)
                 }
             }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private func disclosureNotice(_ message: String, tone: ZeroTone) -> some View {
@@ -1130,11 +668,11 @@ struct AirlockDecisionControls: View {
         Button {
             resolve(approve: false)
         } label: {
-            Label("Deny exact request", systemImage: "xmark.circle.fill")
+            Label("Deny", systemImage: "xmark.circle.fill")
         }
         .buttonStyle(AirlockDenyButtonStyle())
         .focusEffectDisabled()
-        .disabled(!projection.canDeny(item))
+        .disabled(!projection.canResolve(item))
         .accessibilityLabel("Deny exact request \(item.requestID) for \(item.target)")
 
         Button {
@@ -1144,17 +682,15 @@ struct AirlockDecisionControls: View {
         }
         .buttonStyle(ZeroButtonStyle(.authority))
         .focusEffectDisabled()
-        .disabled(!projection.canApprove(item))
+        .disabled(!projection.canResolve(item))
         .accessibilityLabel("Approve exact request \(item.requestID) for \(item.target)")
     }
 
     private func resolve(approve: Bool) {
         switch item.authority {
         case .runtime(let id):
-            guard approve ? projection.canApprove(item) : projection.canDeny(item) else { return }
             Task { await model.resolveRuntimeApproval(id: id, approve: approve) }
         case .codex(let id):
-            guard approve ? projection.canApprove(item) : projection.canDeny(item) else { return }
             guard let response = AirlockProjection.codexDecisionResponse(method: item.action, approve: approve) else { return }
             _ = model.replyToCodexApproval(id: id, response: response)
         case nil:
