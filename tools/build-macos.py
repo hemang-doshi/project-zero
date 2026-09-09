@@ -6,6 +6,7 @@ from pathlib import Path
 import plistlib
 import shutil
 import subprocess
+import tempfile
 root=Path(__file__).resolve().parents[1]
 subprocess.run(['python3',str(root/'tools/release-gen.py'),'--check'],check=True)
 release=json.loads((root/'core/release/manifest.json').read_text())
@@ -14,17 +15,28 @@ binaries=Path(subprocess.check_output(['swift','build','--package-path',str(root
 for executable,name,identifier in [('ZeroMenu','Zero','dev.projectzero.menu'),('ZeroMacObserve','Zero Observer','dev.projectzero.observer'),('ZeroAudio','Zero Audio','dev.projectzero.audio')]:
  app=root/'.runtime/v02-build'/f'{name}.app';contents=app/'Contents';(contents/'MacOS').mkdir(parents=True,exist_ok=True)
  shutil.copy2(binaries/executable,contents/'MacOS'/executable)
- info={'CFBundleName':name,'CFBundleIdentifier':identifier,'CFBundleExecutable':executable,'CFBundlePackageType':'APPL','CFBundleVersion':release['version'],'CFBundleShortVersionString':release['version'],'ZeroBuild':release['build'],'LSUIElement':True,'NSAudioCaptureUsageDescription':'Measure only Spotify output levels for the desk waveform. No audio is recorded or transmitted.','NSAppleEventsUsageDescription':'Read Spotify track, artist and playback state for your Zero status display. Playback is never controlled.'}
+ info={'CFBundleName':name,'CFBundleIdentifier':identifier,'CFBundleExecutable':executable,'CFBundlePackageType':'APPL','CFBundleVersion':release['version'],'CFBundleShortVersionString':release['version'],'ZeroBuild':release['build'],'NSAudioCaptureUsageDescription':'Measure only Spotify output levels for the desk waveform. No audio is recorded or transmitted.','NSAppleEventsUsageDescription':'Read Spotify track, artist and playback state for your Zero status display. Playback is never controlled.'}
+ if name == 'Zero': info['CFBundleIconFile']='ProjectZero'
+ else: info['LSUIElement']=True
  with (contents/'Info.plist').open('wb') as f:plistlib.dump(info,f)
  subprocess.run(['codesign','--force','--sign','Project Zero Local Release',str(app)],check=True)
  print(app)
 
 app=root/'.runtime/v02-build/Zero.app'
+resources=app/'Contents/Resources';resources.mkdir(exist_ok=True)
+icon_source=root/'assets/stitch/project-zero-cockpit-interface/app-icon/project-zero-app-icon.png'
+with tempfile.TemporaryDirectory() as directory:
+ iconset=Path(directory)/'ProjectZero.iconset';iconset.mkdir()
+ for points in (16,32,128,256,512):
+  for scale in (1,2):
+   size=points*scale
+   suffix='' if scale == 1 else '@2x'
+   subprocess.run(['sips','-z',str(size),str(size),str(icon_source),'--out',str(iconset/f'icon_{points}x{points}{suffix}.png')],check=True,stdout=subprocess.DEVNULL)
+ subprocess.run(['iconutil','-c','icns',str(iconset),'-o',str(resources/'ProjectZero.icns')],check=True)
 for executable,package in [('zero','./cli/cmd/zero'),('zerod','./core/cmd/zerod')]:
  subprocess.run(['go','build','-o',str(app/'Contents/MacOS'/executable),package],cwd=root,check=True)
 helpers=app/'Contents/Helpers';helpers.mkdir(exist_ok=True)
 shutil.copytree(root/'.runtime/v02-build/Zero Observer.app',helpers/'Zero Observer.app',dirs_exist_ok=True)
 shutil.copytree(root/'.runtime/v02-build/Zero Audio.app',helpers/'Zero Audio.app',dirs_exist_ok=True)
-resources=app/'Contents/Resources';resources.mkdir(exist_ok=True)
 shutil.copy2(root/'tools/install-release.py',resources/'install-release.py')
 subprocess.run(['codesign','--force','--deep','--sign','Project Zero Local Release',str(app)],check=True)

@@ -1,259 +1,54 @@
 import AppKit
 import SwiftUI
-import ZeroKit
 
-enum CockpitSceneID {
-    static let main = "project-zero-cockpit"
-}
-
-@MainActor
 public struct CockpitAppRoot: Scene {
-    @StateObject private var model = CockpitModel()
-
     public init() {}
 
     public var body: some Scene {
-        WindowGroup("Project Zero", id: CockpitSceneID.main) {
-            CockpitWindow(model: model)
+        WindowGroup("Project Zero") {
+            CockpitWindow()
         }
-        .defaultSize(width: 1450, height: 900)
-        WindowGroup(
-            Text(CockpitPopoutScene.title(for: .flightRecorder)),
-            id: CockpitPopoutScene.sceneID(for: .flightRecorder),
-            for: String.self
-        ) { _ in
-            InspectorPopout(model: model, kind: .flightRecorder)
-        }
-        .defaultSize(width: 1100, height: 750)
-        WindowGroup(
-            Text(CockpitPopoutScene.title(for: .airlock)),
-            id: CockpitPopoutScene.sceneID(for: .airlock),
-            for: String.self
-        ) { _ in
-            InspectorPopout(model: model, kind: .airlock)
-        }
-        .defaultSize(width: 1100, height: 750)
-        WindowGroup(
-            Text(CockpitPopoutScene.title(for: .zeroBot)),
-            id: CockpitPopoutScene.sceneID(for: .zeroBot),
-            for: String.self
-        ) { _ in
-            InspectorPopout(model: model, kind: .zeroBot)
-        }
-        .defaultSize(width: 1100, height: 750)
         MenuBarExtra("Project Zero", systemImage: "circle.dotted") {
-            MenuCompanion(model: model)
+            Button("Open Project Zero") {
+                NSApplication.shared.activate(ignoringOtherApps: true)
+            }
+            Divider()
+            Button("Quit Zero") {
+                NSApplication.shared.terminate(nil)
+            }
         }
-        .menuBarExtraStyle(.window)
         Settings {
             CockpitSettings()
         }
         .commands {
-            CockpitCommands(model: model)
-        }
-    }
-}
-
-private struct CockpitCommands: Commands {
-    @ObservedObject var model: CockpitModel
-    @Environment(\.openWindow) private var openWindow
-
-    var body: some Commands {
-        CommandGroup(replacing: .newItem) {
-            Button("Open Project Zero") {
-                openWindow(id: CockpitSceneID.main)
-            }
-            .keyboardShortcut("n", modifiers: .command)
-            Divider()
-            ForEach(CockpitRoute.allCases) { route in
-                Button("Open \(route.title)") {
-                    model.selection.route = route
+            CommandGroup(replacing: .newItem) {
+                Button("Activate Project Zero") {
+                    NSApplication.shared.activate(ignoringOtherApps: true)
                 }
-                .keyboardShortcut(route.shortcut, modifiers: .command)
+                .keyboardShortcut("n", modifiers: .command)
             }
         }
     }
 }
 
 private struct CockpitWindow: View {
-    @ObservedObject var model: CockpitModel
-    @StateObject private var windows = DesktopWindowManager()
-    @State private var lifecycleRegistered = false
-
     var body: some View {
-        // In-window desktop: owner wallpaper asset when supplied, grass/
-        // dot-grid fallback otherwise. All open routes render as overlapping
-        // DesktopCards; closed routes mount nothing. Local layout state only.
-        DesktopCanvas {
-            ZStack(alignment: .topLeading) {
-                ForEach(desktopApps().filter { windows.isOpen($0.route) && !windows.isMinimized($0.route) }) { app in
-                    DesktopCard(
-                        app: app,
-                        selection: model.selection,
-                        initialOrigin: windows.origin(for: app.route),
-                        initialSize: windows.size(for: app.route),
-                        onClose: { closeRoute(app.route) },
-                        onMinimize: { minimizeRoute(app.route) },
-                        onFocus: {
-                            windows.bringToFront(app.route)
-                            if model.selection.route != app.route {
-                                model.selection.route = app.route
-                            }
-                        },
-                        onMove: { windows.setOrigin($0, for: app.route) },
-                        onResize: { windows.setSize($0, for: app.route) },
-                        content: {
-                            CockpitRouteView(route: app.route, model: model)
-                                .equatable()
-                                .padding(12)
-                        },
-                        panel: { _ in EmptyView() }
-                    )
-                    .zIndex(zIndex(for: app.route))
-                }
-            }
-            VStack {
-                Spacer()
-                dockStrip
-            }
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Project Zero")
+                .font(.title.bold())
+            Text("Cockpit controls are loading.")
+                .foregroundStyle(.secondary)
         }
-        .frame(minWidth: 900, minHeight: 640)
-        .onChange(of: model.selection.route) { route in
-            // Route ALL selection writes (keyboard shortcuts, rail, tab
-            // strip) through the window manager so a closed/background
-            // route opens and fronts its window.
-            windows.open(route)
-        }
-        .onAppear {
-            guard !lifecycleRegistered else { return }
-            lifecycleRegistered = true
-            model.windowDidAppear()
-        }
-        .onDisappear {
-            guard lifecycleRegistered else { return }
-            lifecycleRegistered = false
-            model.windowDidDisappear()
-        }
+        .padding(32)
+        .frame(minWidth: 720, minHeight: 480)
+        .background(ZeroTheme.environment)
     }
-
-    private func zIndex(for route: CockpitRoute) -> Double {
-        Double(windows.zOrder.firstIndex(of: route) ?? 0)
-    }
-
-    /// Close a window and repoint selection to the new front window, or to
-    /// `.desk` (opened if needed) when nothing remains — something always mounts.
-    private func closeRoute(_ route: CockpitRoute) {
-        let fallback = desktopFallbackSelection(closed: route, zOrder: windows.zOrder, minimized: windows.minimized)
-        windows.close(route)
-        if !windows.isOpen(fallback) {
-            windows.open(fallback)
-        }
-        model.selection.route = fallback
-    }
-
-    /// Minimize a window: stays in the open set but mounts nothing; dock
-    /// shows a dot, clicking restores. Front window repoints selection to
-    /// the frontmost non-minimized open window, else .desk.
-    private func minimizeRoute(_ route: CockpitRoute) {
-        windows.minimize(route)
-        if model.selection.route == route {
-            let fallback = desktopFallbackSelection(closed: route, zOrder: windows.zOrder, minimized: windows.minimized)
-            if !windows.isOpen(fallback) {
-                windows.open(fallback)
-            } else if windows.isMinimized(fallback) {
-                windows.unminimize(fallback)
-            }
-            model.selection.route = fallback
-        }
-    }
-
-    private var dockStrip: some View {
-        HStack(spacing: 8) {
-            ForEach(CockpitRoute.allCases) { route in
-                let isOpen = windows.isOpen(route)
-                let isMinimized = windows.isMinimized(route)
-                Button {
-                    if isMinimized {
-                        windows.unminimize(route)
-                        windows.bringToFront(route)
-                        model.selection.route = route
-                    } else if isOpen {
-                        closeRoute(route)
-                    } else {
-                        // New windows cascade by open count.
-                        let cascade = desktopCascadeOffset(for: windows.openCount)
-                        windows.setOrigin(CGPoint(x: cascade.width, y: cascade.height), for: route)
-                        windows.open(route)
-                        model.selection.route = route
-                    }
-                } label: {
-                    VStack(spacing: 2) {
-                        Label(route.title, systemImage: route.symbol)
-                            .labelStyle(.iconOnly)
-                            .font(.zero(size: 18))
-                            .frame(width: 44, height: 44)
-                            .background(isOpen ? ZeroTheme.orange.opacity(0.25) : ZeroTheme.workstation, in: RoundedRectangle(cornerRadius: 10))
-                        Circle()
-                            .fill(ZeroTheme.orange)
-                            .frame(width: 4, height: 4)
-                            .opacity(isMinimized ? 1 : 0)
-                    }
-                }
-                .buttonStyle(ZeroButtonStyle(.quiet))
-                .focusEffectDisabled()
-                .help("\(isMinimized ? "Restore" : isOpen ? "Close" : "Open") \(route.title)")
-                .accessibilityLabel("\(isMinimized ? "Restore" : isOpen ? "Close" : "Open") \(route.title)")
-            }
-        }
-        .padding(8)
-        .background(ZeroTheme.navigation.opacity(0.9), in: RoundedRectangle(cornerRadius: 14))
-        .frame(maxWidth: .infinity)
-    }
-}
-
-struct CockpitRouteView: View, Equatable {
-    let route: CockpitRoute
-    @ObservedObject var model: CockpitModel
-
-    /// Equal when the route and model are unchanged. Wrapping this in
-    /// `.equatable()` lets desktop gestures (drag/resize) re-render the card
-    /// chrome without re-running the heavy route body; model publishes still
-    /// update it through the inner `@ObservedObject`.
-    static func == (lhs: CockpitRouteView, rhs: CockpitRouteView) -> Bool {
-        lhs.route == rhs.route && lhs.model === rhs.model
-    }
-
-    @ViewBuilder
-    var body: some View {
-        switch route {
-        case .desk:
-            DeskView(model: model)
-        case .runtime:
-            RuntimeView(model: model)
-        case .network:
-            NetworkView(model: model)
-        case .flightRecorder:
-            FlightRecorderView(model: model)
-        case .airlock:
-            AirlockView(model: model)
-        case .zeroBot:
-            ZeroBotView(model: model)
-        case .skillLab:
-            SkillLabView(model: model)
-        }
-    }
-}
-
-/// All seven desktop apps in rail order (desk/runtime/network/flightRecorder/
-/// airlock/zeroBot/skillLab). Pure: no model, daemon, or layout state.
-func desktopApps() -> [DesktopApp] {
-    CockpitRoute.allCases.map { DesktopApp(id: $0.rawValue, title: $0.title, route: $0) }
 }
 
 private struct CockpitSettings: View {
     var body: some View {
         Text("Project Zero settings will appear here.")
             .padding()
-            .background(ZeroTheme.cardCream)
+            .background(ZeroTheme.panel)
     }
 }
