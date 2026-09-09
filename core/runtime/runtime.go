@@ -15,6 +15,7 @@ import (
 )
 
 type Runtime struct {
+	Updates     *Updates
 	MacObserver string
 	MacAudio    string
 	audioMu     sync.Mutex
@@ -52,7 +53,7 @@ func Open(path string) (*Runtime, error) {
 	if e != nil {
 		return nil, e
 	}
-	return &Runtime{db: db, Now: time.Now}, nil
+	return &Runtime{db: db, Now: time.Now, Updates: NewUpdates()}, nil
 }
 func (r *Runtime) Close() error { return r.db.Close() }
 func hash(v any) string {
@@ -103,7 +104,8 @@ func (r *Runtime) audit(ctx context.Context, tx *sql.Tx, p, a, target, d, id str
 }
 func (r *Runtime) Enroll(ctx context.Context, id, fp string, caps []string) error {
 	r.mu.Lock()
-	defer r.mu.Unlock()
+	committed := false
+	defer r.unlockAndPublish(&committed, "nodes", "audit")
 	if id == "" || len(id) > 64 || fp == "" {
 		return fmt.Errorf("VALIDATION: identity")
 	}
@@ -137,7 +139,9 @@ func (r *Runtime) Enroll(ctx context.Context, id, fp string, caps []string) erro
 	if e = r.audit(ctx, tx, "owner", "nodes.pair", id, "ALLOW", id); e != nil {
 		return e
 	}
-	return tx.Commit()
+	e = tx.Commit()
+	committed = e == nil
+	return e
 }
 func (r *Runtime) Known(ctx context.Context, node, fp string) bool {
 	var n int
@@ -146,7 +150,8 @@ func (r *Runtime) Known(ctx context.Context, node, fp string) bool {
 
 func (r *Runtime) Execute(ctx context.Context, principal string, q Request) (Response, error) {
 	r.mu.Lock()
-	defer r.mu.Unlock()
+	committed := false
+	defer r.unlockAndPublish(&committed, commandDomains(q.Op)...)
 	v := Response{Version: "0.1", ID: q.ID, Status: "SUCCEEDED"}
 	if len(q.ID) == 0 || len(q.ID) > 128 || len(q.Body) > 4096 {
 		return v, fmt.Errorf("VALIDATION: request bounds")
@@ -234,7 +239,9 @@ func (r *Runtime) Execute(ctx context.Context, principal string, q Request) (Res
 	if _, e = tx.ExecContext(ctx, "INSERT INTO commands VALUES(?,?,?,?)", q.ID, principal, signature, b); e != nil {
 		return v, e
 	}
-	return v, tx.Commit()
+	e = tx.Commit()
+	committed = e == nil
+	return v, e
 }
 
 func (r *Runtime) validate(ctx context.Context, tx *sql.Tx, p string, q Request) error {
@@ -249,6 +256,10 @@ func (r *Runtime) List(ctx context.Context, kind string) ([]map[string]any, erro
 	if !ok {
 		return nil, fmt.Errorf("VALIDATION: unknown collection")
 	}
+	return r.queryList(ctx, kind, query)
+}
+
+func (r *Runtime) queryList(ctx context.Context, kind, query string) ([]map[string]any, error) {
 	rows, e := r.db.QueryContext(ctx, query)
 	if e != nil {
 		return nil, e

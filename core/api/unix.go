@@ -62,6 +62,65 @@ func ServeUnix(ctx context.Context, r *runtime.Runtime, path string, ca *identit
 		w.WriteHeader(400)
 		json.NewEncoder(w).Encode(map[string]string{"error": e.Error()})
 	}
+	mux.HandleFunc("GET /v0.1/cockpit", func(w http.ResponseWriter, q *http.Request) {
+		value, err := r.Cockpit(q.Context())
+		if err != nil {
+			fail(w, err)
+			return
+		}
+		reply(w, value)
+	})
+	mux.HandleFunc("GET /v0.1/cockpit/stream", func(w http.ResponseWriter, q *http.Request) {
+		controller := http.NewResponseController(w)
+		// This response lives beyond the ordinary request deadline. Each actual
+		// frame still has a bounded write so a stalled reader cannot pin a handler.
+		if err := controller.SetWriteDeadline(time.Time{}); err != nil {
+			fail(w, err)
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("Cache-Control", "no-store")
+		ready, updates, cancel := r.Updates.Subscribe()
+		defer cancel()
+		send := func(name string, value runtime.Update) error {
+			if err := controller.SetWriteDeadline(time.Now().Add(5 * time.Second)); err != nil {
+				return err
+			}
+			data, err := json.Marshal(value)
+			if err != nil {
+				return err
+			}
+			if _, err = fmt.Fprintf(w, "event: %s\ndata: %s\n\n", name, data); err != nil {
+				return err
+			}
+			if err = controller.Flush(); err != nil {
+				return err
+			}
+			return controller.SetWriteDeadline(time.Time{})
+		}
+		if err := send("ready", ready); err != nil {
+			return
+		}
+		ticker := time.NewTicker(15 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-q.Context().Done():
+				return
+			case update, ok := <-updates:
+				if !ok {
+					return
+				}
+				if err := send("runtime.changed", update); err != nil {
+					return
+				}
+			case <-ticker.C:
+				if err := send("keepalive", runtime.Update{Revision: r.Updates.Revision(), Domains: []string{}, Timestamp: time.Now().UTC()}); err != nil {
+					return
+				}
+			}
+		}
+	})
 	mux.HandleFunc("GET /v0.1/policies/report", func(w http.ResponseWriter, q *http.Request) {
 		v, e := r.DailyReport(q.Context())
 		if e != nil {

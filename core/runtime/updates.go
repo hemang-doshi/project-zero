@@ -17,15 +17,7 @@ type Update struct {
 	Revision  uint64    `json:"revision"`
 	Domains   []string  `json:"domains"`
 	Timestamp time.Time `json:"timestamp"`
-	// encoded is the wire serialization computed once per publish and shared
-	// by every subscriber that received the event without coalescing. It is
-	// never part of the JSON payload.
-	encoded []byte
 }
-
-// Encoded returns the shared serialized bytes for this update, or nil when the
-// subscriber must serialize its own (possibly coalesced) copy.
-func (u Update) Encoded() []byte { return u.encoded }
 
 var cockpitDomains = []string{"session", "projects", "integrations", "policies", "context", "nodes", "node_profiles", "approvals", "firings", "invocations", "events", "audit", "state", "grants"}
 
@@ -79,18 +71,11 @@ func (u *Updates) Publish(domains ...string) {
 	defer u.mu.Unlock()
 	u.revision++
 	event := Update{Revision: u.revision, Domains: mergeDomains(nil, valid), Timestamp: time.Now().UTC()}
-	// Serialize once; every non-coalescing subscriber replays these bytes.
-	wire, err := json.Marshal(event)
-	if err != nil {
-		wire = nil
-	}
-	event.encoded = wire
 	for ch := range u.subscribers {
 		next := event
 		select {
 		case previous := <-ch:
 			next.Domains = mergeDomains(previous.Domains, next.Domains)
-			next.encoded = nil
 		default:
 		}
 		// Only this mutex's holder sends; the channel now has capacity.
@@ -149,17 +134,6 @@ func (r *Runtime) Cockpit(ctx context.Context) (map[string]any, error) {
 		return nil, err
 	}
 	session, err := readSession(ctx, tx)
-	var listening ListeningSession
-	if err == nil {
-		listening, err = readListening(ctx, tx)
-		if err == nil && listening.ActiveFrom != nil {
-			if listening.PlaybackState == "playing" && listening.EndedAt == nil {
-				listening.ActiveDurationMS += max(0, r.Now().Sub(*listening.ActiveFrom).Milliseconds())
-			} else {
-				listening.ActiveFrom = nil
-			}
-		}
-	}
 	tx.Rollback()
 	if err != nil {
 		return nil, err
@@ -189,14 +163,7 @@ func (r *Runtime) Cockpit(ctx context.Context) (map[string]any, error) {
 		return nil, err
 	}
 	truncated := map[string]bool{}
-	r.audioMu.Lock()
-	audioFrame := r.audio
-	audioStatus := r.audioStatus
-	r.audioMu.Unlock()
-	if audioStatus == "" {
-		audioStatus = "DISABLED"
-	}
-	out := map[string]any{"version": "0.1", "revision": r.Updates.Revision(), "timestamp": r.Now().UTC(), "status": "RUNNING", "runtime_version": release.Current().Version, "release": release.Current(), "session": session, "listening_session": listening, "integrations": integrations, "policies": policies, "context": currentContext, "audio": map[string]any{"level": audioFrame.Level, "bass": audioFrame.Bass, "sequence": audioFrame.Sequence, "status": audioStatus}, "truncated": truncated}
+	out := map[string]any{"version": "0.1", "revision": r.Updates.Revision(), "timestamp": r.Now().UTC(), "status": "RUNNING", "runtime_version": release.Current().Version, "release": release.Current(), "session": session, "integrations": integrations, "policies": policies, "context": currentContext, "truncated": truncated}
 	queries := map[string]string{
 		"projects":      "SELECT value FROM entities WHERE kind='project' AND COALESCE(json_extract(value,'$.removed'),0)=0 ORDER BY key",
 		"nodes":         "SELECT id,revoked,capabilities,last_seen FROM nodes ORDER BY id",
