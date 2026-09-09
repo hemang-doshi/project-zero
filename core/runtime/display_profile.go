@@ -14,8 +14,10 @@ func (r *Runtime) Advertise(ctx context.Context, node string, body json.RawMessa
 	var b struct {
 		Capabilities []string `json:"capabilities"`
 		RenderSchema string   `json:"render_schema"`
+		Firmware     string   `json:"firmware"`
+		Build        string   `json:"build"`
 	}
-	if len(body) > 2048 || json.Unmarshal(body, &b) != nil || len(b.Capabilities) > 2 {
+	if len(body) > 2048 || json.Unmarshal(body, &b) != nil || len(b.Capabilities) > 2 || len(b.Firmware) > 64 || len(b.Build) > 64 {
 		return fmt.Errorf("VALIDATION: advertisement bounds")
 	}
 	if b.RenderSchema == "" {
@@ -49,7 +51,7 @@ func (r *Runtime) Advertise(ctx context.Context, node string, body json.RawMessa
 		}
 	}
 	id := protocol.ID()
-	if e = saveEntity(ctx, tx, id, "node_profile", node, map[string]string{"render_schema": b.RenderSchema}, r.Now()); e != nil {
+	if e = saveEntity(ctx, tx, id, "node_profile", node, map[string]string{"render_schema": b.RenderSchema, "version": b.Firmware, "build": b.Build}, r.Now()); e != nil {
 		return e
 	}
 	if e = r.audit(ctx, tx, "node:"+node, "capability.advertise", node, "ALLOW", id); e != nil {

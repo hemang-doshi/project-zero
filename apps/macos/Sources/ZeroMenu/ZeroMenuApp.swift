@@ -5,6 +5,9 @@ import UserNotifications
 
 @MainActor final class ZeroModel:ObservableObject {
  @Published var connected=false
+ @Published var runtimeVersion="unknown"
+ @Published var uncertain:[String:Any]?
+ @Published var compatible=false
  @Published var busy=false
  @Published var error=""
  @Published var session:[String:Any]=[:]
@@ -16,10 +19,12 @@ import UserNotifications
  @Published var context:[String:Any]=[:]
  @Published var proposal:[String:Any]?
  let socket:String
- init(){let args=CommandLine.arguments;if let i=args.firstIndex(of:"--socket"),i+1<args.count{socket=args[i+1]}else{socket=NSHomeDirectory()+"/Library/Application Support/ProjectZero/zero.sock"};Task{while !Task.isCancelled{await refresh();try? await Task.sleep(nanoseconds:2_000_000_000)}}}
+ init(){let args=CommandLine.arguments;if let i=args.firstIndex(of:"--socket"),i+1<args.count{socket=args[i+1]}else{socket=NSHomeDirectory()+"/Library/Application Support/ProjectZero/zero.sock"};if let saved=UserDefaults.standard.data(forKey:"pending:"+socket){uncertain=(try? JSONSerialization.jsonObject(with:saved)) as? [String:Any]};Task{while !Task.isCancelled{await refresh();try? await Task.sleep(nanoseconds:2_000_000_000)}}}
  func get(_ path:String)async throws->Any{try await UnixHTTP.call(socketPath:socket,path:path)}
  func refresh()async {
   do {
+   let status=try await get("status") as? [String:Any] ?? [:]
+   let release=status["release"] as? [String:Any] ?? [:];runtimeVersion=release["version"] as? String ?? "unknown";compatible=(release["protocols"] as? [String] ?? []).contains("0.1")
    let s=try await get("session") as? [String:Any] ?? [:]
    let p=try await get("projects") as? [String:Any] ?? [:]
    let i=try await get("integrations") as? [String:Any] ?? [:]
@@ -32,8 +37,15 @@ import UserNotifications
   }catch{connected=false}
  }
  func command(_ op:String,_ body:[String:Any]=[:])async {
-  guard !busy else{return};busy=true;error="";defer{busy=false}
-  do{_ = try await UnixHTTP.call(socketPath:socket,path:"commands",body:["id":UUID().uuidString,"op":op,"body":body]);await refresh()}catch{self.error=error.localizedDescription}
+  guard !busy && compatible else{return}
+  guard uncertain == nil else{error="Resolve the pending action before another change.";return}
+  uncertain=["id":UUID().uuidString,"op":op,"body":body]
+  if let data=try? JSONSerialization.data(withJSONObject:uncertain!){UserDefaults.standard.set(data,forKey:"pending:"+socket)}
+  await retryPending()
+ }
+ func retryPending()async {
+  guard !busy,compatible,let request=uncertain else{return};busy=true;error="";defer{busy=false}
+  do{_ = try await UnixHTTP.call(socketPath:socket,path:"commands",body:request);uncertain=nil;UserDefaults.standard.removeObject(forKey:"pending:"+socket);await refresh()}catch{self.error="Action not confirmed: \(error.localizedDescription). Retry uses the same request identity."}
  }
  func parse(_ text:String)async {do{var allowed=CharacterSet.urlQueryAllowed;allowed.remove(charactersIn:"&+=?#");let encoded=text.addingPercentEncoding(withAllowedCharacters:allowed) ?? "";proposal=try await get("intent/parse?text="+encoded) as? [String:Any]}catch{self.error=error.localizedDescription}}
  func enableNotifications() async {
@@ -71,7 +83,10 @@ struct ZeroPanel: View {
      Spacer()
      Text(model.connected ? "Connected" : "Disconnected").foregroundStyle(model.connected ? .green : .orange)
     }
-    if model.socket.contains("/v02-dev/") {Text("Development preview — desk remains on v0.1").font(.caption).foregroundStyle(.secondary)}
+    if model.socket != NSHomeDirectory()+"/Library/Application Support/ProjectZero/zero.sock" {Text("Isolated development profile").font(.caption).foregroundStyle(.secondary)}
+    Text("App \(ZeroRelease.version) · Runtime \(model.runtimeVersion) · Build \(ZeroRelease.build)").font(.caption).foregroundStyle(.secondary)
+    if !model.compatible {Text("Runtime compatibility unavailable; controls disabled.").font(.caption)}
+    if model.uncertain != nil {Button("Retry pending action") {Task {await model.retryPending()}}}
     Text(model.session["project"] as? String ?? "Choose a project").font(.headline)
     HStack {
      Text(model.session["state"] as? String ?? "Unavailable")
@@ -93,7 +108,7 @@ struct ZeroPanel: View {
      Button("Pause") { Task { await model.command("session.pause") } }
      Button("Resume") { Task { await model.command("session.resume") } }
      Button("End") { Task { await model.command("session.end") } }
-    }.disabled(!model.connected || model.busy)
+    }.disabled(!model.connected || !model.compatible || model.busy)
     if switching {
      Text("End current focus before starting the selected project?")
      HStack {
@@ -115,6 +130,10 @@ struct ZeroPanel: View {
      Text("Local parsing · no model call").font(.caption).foregroundStyle(.secondary)
     }
     Divider()
+    Text("Context and sources").font(.headline)
+    ForEach(model.context.keys.sorted(),id: \.self) { key in
+     if let fact=model.context[key] as? [String:Any] {Text("\(key): \(fact["value"] as? String ?? "—") · \(fact["source"] as? String ?? "unknown")").font(.caption)}
+    }
     Text("Integrations").font(.headline)
     ForEach(model.integrations.indices, id: \.self) { i in IntegrationRow(model: model, item: model.integrations[i]) }
     Divider()

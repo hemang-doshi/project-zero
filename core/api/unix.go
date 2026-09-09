@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"projectzero.local/zero/core/identity"
+	"projectzero.local/zero/core/release"
 	"projectzero.local/zero/core/runtime"
 	"strings"
 	"sync"
@@ -146,14 +147,24 @@ func ServeUnix(ctx context.Context, r *runtime.Runtime, path string, ca *identit
 		reply(w, v)
 	})
 	mux.HandleFunc("GET /v0.1/status", func(w http.ResponseWriter, q *http.Request) {
-		reply(w, map[string]any{"version": "0.1", "status": "RUNNING", "runtime_version": "0.2-dev", "pid": os.Getpid()})
+		reply(w, map[string]any{"version": "0.1", "status": "RUNNING", "runtime_version": release.Current().Version, "release": release.Current(), "pid": os.Getpid()})
 	})
 	mux.HandleFunc("GET /v0.1/doctor", func(w http.ResponseWriter, q *http.Request) {
 		if e := r.VerifyAudit(q.Context()); e != nil {
 			fail(w, e)
 			return
 		}
-		reply(w, map[string]any{"version": "0.1", "audit_chain": "VALID", "status": "RUNNING"})
+		profiles, err := r.List(q.Context(), "node_profiles")
+		if err != nil {
+			fail(w, err)
+			return
+		}
+		nodes, err := r.List(q.Context(), "nodes")
+		if err != nil {
+			fail(w, err)
+			return
+		}
+		reply(w, map[string]any{"nodes": nodes, "node_profiles": profiles, "version": "0.1", "audit_chain": "VALID", "status": "RUNNING", "release": release.Current(), "socket": path, "data_directory": filepath.Dir(path)})
 	})
 	mux.HandleFunc("GET /v0.1/session", func(w http.ResponseWriter, q *http.Request) {
 		v, e := r.Session(q.Context())

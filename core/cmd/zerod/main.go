@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"projectzero.local/zero/core/api"
 	"projectzero.local/zero/core/identity"
+	"projectzero.local/zero/core/processlock"
 	"projectzero.local/zero/core/runtime"
 	"strings"
 	"syscall"
@@ -37,6 +38,14 @@ func run() error {
 	flag.Parse()
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
+	if e := os.MkdirAll(*data, 0700); e != nil {
+		return e
+	}
+	lock, e := processlock.Acquire(filepath.Join(*data, "runtime.lock"))
+	if e != nil {
+		return e
+	}
+	defer lock.Close()
 	r, e := runtime.Open(filepath.Join(*data, "zero.db"))
 	if e != nil {
 		return e
