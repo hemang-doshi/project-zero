@@ -179,9 +179,8 @@ final class CockpitModelTests: XCTestCase {
         firstModel = nil
 
         let recoveredFixture = RuntimeSnapshotFixture(snapshot: snapshotData(
-            revision: 11,
+            revision: 12,
             invocations: [("old-render", "SUCCEEDED")],
-            runtimeInvocations: [(commandID, "session.pause", "WAITING_APPROVAL")],
             approvalIDs: [commandID]
         ))
         let recoveredModel = CockpitModel(
@@ -200,7 +199,7 @@ final class CockpitModelTests: XCTestCase {
         XCTAssertNotEqual(recoveredModel.deliveryState, .delivered)
     }
 
-    func testCurrentApprovalReconstructsLifecycleBeforeBoundedEvidenceDisappears() async {
+    func testCurrentApprovalRemainsQueuedWhenOnlyInvocationHistoryDisappears() async {
         let fixture = RuntimeSnapshotFixture(snapshot: snapshotData(
             revision: 11,
             invocations: [("old-render", "SUCCEEDED")],
@@ -215,10 +214,22 @@ final class CockpitModelTests: XCTestCase {
 
         fixture.setSnapshot(snapshotData(
             revision: 12,
-            invocations: [("old-render", "SUCCEEDED")]
+            invocations: [("old-render", "SUCCEEDED")],
+            approvalIDs: ["proposal-1"]
         ))
         model.runtime.refresh()
         await fixture.waitForRevision(12, client: model.runtime)
+
+        XCTAssertEqual(model.deliveryState, .queued)
+        XCTAssertEqual(model.attentionCount, 1)
+        XCTAssertNotEqual(model.deliveryState, .delivered)
+
+        fixture.setSnapshot(snapshotData(
+            revision: 13,
+            invocations: [("old-render", "SUCCEEDED")]
+        ))
+        model.runtime.refresh()
+        await fixture.waitForRevision(13, client: model.runtime)
 
         XCTAssertEqual(model.deliveryState, .stale)
         XCTAssertEqual(model.attentionCount, 0)

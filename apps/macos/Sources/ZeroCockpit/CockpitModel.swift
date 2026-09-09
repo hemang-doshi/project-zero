@@ -281,6 +281,12 @@ public final class CockpitModel: ObservableObject {
                 case "FAILED", "REJECTED", "EXPIRED", "TIMED_OUT", "CANCELLED": return .stale
                 default: return .stale
                 }
+            } else if snapshot.approvals.contains(where: {
+                $0["id"].string == baseline.commandID
+                    && $0["capability"].string?.hasPrefix("session.") == true
+                    && $0["status"].string?.uppercased() == "WAITING_APPROVAL"
+            }) {
+                return .queued
             } else {
                 if lifecycle.resolution == .waiting,
                    snapshot.revision <= baseline.snapshotRevision {
