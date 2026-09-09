@@ -83,22 +83,7 @@ final class DeskRuntimeViewTests: XCTestCase {
     }
 
     func testCodexFactsExposeConnectedActiveWorkAndApprovals() {
-        var store = CodexEventStore()
-        store.reduce(.notification(method: "thread/started", params: .object([
-            "thread": .object(["id": .string("thread-1"), "name": .string("Cockpit work")])
-        ])))
-        store.reduce(.notification(method: "turn/started", params: .object([
-            "threadId": .string("thread-1"),
-            "turn": .object(["id": .string("turn-1"), "status": .string("inProgress")])
-        ])))
-        store.reduce(.notification(method: "item/started", params: .object([
-            "threadId": .string("thread-1"), "turnId": .string("turn-1"),
-            "item": .object(["id": .string("item-1"), "type": .string("commandExecution"), "status": .string("inProgress")])
-        ])))
-        store.reduce(.request(id: .integer(7), method: "item/commandExecution/requestApproval", params: .object([
-            "threadId": .string("thread-1"), "turnId": .string("turn-1")
-        ])))
-
+        let store = codexStoreWithActiveWork()
         let facts = DeskCodexFacts(state: .connected, store: store)
 
         XCTAssertEqual(facts.connectionLabel, "Codex connected")
@@ -107,6 +92,25 @@ final class DeskRuntimeViewTests: XCTestCase {
         XCTAssertEqual(facts.activeItemCount, 1)
         XCTAssertEqual(facts.approvalCount, 1)
         XCTAssertEqual(facts.workLabel, "1 active turn · 1 streaming item")
+    }
+
+    func testCodexExitOrFailureMakesRetainedWorkNonActionableEvidence() {
+        let store = codexStoreWithActiveWork()
+
+        for state in [CodexConnectionState.exited(9), .failed("transport closed")] {
+            let facts = DeskCodexFacts(state: state, store: store)
+
+            XCTAssertFalse(facts.isConnected)
+            XCTAssertEqual(facts.activeTurnCount, 0)
+            XCTAssertEqual(facts.activeItemCount, 0)
+            XCTAssertEqual(facts.approvalCount, 0)
+            XCTAssertTrue(facts.hasRetainedEvidence)
+            XCTAssertEqual(facts.retainedActiveTurnCount, 1)
+            XCTAssertEqual(facts.retainedActiveItemCount, 1)
+            XCTAssertEqual(facts.retainedApprovalCount, 1)
+            XCTAssertTrue(facts.workLabel.localizedCaseInsensitiveContains("retained"))
+            XCTAssertTrue(facts.workLabel.localizedCaseInsensitiveContains("not actionable"))
+        }
     }
 
     func testRuntimeFactsReflectOnlyDecodedSnapshotCounts() throws {
@@ -135,8 +139,59 @@ final class DeskRuntimeViewTests: XCTestCase {
         XCTAssertEqual(facts.policyCount, 2)
         XCTAssertEqual(facts.contextCount, 2)
         XCTAssertEqual(facts.firingStateCounts, ["CANCELLED": 1, "DELIVERING": 1, "FAILED": 1, "PENDING": 1, "REVIEWED": 1])
-        XCTAssertEqual(facts.runtimeWorkTotal, 7)
-        XCTAssertEqual(facts.runtimeWorkLabel, "7+")
+        XCTAssertEqual(facts.activeFiringCount, 2)
+        XCTAssertEqual(facts.runtimeWorkTotal, 4)
+        XCTAssertEqual(facts.runtimeWorkLabel, "4+")
+    }
+
+    func testTerminalFiringHistoryDoesNotCreateAnActiveMission() throws {
+        var payload = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(snapshotJSON.utf8)) as? [String: Any])
+        payload["session"] = [
+            "id": NSNull(), "project_id": NSNull(), "project": "", "state": "IDLE",
+            "elapsed_ms": 0, "since_ms": 0, "revision": 4
+        ]
+        payload["approvals"] = []
+        payload["firings"] = [
+            ["id": "failed", "state": "FAILED"],
+            ["id": "cancelled", "state": "CANCELLED"],
+            ["id": "reviewed", "state": "REVIEWED"]
+        ]
+        payload["truncated"] = ["approvals": false, "firings": false]
+        let snapshot = try CockpitSnapshot.decode(JSONSerialization.data(withJSONObject: payload))
+        let facts = DeskRuntimeFacts(
+            snapshot: snapshot,
+            connection: .live,
+            runtimeStatusLabel: "Runtime live",
+            runtimeStatusTone: .healthy,
+            activeProjectName: "No active project",
+            focusElapsedLabel: "0:00:00",
+            deliveryState: .delivered,
+            attentionCount: 0
+        )
+
+        XCTAssertEqual(facts.firingStateCounts, ["CANCELLED": 1, "FAILED": 1, "REVIEWED": 1])
+        XCTAssertEqual(facts.activeFiringCount, 0)
+        XCTAssertEqual(facts.runtimeWorkTotal, 0)
+        XCTAssertEqual(facts.runtimeWorkLabel, "0")
+    }
+
+    private func codexStoreWithActiveWork() -> CodexEventStore {
+        var store = CodexEventStore()
+        store.reduce(.notification(method: "thread/started", params: .object([
+            "thread": .object(["id": .string("thread-1"), "name": .string("Cockpit work")])
+        ])))
+        store.reduce(.notification(method: "turn/started", params: .object([
+            "threadId": .string("thread-1"),
+            "turn": .object(["id": .string("turn-1"), "status": .string("inProgress")])
+        ])))
+        store.reduce(.notification(method: "item/started", params: .object([
+            "threadId": .string("thread-1"), "turnId": .string("turn-1"),
+            "item": .object(["id": .string("item-1"), "type": .string("commandExecution"), "status": .string("inProgress")])
+        ])))
+        store.reduce(.request(id: .integer(7), method: "item/commandExecution/requestApproval", params: .object([
+            "threadId": .string("thread-1"), "turnId": .string("turn-1")
+        ])))
+        return store
     }
 
     private let snapshotJSON = #"""

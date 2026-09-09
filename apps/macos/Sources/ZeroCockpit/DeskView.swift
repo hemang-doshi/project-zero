@@ -36,6 +36,7 @@ struct DeskRuntimeFacts {
 
     @MainActor
     init(model: CockpitModel) {
+        let codex = DeskCodexFacts(state: model.codexConnection, store: model.codex.store)
         snapshot = model.snapshot
         connection = model.runtimeConnection
         runtimeStatusLabel = model.runtimeStatusLabel
@@ -43,8 +44,11 @@ struct DeskRuntimeFacts {
         reportedActiveProjectName = model.activeProjectName
         reportedFocusElapsedLabel = model.focusElapsedLabel
         reportedDeliveryState = model.deliveryState
-        reportedAttentionCount = model.attentionCount
-        codexApprovalCount = model.codex.store.approvals.count
+        // CockpitModel intentionally retains the bridge store across natural exits.
+        // Replace its raw retained approval count with this transport-gated count
+        // before presenting a current attention total.
+        reportedAttentionCount = max(0, model.attentionCount - model.codex.store.approvals.count + codex.approvalCount)
+        codexApprovalCount = codex.approvalCount
         hasUncertainCommand = model.hasUncertainRuntimeCommand
     }
 
@@ -93,9 +97,14 @@ struct DeskRuntimeFacts {
             counts[state, default: 0] += 1
         }
     }
+    var activeFirings: [RuntimeRecord] {
+        guard let firings = authoritativeSnapshot?.firings else { return [] }
+        return firings.filter(Self.firingRequiresActiveMission)
+    }
+    var activeFiringCount: Int { activeFirings.count }
     var runtimeWorkTotal: Int {
         guard let snapshot = authoritativeSnapshot else { return 0 }
-        return snapshot.approvals.count + snapshot.firings.count + (snapshot.session.state == "IDLE" ? 0 : 1)
+        return snapshot.approvals.count + activeFiringCount + (snapshot.session.state == "IDLE" ? 0 : 1)
     }
     var runtimeWorkLabel: String {
         guard let snapshot = authoritativeSnapshot else { return "OFFLINE" }
@@ -124,6 +133,16 @@ struct DeskRuntimeFacts {
         guard hasCachedSnapshot, let timestamp = snapshot?.timestamp else { return nil }
         return "Cached at \(timestamp) · not current authority"
     }
+
+    private static func firingRequiresActiveMission(_ firing: RuntimeRecord) -> Bool {
+        // These are the only non-terminal firing states currently emitted by zerod.
+        // Unknown or future states stay visible in firing history but are not promoted
+        // to active authority without an explicit contract update.
+        switch runtimeText(firing, keys: ["state"])?.uppercased() {
+        case "PENDING", "DELIVERING": true
+        default: false
+        }
+    }
 }
 
 enum DeskAttentionSource: Equatable {
@@ -137,8 +156,19 @@ struct DeskCodexFacts: Equatable {
     let activeTurnCount: Int
     let activeItemCount: Int
     let approvalCount: Int
+    let retainedActiveTurnCount: Int
+    let retainedActiveItemCount: Int
+    let retainedApprovalCount: Int
 
     init(state: CodexConnectionState, store: CodexEventStore) {
+        threadCount = store.threads.count
+        retainedActiveTurnCount = store.threads.values.reduce(0) { count, thread in
+            count + thread.turns.values.filter { Self.isActive($0.status) }.count
+        }
+        retainedActiveItemCount = store.threads.values.reduce(0) { count, thread in
+            count + thread.items.filter { Self.isActive($0.status) }.count
+        }
+        retainedApprovalCount = store.approvals.count
         switch state {
         case .disconnected:
             connectionLabel = "Codex disconnected"
@@ -156,17 +186,30 @@ struct DeskCodexFacts: Equatable {
             connectionLabel = "Codex failed"
             isConnected = false
         }
-        threadCount = store.threads.count
-        activeTurnCount = store.threads.values.reduce(0) { count, thread in
-            count + thread.turns.values.filter { Self.isActive($0.status) }.count
-        }
-        activeItemCount = store.threads.values.reduce(0) { count, thread in
-            count + thread.items.filter { Self.isActive($0.status) }.count
-        }
-        approvalCount = store.approvals.count
+        activeTurnCount = isConnected ? retainedActiveTurnCount : 0
+        activeItemCount = isConnected ? retainedActiveItemCount : 0
+        approvalCount = isConnected ? retainedApprovalCount : 0
+    }
+
+    var hasRetainedEvidence: Bool {
+        !isConnected && (threadCount > 0 || retainedActiveTurnCount > 0 || retainedActiveItemCount > 0 || retainedApprovalCount > 0)
     }
 
     var workLabel: String {
+        if hasRetainedEvidence {
+            var evidence = ["\(threadCount) retained thread\(threadCount == 1 ? "" : "s")"]
+            if retainedActiveTurnCount > 0 {
+                evidence.append("\(retainedActiveTurnCount) retained turn\(retainedActiveTurnCount == 1 ? "" : "s")")
+            }
+            if retainedActiveItemCount > 0 {
+                evidence.append("\(retainedActiveItemCount) retained item\(retainedActiveItemCount == 1 ? "" : "s")")
+            }
+            if retainedApprovalCount > 0 {
+                evidence.append("\(retainedApprovalCount) retained approval\(retainedApprovalCount == 1 ? "" : "s")")
+            }
+            return "Retained while Codex is unavailable · \(evidence.joined(separator: " · ")) · not actionable"
+        }
+        if !isConnected { return "No retained Project Zero-owned Codex evidence" }
         if activeTurnCount > 0 || activeItemCount > 0 {
             return "\(activeTurnCount) active turn\(activeTurnCount == 1 ? "" : "s") · \(activeItemCount) streaming item\(activeItemCount == 1 ? "" : "s")"
         }
@@ -343,13 +386,17 @@ public struct DeskView: View {
                 Text("\(codex.approvalCount) Codex approval request\(codex.approvalCount == 1 ? "" : "s") waiting")
                     .font(DeskRuntimeType.caption)
                     .foregroundStyle(ZeroTone.attention.color)
+            } else if codex.retainedApprovalCount > 0 {
+                Text("\(codex.retainedApprovalCount) retained Codex approval record\(codex.retainedApprovalCount == 1 ? "" : "s") · Codex unavailable, not actionable")
+                    .font(DeskRuntimeType.caption)
+                    .foregroundStyle(ZeroTheme.secondaryInk)
             }
             Button("Open Zero Bot") { model.selection.route = .zeroBot }
                 .buttonStyle(ZeroButtonStyle(.quiet))
                 .focusEffectDisabled()
         }
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("Codex work, \(codex.connectionLabel), \(codex.workLabel), \(codex.approvalCount) approvals")
+        .accessibilityLabel("Codex work, \(codex.connectionLabel), \(codex.workLabel), \(codex.approvalCount) actionable approvals, \(codex.retainedApprovalCount) retained approval records")
     }
 
     private func evidenceShowcase(layout: DeskRuntimeLayout) -> some View {
