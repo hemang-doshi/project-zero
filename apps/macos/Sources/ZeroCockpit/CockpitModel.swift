@@ -2,94 +2,6 @@ import Combine
 import Foundation
 import ZeroKit
 
-public enum RuntimeCommandValue: Codable, Equatable, Sendable,
-    ExpressibleByStringLiteral, ExpressibleByIntegerLiteral,
-    ExpressibleByFloatLiteral, ExpressibleByBooleanLiteral
-{
-    case object([String: RuntimeCommandValue])
-    case array([RuntimeCommandValue])
-    case string(String)
-    case integer(Int64)
-    case number(Double)
-    case bool(Bool)
-    case null
-
-    public init(stringLiteral value: String) { self = .string(value) }
-    public init(integerLiteral value: Int64) { self = .integer(value) }
-    public init(floatLiteral value: Double) { self = .number(value) }
-    public init(booleanLiteral value: Bool) { self = .bool(value) }
-
-    public init(from decoder: Decoder) throws {
-        let value = try decoder.singleValueContainer()
-        if value.decodeNil() { self = .null }
-        else if let decoded = try? value.decode(Bool.self) { self = .bool(decoded) }
-        else if let decoded = try? value.decode(Int64.self) { self = .integer(decoded) }
-        else if let decoded = try? value.decode(Double.self) { self = .number(decoded) }
-        else if let decoded = try? value.decode(String.self) { self = .string(decoded) }
-        else if let decoded = try? value.decode([RuntimeCommandValue].self) { self = .array(decoded) }
-        else { self = .object(try value.decode([String: RuntimeCommandValue].self)) }
-    }
-
-    public func encode(to encoder: Encoder) throws {
-        var value = encoder.singleValueContainer()
-        switch self {
-        case .object(let decoded): try value.encode(decoded)
-        case .array(let decoded): try value.encode(decoded)
-        case .string(let decoded): try value.encode(decoded)
-        case .integer(let decoded): try value.encode(decoded)
-        case .number(let decoded): try value.encode(decoded)
-        case .bool(let decoded): try value.encode(decoded)
-        case .null: try value.encodeNil()
-        }
-    }
-}
-
-public struct RuntimeCommandRequest: Codable, Equatable, Sendable {
-    public let id: String
-    public let op: String
-    public let body: [String: RuntimeCommandValue]
-
-    public init(id: String, op: String, body: [String: RuntimeCommandValue] = [:]) {
-        self.id = id
-        self.op = op
-        self.body = body
-    }
-}
-
-public struct RuntimeCommandResponse: Codable, Equatable, Sendable {
-    public let version: String
-    public let id: String
-    public let status: String
-
-    public init(version: String, id: String, status: String) {
-        self.version = version
-        self.id = id
-        self.status = status
-    }
-}
-
-public struct RuntimeProjectAuthority: Codable, Equatable, Sendable {
-    public let id: String
-    public let name: String
-    public let path: String
-
-    public init(id: String, name: String, path: String) {
-        self.id = id
-        self.name = name
-        self.path = path
-    }
-}
-
-public struct RuntimeProjectResponse: Codable, Equatable, Sendable {
-    public let version: String
-    public let project: RuntimeProjectAuthority
-
-    public init(version: String, project: RuntimeProjectAuthority) {
-        self.version = version
-        self.project = project
-    }
-}
-
 public enum RuntimeCommandState: Equatable, Sendable {
     case idle
     case submitting(id: String, operation: String)
@@ -104,125 +16,60 @@ public enum RuntimeCommandState: Equatable, Sendable {
 }
 
 @MainActor
-public final class CockpitClockSource: ObservableObject {
-    @Published public var now = Date()
-
-    public init(now: Date = Date()) { self.now = now }
-}
-
-@MainActor
 public final class CockpitModel: ObservableObject {
     @Published public var selection = CockpitSelection()
     @Published public private(set) var commandState: RuntimeCommandState = .idle
     @Published public private(set) var isWindowActive = false
-    /// Wall-clock for elapsed labels. Deliberately NOT @Published: publishing
-    /// the whole model every second re-evaluates every subscribed view and
-    /// re-lays-out entire windows. The 1Hz tick publishes only through
-    /// `clockSource`; clock-reading leaves subscribe to that instead.
-    public private(set) var clock = Date()
-    /// Narrow tick publisher. Only elapsed/expiry leaves observe this.
-    public let clockSource = CockpitClockSource()
+    @Published public private(set) var clock = Date()
     @Published public private(set) var codexActionError: String?
-    @Published public private(set) var openCodeActionError: String?
 
     public let socketPath: String
     public let runtime: CockpitClient
     public let codex: CodexAppServer
-    /// Project Zero-owned OpenCode ACP bridge. Manual connect only — like
-    /// `codex`, constructing the model starts no process, session, or prompt.
-    /// Session IDs are never valid across the two bridges.
-    public let openCode: OpenCodeBridge
 
-    /// Flight Recorder noise filter: render/clock/SSE chatter
-    /// (display.*, clock.tick, sse.keepalive, ready) is hidden by default.
-    /// The subscription is application-lifetime; tab switches never resubscribe.
-    @Published public var showAllRecords = false
-    /// Unified provider choice driving the single provider → model → policy
-    /// dropdown. Defaults to Codex; existing Codex paths keep working.
-    @Published public var activeProvider: ProviderID = .codex
-    /// Per-provider session registries. A Codex thread ID is never valid for
-    /// OpenCode and vice versa, so the two namespaces stay separate; shared
-    /// skills (not threads) are the only cross-provider surface.
-    @Published public var codexThreadSettings: [String: CodexSettings] = [:]
-    @Published public var openCodeThreadSettings: [String: OpenCodeThreadSettings] = [:]
-
-    private struct DeliveryBaseline: Codable, Sendable {
-        let commandID: String
-        let snapshotRevision: UInt64
-        let displayInvocationIDs: Set<String>
-    }
-
-    private struct PersistedPendingCommand: Codable, Sendable {
-        let request: RuntimeCommandRequest
-        let deliveryBaseline: DeliveryBaseline?
-    }
-
-    private enum ApprovalResolution: String, Codable, Sendable {
-        case waiting
-        case approved
-        case denied
-    }
-
-    private struct ApprovalDeliveryLifecycle: Codable, Sendable {
-        let baseline: DeliveryBaseline
-        var resolution: ApprovalResolution
-    }
-
-    private let sendCommand: @Sendable (RuntimeCommandRequest) async throws -> RuntimeCommandResponse
-    private let resolveProject: @Sendable (String) async throws -> RuntimeProjectResponse
+    private let sendCommand: ([String: Any]) async throws -> Any
+    private let resolveProjectPath: (String) async throws -> String
     private let userDefaults: UserDefaults?
     private let pendingDefaultsKey: String
-    private let approvalDefaultsKey: String
-    private var pendingCommand: RuntimeCommandRequest?
-    private var pendingDeliveryBaseline: DeliveryBaseline?
-    private var committedDeliveryBaseline: DeliveryBaseline?
-    private var approvalDeliveryLifecycle: ApprovalDeliveryLifecycle?
-    private var activeSubmissionID: UUID?
+    private var pendingCommand: [String: Any]?
     private var clockTask: Task<Void, Never>?
     private var subscriptions: Set<AnyCancellable> = []
     private var previewConnection: RuntimeConnectionState?
-    private var runtimeStarted = false
-    private var visibleWindowCount = 0
 
     public init(
         socketPath: String? = nil,
         client: CockpitClient? = nil,
         codex: CodexAppServer? = nil,
-        openCode: OpenCodeBridge? = nil,
-        sendCommand: (@Sendable (RuntimeCommandRequest) async throws -> RuntimeCommandResponse)? = nil,
-        resolveProject: (@Sendable (String) async throws -> RuntimeProjectResponse)? = nil,
+        sendCommand: (([String: Any]) async throws -> Any)? = nil,
+        resolveProjectPath: ((String) async throws -> String)? = nil,
         userDefaults: UserDefaults? = .standard
     ) {
         let resolvedSocket = socketPath ?? Self.commandLineSocketPath()
         self.socketPath = resolvedSocket
         self.runtime = client ?? CockpitClient(socketPath: resolvedSocket)
         self.codex = codex ?? CodexAppServer()
-        self.openCode = openCode ?? OpenCodeBridge()
         self.sendCommand = sendCommand ?? { request in
-            let encoded = try JSONEncoder().encode(request)
-            guard let body = try JSONSerialization.jsonObject(with: encoded) as? [String: Any] else {
-                throw ZeroError("Invalid command payload")
-            }
-            let value = try await UnixHTTP.call(socketPath: resolvedSocket, path: "commands", body: body)
-            let response = try JSONSerialization.data(withJSONObject: value)
-            return try JSONDecoder().decode(RuntimeCommandResponse.self, from: response)
+            try await UnixHTTP.call(socketPath: resolvedSocket, path: "commands", body: request)
         }
-        self.resolveProject = resolveProject ?? { projectID in
+        self.resolveProjectPath = resolveProjectPath ?? { projectID in
             var allowed = CharacterSet.urlPathAllowed
             allowed.remove(charactersIn: "/?#%")
             guard let encoded = projectID.addingPercentEncoding(withAllowedCharacters: allowed), !encoded.isEmpty else {
                 throw ZeroError("Invalid project identity")
             }
             let value = try await UnixHTTP.call(socketPath: resolvedSocket, path: "projects/\(encoded)")
-            let response = try JSONSerialization.data(withJSONObject: value)
-            return try JSONDecoder().decode(RuntimeProjectResponse.self, from: response)
+            guard let envelope = value as? [String: Any],
+                  let project = envelope["project"] as? [String: Any],
+                  let path = project["path"] as? String,
+                  path.hasPrefix("/") else {
+                throw ZeroError("Registered project path unavailable")
+            }
+            return path
         }
         self.userDefaults = userDefaults
         self.pendingDefaultsKey = "pending:\(resolvedSocket)"
-        self.approvalDefaultsKey = "approval-delivery:\(resolvedSocket)"
 
         restorePendingCommand()
-        restoreApprovalDeliveryLifecycle()
         bindOwnedClients()
     }
 
@@ -236,7 +83,7 @@ public final class CockpitModel: ObservableObject {
             socketPath: "/preview/project-zero.sock",
             client: client,
             sendCommand: { _ in throw ZeroError("Preview runtime is unavailable") },
-            resolveProject: { _ in throw ZeroError("Preview project is unavailable") },
+            resolveProjectPath: { _ in throw ZeroError("Preview project is unavailable") },
             userDefaults: nil
         )
         model.previewConnection = connection
@@ -246,7 +93,6 @@ public final class CockpitModel: ObservableObject {
     public var snapshot: CockpitSnapshot? { runtime.snapshot }
     public var runtimeConnection: RuntimeConnectionState { previewConnection ?? runtime.state }
     public var codexConnection: CodexConnectionState { codex.state }
-    public var openCodeConnection: CodexConnectionState { openCode.connectionState }
 
     public var runtimeStatusLabel: String {
         switch runtimeConnection {
@@ -272,23 +118,17 @@ public final class CockpitModel: ObservableObject {
         return session.project
     }
 
-    public var focusElapsedMilliseconds: Int64 { focusElapsedMilliseconds(at: clock) }
-
-    public func focusElapsedMilliseconds(at now: Date) -> Int64 {
+    public var focusElapsedMilliseconds: Int64 {
         guard let session = snapshot?.session else { return 0 }
         guard runtimeConnection == .live,
               session.state == "RUNNING",
               let receivedAt = runtime.receivedAt else { return session.elapsedMS }
-        let additional = max(0, now.timeIntervalSince(receivedAt) * 1_000)
+        let additional = max(0, clock.timeIntervalSince(receivedAt) * 1_000)
         return session.elapsedMS + Int64(additional)
     }
 
     public var focusElapsedLabel: String {
         CockpitFormat.elapsed(milliseconds: focusElapsedMilliseconds)
-    }
-
-    public func focusElapsedLabel(at now: Date) -> String {
-        CockpitFormat.elapsed(milliseconds: focusElapsedMilliseconds(at: now))
     }
 
     public var deliveryState: DeliveryState {
@@ -302,46 +142,9 @@ public final class CockpitModel: ObservableObject {
         guard displayNodes.contains(where: { $0.status == "ONLINE" }) else {
             return displayNodes.contains(where: { $0.status == "SUSPECT" }) ? .stale : .offline
         }
-        let displayInvocations = snapshot.invocations.filter {
+        guard let latest = snapshot.invocations.first(where: {
             $0["capability"].string == "display.render" || $0["capability"].string == "display.clear"
-        }
-        let latest: RuntimeRecord?
-        if let lifecycle = effectiveApprovalDeliveryLifecycle {
-            let baseline = lifecycle.baseline
-            if let invocation = matchingDisplayInvocation(for: baseline, in: displayInvocations) {
-                latest = invocation
-            } else if lifecycle.resolution == .denied {
-                return .stale
-            } else if let proposal = snapshot.invocations.first(where: {
-                $0["id"].string == baseline.commandID && $0["capability"].string?.hasPrefix("session.") == true
-            }) {
-                switch proposal["status"].string?.uppercased() {
-                case "WAITING_APPROVAL", "QUEUED": return .queued
-                case "SUCCEEDED": return .committedLocally
-                case "FAILED", "REJECTED", "EXPIRED", "TIMED_OUT", "CANCELLED": return .stale
-                default: return .stale
-                }
-            } else if snapshot.approvals.contains(where: {
-                $0["id"].string == baseline.commandID
-                    && $0["capability"].string?.hasPrefix("session.") == true
-                    && $0["status"].string?.uppercased() == "WAITING_APPROVAL"
-            }) {
-                return .queued
-            } else {
-                if lifecycle.resolution == .waiting,
-                   snapshot.revision <= baseline.snapshotRevision {
-                    return .queued
-                }
-                return .stale
-            }
-        } else if let baseline = committedDeliveryBaseline {
-            guard snapshot.revision > baseline.snapshotRevision else { return .committedLocally }
-            latest = matchingDisplayInvocation(for: baseline, in: displayInvocations)
-            guard latest != nil else { return .committedLocally }
-        } else {
-            latest = displayInvocations.first
-        }
-        guard let latest else {
+        }) else {
             return snapshot.session.state == "IDLE" ? .stale : .committedLocally
         }
         if let nodeID = latest["node"].string,
@@ -362,18 +165,7 @@ public final class CockpitModel: ObservableObject {
         let runtimeApprovals = snapshot?.approvals.count ?? 0
         let pendingFirings = snapshot?.firings.filter { $0["state"].string == "PENDING" }.count ?? 0
         let uncertain = pendingCommand == nil ? 0 : 1
-        let proposed = approvalProposalNeedsAttention && !approvalProposalIsInSnapshot ? 1 : 0
-        return runtimeApprovals + pendingFirings + codex.store.approvals.count + uncertain + proposed
-    }
-
-    /// A bounded snapshot with a truncated approval or firing collection can
-    /// only establish a minimum number of items requiring owner attention.
-    public var attentionIsLowerBound: Bool {
-        snapshot?.truncated["approvals"] == true || snapshot?.truncated["firings"] == true
-    }
-
-    public var attentionLabel: String {
-        "\(attentionCount)\(attentionIsLowerBound ? "+" : "")"
+        return runtimeApprovals + pendingFirings + codex.store.approvals.count + uncertain
     }
 
     public var canIssueRuntimeCommand: Bool {
@@ -391,45 +183,35 @@ public final class CockpitModel: ObservableObject {
 
     public var hasUncertainRuntimeCommand: Bool { pendingCommand != nil }
 
-    /// Starts the one application-owned runtime stream. Windows and the menu
-    /// share this model, so closing a WindowGroup instance must not stop it.
-    public func applicationDidStart() {
-        guard !runtimeStarted else { return }
-        runtimeStarted = true
+    public func windowDidAppear() {
+        guard !isWindowActive else { return }
+        isWindowActive = true
         previewConnection = nil
         runtime.start()
         runtime.refresh()
         clock = Date()
-        clockSource.now = clock
         clockTask = Task { [weak self] in
             while !Task.isCancelled {
                 do { try await Task.sleep(nanoseconds: 1_000_000_000) } catch { return }
-                guard let self, self.runtimeStarted else { return }
-                // Plain stored `clock` never publishes the model; only the
-                // narrow `clockSource` publisher fires, so just the
-                // clock-reading leaves re-evaluate each second.
+                guard let self, self.isWindowActive else { return }
                 self.clock = Date()
-                self.clockSource.now = self.clock
             }
         }
     }
 
-    public func windowDidAppear() {
-        applicationDidStart()
-        visibleWindowCount += 1
-        isWindowActive = true
-    }
-
     public func windowDidDisappear() {
-        visibleWindowCount = max(0, visibleWindowCount - 1)
-        isWindowActive = visibleWindowCount > 0
+        guard isWindowActive else { return }
+        isWindowActive = false
+        clockTask?.cancel()
+        clockTask = nil
+        runtime.stop()
     }
 
     /// Sends a single owner-authorized command through zerod's owner-only Unix
     /// socket. Transport ambiguity retains the same request identity for retry.
     @discardableResult
-    public func command(_ operation: String, _ body: [String: RuntimeCommandValue] = [:]) async -> Bool {
-        guard !operation.isEmpty else {
+    public func command(_ operation: String, _ body: [String: Any] = [:]) async -> Bool {
+        guard !operation.isEmpty, JSONSerialization.isValidJSONObject(body) else {
             commandState = .blocked(operation: operation, message: "Invalid command payload; no action was sent.")
             return false
         }
@@ -437,9 +219,8 @@ public final class CockpitModel: ObservableObject {
             commandState = .blocked(operation: operation, message: "Runtime is offline or unavailable; no action was sent.")
             return false
         }
-        let request = RuntimeCommandRequest(id: UUID().uuidString, op: operation, body: body)
+        let request: [String: Any] = ["id": UUID().uuidString, "op": operation, "body": body]
         pendingCommand = request
-        pendingDeliveryBaseline = operation.hasPrefix("session.") ? deliveryBaseline(commandID: request.id) : nil
         persistPendingCommand()
         return await sendPendingCommand()
     }
@@ -447,15 +228,11 @@ public final class CockpitModel: ObservableObject {
     @discardableResult
     public func retryPendingRuntimeCommand() async -> Bool {
         guard pendingCommand != nil else { return false }
-        guard !commandState.isSubmitting, activeSubmissionID == nil else { return false }
         guard runtimeConnection == .live, snapshot != nil else {
-            if let pendingCommand {
-                commandState = .uncertain(id: pendingCommand.id, operation: pendingCommand.op, message: "Runtime is offline; retry was not sent.")
+            if let operation = pendingCommand?["op"] as? String, let id = pendingCommand?["id"] as? String {
+                commandState = .uncertain(id: id, operation: operation, message: "Runtime is offline; retry was not sent.")
             }
             return false
-        }
-        if pendingDeliveryBaseline == nil, let pendingCommand, pendingCommand.op.hasPrefix("session.") {
-            pendingDeliveryBaseline = deliveryBaseline(commandID: pendingCommand.id)
         }
         return await sendPendingCommand()
     }
@@ -466,7 +243,7 @@ public final class CockpitModel: ObservableObject {
             commandState = .blocked(operation: "session.start", message: "Select a registered project before starting focus.")
             return false
         }
-        return await command("session.start", ["project_id": .string(projectID)])
+        return await command("session.start", ["project_id": projectID])
     }
 
     @discardableResult
@@ -493,7 +270,7 @@ public final class CockpitModel: ObservableObject {
             commandState = .blocked(operation: "session.end", message: "There is no active focus to end.")
             return false
         }
-        return await command("session.end", ["expected_revision": .integer(revision)])
+        return await command("session.end", ["expected_revision": revision])
     }
 
     @discardableResult
@@ -502,12 +279,7 @@ public final class CockpitModel: ObservableObject {
             commandState = .blocked(operation: "approvals", message: "That exact approval is no longer pending.")
             return false
         }
-        if approvalDeliveryLifecycle?.baseline.commandID != id,
-           let lifecycle = reconstructedApprovalDeliveryLifecycle(id: id) {
-            approvalDeliveryLifecycle = lifecycle
-            persistApprovalDeliveryLifecycle()
-        }
-        return await command(approve ? "approvals.approve" : "approvals.deny", ["id": .string(id)])
+        return await command(approve ? "approvals.approve" : "approvals.deny", ["id": id])
     }
 
     @discardableResult
@@ -527,26 +299,6 @@ public final class CockpitModel: ObservableObject {
         codexActionError = nil
     }
 
-    /// Manual OpenCode ACP connect only: sends `initialize` plus one
-    /// model-discovery `session/new` probe, never a prompt. Mirrors
-    /// `connectCodex` — failure surfaces as a visible error, not a hang.
-    @discardableResult
-    public func connectOpenCode() async -> Bool {
-        openCodeActionError = nil
-        do {
-            try await openCode.connect()
-            return true
-        } catch {
-            openCodeActionError = error.localizedDescription
-            return false
-        }
-    }
-
-    public func disconnectOpenCode() {
-        openCode.disconnect()
-        openCodeActionError = nil
-    }
-
     public func startCodexThread(projectID: String, model: String? = nil, mode: CodexMode) async -> String? {
         guard runtimeConnection == .live,
               snapshot?.projects.contains(where: { $0.id == projectID }) == true else {
@@ -554,13 +306,8 @@ public final class CockpitModel: ObservableObject {
             return nil
         }
         do {
-            let response = try await resolveProject(projectID)
-            guard response.version == "0.2",
-                  response.project.id == projectID,
-                  response.project.path.hasPrefix("/") else {
-                throw ZeroError("Registered project path unavailable")
-            }
-            let id = try await codex.startThread(project: response.project.path, model: model, mode: mode)
+            let authoritativePath = try await resolveProjectPath(projectID)
+            let id = try await codex.startThread(project: authoritativePath, model: model, mode: mode)
             codexActionError = nil
             return id
         } catch {
@@ -610,65 +357,26 @@ public final class CockpitModel: ObservableObject {
 
     private func sendPendingCommand() async -> Bool {
         guard let request = pendingCommand,
-              !request.id.isEmpty,
-              !request.op.isEmpty else {
+              let id = request["id"] as? String,
+              let operation = request["op"] as? String else {
             commandState = .blocked(operation: "unknown", message: "Pending action data is invalid.")
             return false
         }
-        guard activeSubmissionID == nil else { return false }
-        let id = request.id
-        let operation = request.op
-        let submissionID = UUID()
-        activeSubmissionID = submissionID
         commandState = .submitting(id: id, operation: operation)
         do {
-            let response = try await sendCommand(request)
-            guard activeSubmissionID == submissionID, pendingCommand?.id == id else { return false }
-            guard response.version == "0.1", response.id == id else {
-                throw ZeroError("Runtime returned a mismatched command response")
-            }
-            switch response.status.uppercased() {
-            case "SUCCEEDED":
-                if operation.hasPrefix("session.") {
-                    approvalDeliveryLifecycle = nil
-                    clearPersistedApprovalDeliveryLifecycle()
-                    committedDeliveryBaseline = pendingDeliveryBaseline ?? deliveryBaseline(commandID: id)
-                } else if operation == "approvals.approve" || operation == "approvals.deny",
-                          case .string(let approvalID) = request.body["id"],
-                          approvalDeliveryLifecycle?.baseline.commandID == approvalID {
-                    approvalDeliveryLifecycle?.resolution = operation == "approvals.approve" ? .approved : .denied
-                    persistApprovalDeliveryLifecycle()
-                }
-            case "WAITING_APPROVAL" where operation.hasPrefix("session."):
-                if let baseline = pendingDeliveryBaseline ?? deliveryBaseline(commandID: id) {
-                    approvalDeliveryLifecycle = ApprovalDeliveryLifecycle(
-                        baseline: baseline,
-                        resolution: .waiting
-                    )
-                    persistApprovalDeliveryLifecycle()
-                }
-            default:
-                throw ZeroError("Runtime returned an unsupported command status: \(response.status)")
-            }
-            activeSubmissionID = nil
+            _ = try await sendCommand(request)
             pendingCommand = nil
-            pendingDeliveryBaseline = nil
             clearPersistedCommand()
             commandState = .idle
             runtime.refresh()
             return true
         } catch let error as ZeroError where error.rejected {
-            guard activeSubmissionID == submissionID, pendingCommand?.id == id else { return false }
-            activeSubmissionID = nil
             pendingCommand = nil
-            pendingDeliveryBaseline = nil
             clearPersistedCommand()
             commandState = .rejected(operation: operation, message: error.localizedDescription)
             runtime.refresh()
             return false
         } catch {
-            guard activeSubmissionID == submissionID, pendingCommand?.id == id else { return false }
-            activeSubmissionID = nil
             commandState = .uncertain(
                 id: id,
                 operation: operation,
@@ -682,180 +390,31 @@ public final class CockpitModel: ObservableObject {
         runtime.objectWillChange
             .sink { [weak self] _ in self?.objectWillChange.send() }
             .store(in: &subscriptions)
-        runtime.$snapshot
-            .compactMap { $0 }
-            .sink { [weak self] snapshot in
-                self?.reconcileApprovalDeliveryLifecycle(with: snapshot)
-            }
-            .store(in: &subscriptions)
         codex.objectWillChange
-            .sink { [weak self] _ in self?.objectWillChange.send() }
-            .store(in: &subscriptions)
-        openCode.objectWillChange
             .sink { [weak self] _ in self?.objectWillChange.send() }
             .store(in: &subscriptions)
     }
 
     private func restorePendingCommand() {
-        guard let data = userDefaults?.data(forKey: pendingDefaultsKey) else {
+        guard let data = userDefaults?.data(forKey: pendingDefaultsKey),
+              let value = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let id = value["id"] as? String,
+              let operation = value["op"] as? String,
+              value["body"] is [String: Any] else {
             return
         }
-        let decoder = JSONDecoder()
-        let persisted: PersistedPendingCommand
-        if let value = try? decoder.decode(PersistedPendingCommand.self, from: data) {
-            persisted = value
-        } else if let legacy = try? decoder.decode(RuntimeCommandRequest.self, from: data) {
-            persisted = PersistedPendingCommand(request: legacy, deliveryBaseline: nil)
-        } else {
-            return
-        }
-        guard !persisted.request.id.isEmpty, !persisted.request.op.isEmpty else { return }
-        pendingCommand = persisted.request
-        pendingDeliveryBaseline = persisted.deliveryBaseline
-        commandState = .uncertain(
-            id: persisted.request.id,
-            operation: persisted.request.op,
-            message: "A prior action needs an explicit retry."
-        )
+        pendingCommand = value
+        commandState = .uncertain(id: id, operation: operation, message: "A prior action needs an explicit retry.")
     }
 
     private func persistPendingCommand() {
         guard let pendingCommand,
-              let data = try? JSONEncoder().encode(PersistedPendingCommand(
-                  request: pendingCommand,
-                  deliveryBaseline: pendingDeliveryBaseline
-              )) else { return }
+              let data = try? JSONSerialization.data(withJSONObject: pendingCommand) else { return }
         userDefaults?.set(data, forKey: pendingDefaultsKey)
-    }
-
-    private var effectiveApprovalDeliveryLifecycle: ApprovalDeliveryLifecycle? {
-        if let approvalDeliveryLifecycle {
-            return approvalDeliveryLifecycle
-        }
-        guard let snapshot,
-              let approval = snapshot.approvals.first(where: {
-            guard let id = $0["id"].string, !id.isEmpty,
-                  $0["capability"].string?.hasPrefix("session.") == true else {
-                return false
-            }
-            return $0["status"].string?.uppercased() == "WAITING_APPROVAL"
-        }), let id = approval["id"].string else {
-            return nil
-        }
-        guard let lifecycle = reconstructedApprovalDeliveryLifecycle(id: id) else {
-            return nil
-        }
-        return lifecycle
-    }
-
-    private func reconstructedApprovalDeliveryLifecycle(id: String) -> ApprovalDeliveryLifecycle? {
-        guard let snapshot else { return nil }
-        return reconstructedApprovalDeliveryLifecycle(id: id, snapshot: snapshot)
-    }
-
-    private func reconstructedApprovalDeliveryLifecycle(
-        id: String,
-        snapshot: CockpitSnapshot
-    ) -> ApprovalDeliveryLifecycle? {
-        guard snapshot.approvals.contains(where: {
-            $0["id"].string == id
-                && $0["capability"].string?.hasPrefix("session.") == true
-                && $0["status"].string?.uppercased() == "WAITING_APPROVAL"
-        }), let baseline = deliveryBaseline(commandID: id, snapshot: snapshot) else {
-            return nil
-        }
-        return ApprovalDeliveryLifecycle(baseline: baseline, resolution: .waiting)
-    }
-
-    private func reconcileApprovalDeliveryLifecycle(with snapshot: CockpitSnapshot) {
-        guard let approval = snapshot.approvals.first(where: {
-            guard let id = $0["id"].string, !id.isEmpty,
-                  $0["capability"].string?.hasPrefix("session.") == true else {
-                return false
-            }
-            return $0["status"].string?.uppercased() == "WAITING_APPROVAL"
-        }), let id = approval["id"].string,
-              approvalDeliveryLifecycle?.baseline.commandID != id,
-              let lifecycle = reconstructedApprovalDeliveryLifecycle(id: id, snapshot: snapshot) else {
-            return
-        }
-        approvalDeliveryLifecycle = lifecycle
-        persistApprovalDeliveryLifecycle()
-    }
-
-    private var approvalProposalIsInSnapshot: Bool {
-        guard let commandID = effectiveApprovalDeliveryLifecycle?.baseline.commandID else { return false }
-        return snapshot?.approvals.contains(where: { $0["id"].string == commandID }) == true
-    }
-
-    private var approvalProposalNeedsAttention: Bool {
-        guard let lifecycle = effectiveApprovalDeliveryLifecycle else { return false }
-        guard lifecycle.resolution == .waiting else { return false }
-        let commandID = lifecycle.baseline.commandID
-        guard let invocation = snapshot?.invocations.first(where: {
-            $0["id"].string == commandID && $0["capability"].string?.hasPrefix("session.") == true
-        }) else {
-            return (snapshot?.revision ?? 0) <= lifecycle.baseline.snapshotRevision
-        }
-        switch invocation["status"].string?.uppercased() {
-        case "SUCCEEDED", "FAILED", "REJECTED", "EXPIRED", "TIMED_OUT", "CANCELLED": return false
-        default: return true
-        }
-    }
-
-    private func matchingDisplayInvocation(
-        for baseline: DeliveryBaseline,
-        in invocations: [RuntimeRecord]
-    ) -> RuntimeRecord? {
-        invocations.first(where: { invocation in
-            guard let id = invocation["id"].string,
-                  let node = invocation["node"].string,
-                  !node.isEmpty else {
-                return false
-            }
-            return id == baseline.commandID + ":" + node
-                && !baseline.displayInvocationIDs.contains(id)
-        })
-    }
-
-    private func deliveryBaseline(commandID: String) -> DeliveryBaseline? {
-        guard let snapshot else { return nil }
-        return deliveryBaseline(commandID: commandID, snapshot: snapshot)
-    }
-
-    private func deliveryBaseline(commandID: String, snapshot: CockpitSnapshot) -> DeliveryBaseline? {
-        let ids = Set(snapshot.invocations.compactMap { invocation -> String? in
-            guard invocation["capability"].string == "display.render" || invocation["capability"].string == "display.clear" else {
-                return nil
-            }
-            return invocation["id"].string
-        })
-        return DeliveryBaseline(commandID: commandID, snapshotRevision: snapshot.revision, displayInvocationIDs: ids)
     }
 
     private func clearPersistedCommand() {
         userDefaults?.removeObject(forKey: pendingDefaultsKey)
-    }
-
-    private func restoreApprovalDeliveryLifecycle() {
-        guard let data = userDefaults?.data(forKey: approvalDefaultsKey),
-              let lifecycle = try? JSONDecoder().decode(ApprovalDeliveryLifecycle.self, from: data),
-              !lifecycle.baseline.commandID.isEmpty else {
-            return
-        }
-        approvalDeliveryLifecycle = lifecycle
-    }
-
-    private func persistApprovalDeliveryLifecycle() {
-        guard let approvalDeliveryLifecycle,
-              let data = try? JSONEncoder().encode(approvalDeliveryLifecycle) else {
-            return
-        }
-        userDefaults?.set(data, forKey: approvalDefaultsKey)
-    }
-
-    private func clearPersistedApprovalDeliveryLifecycle() {
-        userDefaults?.removeObject(forKey: approvalDefaultsKey)
     }
 
     private static func commandLineSocketPath() -> String {

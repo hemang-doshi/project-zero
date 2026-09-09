@@ -3,12 +3,10 @@ import SwiftUI
 
 public struct MenuCompanion: View {
     @ObservedObject private var model: CockpitModel
-    @ObservedObject private var tick: CockpitClockSource
     @Environment(\.openWindow) private var openWindow
 
     public init(model: CockpitModel) {
         self.model = model
-        _tick = ObservedObject(wrappedValue: model.clockSource)
     }
 
     public var body: some View {
@@ -29,7 +27,7 @@ public struct MenuCompanion: View {
             statusRow(title: "Delivery", value: delivery.label, symbol: delivery.symbol, tone: delivery.tone)
             statusRow(
                 title: "Attention",
-                value: model.attentionLabel,
+                value: String(model.attentionCount),
                 symbol: model.attentionCount == 0 ? "checkmark.shield" : "exclamationmark.triangle",
                 tone: model.attentionCount == 0 ? .healthy : .attention
             )
@@ -65,11 +63,10 @@ public struct MenuCompanion: View {
         .background(ZeroTheme.workstation)
         .foregroundStyle(ZeroTheme.ink)
         .preferredColorScheme(.light)
-        .onAppear { model.applicationDidStart() }
     }
 
     private var focusSummary: String {
-        let summary = "\(model.activeProjectName) · \(model.focusElapsedLabel(at: tick.now))"
+        let summary = "\(model.activeProjectName) · \(model.focusElapsedLabel)"
         if model.runtimeConnection == .live { return summary }
         return model.snapshot == nil ? "Unavailable · 0:00:00" : "Last known: \(summary)"
     }
@@ -77,7 +74,7 @@ public struct MenuCompanion: View {
     private func statusRow(title: String, value: String, symbol: String, tone: ZeroTone) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 10) {
             Text(title.uppercased())
-                .font(.zeroMono(size: 9, weight: .bold))
+                .font(.system(size: 9, weight: .bold, design: .monospaced))
                 .foregroundStyle(ZeroTheme.secondaryInk)
                 .frame(width: 62, alignment: .leading)
             ZeroStatusBadge(value, symbol: symbol, tone: tone)
