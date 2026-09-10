@@ -134,12 +134,14 @@ private enum TopologySceneBuilder {
         let placed = live + upcoming
         let corePosition = SCNVector3(0, 0.4, 0)
 
-        for (index, node) in placed.enumerated() {
+        let nonCore = placed.filter { $0.kind != .core }
+        for node in placed {
             let position: SCNVector3
             if node.kind == .core {
                 position = corePosition
             } else {
-                let slot = Float(index) - Float(placed.count - 1) / 2.0
+                let deviceIndex = nonCore.firstIndex(of: node) ?? 0
+                let slot = Float(deviceIndex) - Float(nonCore.count - 1) / 2.0
                 position = SCNVector3(slot * 2.1, node.kind == .upcoming ? -0.9 : 0.1, node.kind == .upcoming ? -1.2 : 0)
             }
             let geometry = geometry(for: node.kind)
