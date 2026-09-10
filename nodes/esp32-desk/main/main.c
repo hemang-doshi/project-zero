@@ -46,6 +46,17 @@ static zero_view view;
 static uint32_t sequence;
 static char boot_nonce[33];
 static int64_t last_heartbeat, last_screen, view_elapsed, view_at;
+/* Task 7 link evidence (telemetry only; no behavior change from these counters).
+   Prior evidence: Task 0 flap baseline (desk stable-OFFLINE in-window, ~1 daemon
+   read-deadline failure/min, 0 resets) and .runtime/link-final-acceptance.log
+   (TLS transport-read error drops the socket while wifi=1; immediate re-hello
+   races daemon session teardown). RSSI sampled at join, reason/downtime per
+   outage, heartbeat ack/miss + drop counters exported in node.register. */
+static int link_rssi;
+static unsigned link_reason, socket_drops, wifi_drops;
+static unsigned hb_sent, hb_acked;
+static uint32_t hb_pending_seq;
+static int64_t link_down_at, link_downtime_ms;
 static const char *str(const cJSON *v, const char *k) {
   cJSON *p = cJSON_GetObjectItemCaseSensitive(v, k);
   return cJSON_IsString(p) ? p->valuestring : "";
@@ -62,6 +73,15 @@ static bool safe_id(const char *s) {
           *s == '.'))
       return false;
   return true;
+}
+static void link_snapshot(zero_link_evidence *e) {
+  e->rssi_dbm = link_rssi;
+  e->wifi_reason = link_reason;
+  e->downtime_ms = link_downtime_ms;
+  e->hb_sent = hb_sent;
+  e->hb_acked = hb_acked;
+  e->socket_drops = socket_drops;
+  e->wifi_drops = wifi_drops;
 }
 static void send_message(const char *type, const char *body) {
   if (!connected)
@@ -80,6 +100,16 @@ static void send_message(const char *type, const char *body) {
   if (n > 0 && n < (int)sizeof(out))
     esp_websocket_client_send_text(ws, out, n, pdMS_TO_TICKS(1000));
 }
+/* Task 7 rejoin pacing (the ONLY behavior change in this task).
+   Evidence (.runtime/link-final-acceptance.log:46-52,
+   .runtime/link-build6-acceptance.log:101-109): socket drops on transient TLS
+   transport-read errors while wifi=1, and join flaps on transient WiFi reasons
+   2/7; the old code re-helloed immediately (<1 s), racing daemon session
+   teardown (reset/deadline interleave in Task 0 baseline). Gate the
+   application rejoin (session.hello) on a reason-aware backoff with jitter;
+   the transport reconnect itself is untouched. */
+static int64_t hello_not_before;
+static unsigned sock_streak, wifi_streak;
 static void websocket_event(void *arg, esp_event_base_t base, int32_t id,
                             void *data) {
   (void)arg;
@@ -93,6 +123,13 @@ static void websocket_event(void *arg, esp_event_base_t base, int32_t id,
     puts("ZERO SOCKET DISCONNECTED");
     connected = false;
     rx_used = 0;
+    socket_drops++;
+    if (!link_down_at)
+      link_down_at = esp_timer_get_time() / 1000;
+    hello_not_before = esp_timer_get_time() / 1000 +
+                       (int64_t)zero_rejoin_delay_ms(ZERO_REJOIN_TRANSIENT,
+                                                     sock_streak++,
+                                                     (unsigned)esp_random());
   } else if (id == WEBSOCKET_EVENT_DATA) {
     if (e->op_code != 1 && e->op_code != 0)
       return;
@@ -123,12 +160,23 @@ static void websocket_event(void *arg, esp_event_base_t base, int32_t id,
 static void wifi_event(void *arg, esp_event_base_t base, int32_t id,
                        void *data) {
   (void)arg;
-  (void)data;
-  if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP)
+  if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP) {
     wifi_ready = true;
-  else if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED) {
-    printf("ZERO WIFI LOST reason=%u\n",((wifi_event_sta_disconnected_t*)data)->reason);
+    wifi_streak = 0;
+    int64_t now = esp_timer_get_time() / 1000;
+    if (link_down_at)
+      link_downtime_ms = now - link_down_at;
+    link_down_at = 0;
+    wifi_ap_record_t ap;
+    if (esp_wifi_sta_get_ap_info(&ap) == ESP_OK)
+      link_rssi = ap.rssi;
+  } else if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED) {
+    link_reason = ((wifi_event_sta_disconnected_t*)data)->reason;
+    printf("ZERO WIFI LOST reason=%u\n", link_reason);
     wifi_ready = false;
+    wifi_drops++;
+    if (!link_down_at)
+      link_down_at = esp_timer_get_time() / 1000;
   }
 }
 static void handle(const char *message) {
@@ -149,16 +197,49 @@ static void handle(const char *message) {
   }
   const char *type = str(root, "type");
   cJSON *body = cJSON_GetObjectItemCaseSensitive(root, "body");
+  if (!strcmp(type, "ack")) {
+    /* Task 7 link evidence: count daemon acks for our messages so the next
+       node.register can report ack/miss rates. Net-new branch; untouched. */
+    const char *aid = str(body, "id");
+    size_t noncelen = strlen(boot_nonce);
+    if (!strncmp(aid, "button:", 7)) {
+      const char *sep = strchr(aid + 7, ':');
+      if (sep && (size_t)(sep - (aid + 7)) == noncelen &&
+          !strncmp(aid + 7, boot_nonce, noncelen) && sep[1]) {
+        unsigned long seq = strtoul(sep + 1, NULL, 10);
+        if (hb_pending_seq && seq == hb_pending_seq) {
+          hb_acked++;
+          hb_pending_seq = 0;
+        }
+      }
+    }
+    return;
+  }
   if (!strcmp(type, "session.welcome")) {
     const char *s = str(body, "session_id");
     if (!safe_id(s))
       return;
     strcpy(session_id, s);
     welcomed = true;
+    sock_streak = 0;
+    {
+      int64_t now = esp_timer_get_time() / 1000;
+      if (link_down_at)
+        link_downtime_ms = now - link_down_at;
+      link_down_at = 0;
+    }
     audio_sequence=0;
-    send_message("node.register", "{\"render_schema\":\"0.2\",\"artwork\":\"rgb565-32\",\"audio\":\"levels-v2\",\"firmware\":"
-                                  "\"" ZERO_VERSION "\",\"build\":\"" ZERO_BUILD "\",\"capabilities\":["
-                                  "\"display.render\",\"display.clear\"]}");
+    char reg[512], link[ZERO_LINK_JSON_MAX];
+    zero_link_evidence ev;
+    link_snapshot(&ev);
+    if (zero_link_format(link, sizeof(link), &ev) < 0)
+      strcpy(link, "null");
+    snprintf(reg, sizeof(reg),
+             "{\"render_schema\":\"0.2\",\"artwork\":\"rgb565-32\",\"audio\":"
+             "\"levels-v2\",\"firmware\":\"" ZERO_VERSION "\",\"build\":\"" ZERO_BUILD
+             "\",\"capabilities\":[\"display.render\",\"display.clear\"],\"link\":%s}",
+             link);
+    send_message("node.register", reg);
     printf("ZERO ONLINE heap=%lu\n", (unsigned long)esp_get_free_heap_size());
   } else if (!strcmp(type,"display.telemetry") && welcomed) {
     audio_received++;
@@ -330,7 +411,12 @@ void app_main(void) {
     }
     if (provisioned == ESP_OK && !wifi_ready && now >= next_wifi) {
       esp_wifi_connect();
-      next_wifi = now + 1000 + (esp_random() % 1000);
+      /* Task 7: reason-aware retry (was fixed 1000 + rand()%1000, which hammers
+         the AP on credential/config failures). Evidence: join flaps on
+         transient reasons 2/7, .runtime/link-build6-acceptance.log:75-84. */
+      next_wifi = now + (int64_t)zero_rejoin_delay_ms(
+                            zero_rejoin_classify(link_reason), wifi_streak++,
+                            (unsigned)esp_random());
     }
     if (wifi_ready && !ws) {
       mdns_result_t *found = NULL;
@@ -359,14 +445,16 @@ void app_main(void) {
                                     NULL);
       ESP_ERROR_CHECK(esp_websocket_client_start(ws));
     }
-    if (connected && !was_connected) {
+    if (connected && !was_connected && now >= hello_not_before) {
       welcomed = false;
       send_message("session.hello",
                    "{\"versions\":[\"0.1\"],\"max_frame\":8192}");
+      was_connected = true;
     }
-    if (!connected)
+    if (!connected) {
       welcomed = false;
-    was_connected = connected;
+      was_connected = false;
+    }
     if (xQueueReceive(messages, message, 0) == pdTRUE)
       handle(message);
     char audio_message[1024];
@@ -387,6 +475,11 @@ void app_main(void) {
                (unsigned long)esp_get_minimum_free_heap_size(),
                esp_reset_reason());
       send_message("node.heartbeat", body);
+      /* Task 7 link evidence: heartbeat ack rate. send_message stamped the id
+         with ++sequence, so record it as the pending heartbeat; the ack branch
+         in handle() clears it on match. Exported in the next node.register. */
+      hb_sent++;
+      hb_pending_seq = sequence;
       printf("ZERO HEALTH %s audio_rx=%u audio_ok=%u audio_age=%lld media=%s\n", body,audio_received,audio_accepted,(long long)audio_age,view.media);
       last_heartbeat = now;
     }
@@ -396,7 +489,7 @@ void app_main(void) {
       last_screen = now;
     }
     if(cert[0] && now>=panel_test_until)display_animate(now,welcomed);
-    if(now-debug_at>=10000){printf("ZERO LINK wifi=%d socket=%d welcomed=%d queue_overflows=%u audio_rx=%u audio_ok=%u\n",wifi_ready,connected,welcomed,queue_overflows,audio_received,audio_accepted);debug_at=now;}
+    if(now-debug_at>=10000){printf("ZERO LINK wifi=%d socket=%d welcomed=%d queue_overflows=%u audio_rx=%u audio_ok=%u rssi=%d reason=%u downtime_ms=%lld hb=%u/%u sock_drop=%u wifi_drop=%u\n",wifi_ready,connected,welcomed,queue_overflows,audio_received,audio_accepted,link_rssi,link_reason,(long long)link_downtime_ms,hb_sent,hb_acked,socket_drops,wifi_drops);debug_at=now;}
     esp_task_wdt_reset();
     vTaskDelay(pdMS_TO_TICKS(10));
   }
