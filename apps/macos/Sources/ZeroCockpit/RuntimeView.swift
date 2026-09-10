@@ -67,7 +67,7 @@ public struct RuntimeView: View {
                     Text("Local Personal Runtime:")
                     Text("Authoritative")
                         .padding(.horizontal, 5)
-                        .background(Color(red: 0.96, green: 0.67, blue: 0.18).opacity(0.82))
+                        .background(ZeroTheme.brandOrange.opacity(0.82))
                         .rotationEffect(.degrees(-0.8))
                     Text("& Operational")
                 }
@@ -299,6 +299,12 @@ public struct RuntimeView: View {
                             rows: safeEvidenceRows(record, keys: ["id", "state", "project_id", "scheduled_at", "updated_at", "error"]),
                             tone: firingTone(state)
                         )
+                    }
+                    if firings.count > 100 {
+                        Text("+\(firings.count - 100) more firings in the bounded snapshot")
+                            .font(DeskRuntimeType.evidence)
+                            .foregroundStyle(ZeroTheme.secondaryInk)
+                            .padding(.top, 4)
                     }
                 } else {
                     DeskRuntimeEmptyState(

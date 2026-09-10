@@ -476,7 +476,7 @@ struct ZeroBotProjection {
     }
 
     var historyNotice: String {
-        let dropped = store.truncation.threads + store.truncation.turns + store.truncation.items + store.truncation.unknownEvents
+        let dropped = store.truncation.threads + store.truncation.turns + store.truncation.items + store.truncation.unknownEvents + store.truncation.approvals
         var parts = ["Codex history is held only in bounded application memory."]
         if connection != .connected && (!store.threads.isEmpty || !store.approvals.isEmpty) {
             parts.append("Visible Codex state is retained evidence, not a live or actionable run.")

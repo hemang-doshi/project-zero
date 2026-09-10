@@ -74,6 +74,7 @@ public struct CodexHistoryTruncation: Equatable, Sendable {
     public fileprivate(set) var turns = 0
     public fileprivate(set) var items = 0
     public fileprivate(set) var unknownEvents = 0
+    public fileprivate(set) var approvals = 0
     public fileprivate(set) var metadata = false
 }
 
@@ -179,8 +180,14 @@ public struct CodexEventStore: Equatable, Sendable {
     /// history counts by the client's bounded pending-request limit (64 by default).
     private mutating func trimHistory() {
         if approvals.count > 64 {
+            // CodexApproval carries no status/state field: every entry here
+            // is pending by definition (resolve() removes on response), so
+            // no exemption is distinguishable. Drop-oldest, but count it in
+            // truncation.approvals so existing drop-count surfaces disclose
+            // the eviction instead of dropping it silently.
             let overflow = approvals.count - 64
             approvals.removeFirst(overflow)
+            truncation.approvals += overflow
         }
         let pinnedThreads = Set(approvals.compactMap { $0.params["threadId"].string })
         while threadOrder.count > limits.threads,
