@@ -205,4 +205,68 @@ final class ShellLayoutTests: XCTestCase {
         manager.open(.skillLab)
         XCTAssertEqual(manager.zOrder.last, .skillLab)
     }
+
+    // MARK: - Desktop minimize (traffic-light yellow)
+
+    func testDesktopMinimizeUnminimize() {
+        let defaults = trackSuite("ShellLayoutTests.desktopMinimize")
+        let manager = DesktopWindowManager(defaults: defaults)
+        manager.open(.network)
+        manager.minimize(.network)
+        XCTAssertTrue(manager.isMinimized(.network))
+        XCTAssertTrue(manager.isOpen(.network))
+        manager.unminimize(.network)
+        XCTAssertFalse(manager.isMinimized(.network))
+        XCTAssertTrue(manager.isOpen(.network))
+    }
+
+    func testDesktopMinimizePersists() {
+        let defaults = trackSuite("ShellLayoutTests.desktopMinPersist")
+        let manager = DesktopWindowManager(defaults: defaults)
+        manager.open(.network)
+        manager.minimize(.network)
+        let reloaded = DesktopWindowManager(defaults: defaults)
+        XCTAssertTrue(reloaded.isMinimized(.network))
+        XCTAssertTrue(reloaded.isOpen(.network))
+    }
+
+    func testDesktopMinimizeSanitizesUnknownIDs() {
+        let defaults = trackSuite("ShellLayoutTests.desktopMinSanitize")
+        defaults.set(["desk", "runtime"], forKey: "zero.desktop.open")
+        defaults.set(["desk", "runtime"], forKey: "zero.desktop.zorder")
+        defaults.set(["bogus-route", "desk"], forKey: "zero.desktop.minimized")
+        let manager = DesktopWindowManager(defaults: defaults)
+        XCTAssertFalse(manager.minimized.contains(where: { $0.rawValue == "bogus-route" }))
+        XCTAssertTrue(manager.isMinimized(.desk))
+    }
+
+    func testDesktopFallbackSkipsMinimized() {
+        XCTAssertEqual(
+            desktopFallbackSelection(closed: .network, zOrder: [.desk, .runtime, .network], minimized: [.runtime]),
+            .desk
+        )
+        XCTAssertEqual(
+            desktopFallbackSelection(closed: .network, zOrder: [.desk, .network], minimized: [.desk]),
+            .desk
+        )
+    }
+
+    func testDesktopOpenClearsMinimized() {
+        let defaults = trackSuite("ShellLayoutTests.desktopOpenClearsMin")
+        let manager = DesktopWindowManager(defaults: defaults)
+        manager.open(.network)
+        manager.minimize(.network)
+        manager.open(.network)
+        XCTAssertFalse(manager.isMinimized(.network))
+    }
+
+    func testDesktopCloseClearsMinimized() {
+        let defaults = trackSuite("ShellLayoutTests.desktopCloseClearsMin")
+        let manager = DesktopWindowManager(defaults: defaults)
+        manager.open(.network)
+        manager.minimize(.network)
+        manager.close(.network)
+        XCTAssertFalse(manager.isMinimized(.network))
+        XCTAssertFalse(manager.isOpen(.network))
+    }
 }

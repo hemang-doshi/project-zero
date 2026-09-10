@@ -23,8 +23,9 @@ func desktopSanitizeRoutes(_ stored: [String]?) -> [CockpitRoute] {
 
 /// Pure fallback: after closing a route, selection repoints to the new
 /// front window (`zOrder.last`), or `.desk` when nothing remains open.
-func desktopFallbackSelection(closed: CockpitRoute, zOrder: [CockpitRoute]) -> CockpitRoute {
-    zOrder.filter { $0 != closed }.last ?? .desk
+/// Minimized routes are skipped for the fallback target where supplied.
+func desktopFallbackSelection(closed: CockpitRoute, zOrder: [CockpitRoute], minimized: Set<CockpitRoute> = []) -> CockpitRoute {
+    zOrder.filter { $0 != closed && !minimized.contains($0) }.last ?? .desk
 }
 
 /// Per-window origin + size state, persisted locally in UserDefaults.
@@ -82,10 +83,12 @@ final class DesktopWindowManager: ObservableObject {
     private let defaults: UserDefaults
     private static let openKey = "zero.desktop.open"
     private static let zOrderKey = "zero.desktop.zorder"
+    private static let minimizedKey = "zero.desktop.minimized"
     private static let defaultOpen: [CockpitRoute] = [.desk, .runtime]
 
     @Published private(set) var openRoutes: Set<CockpitRoute>
     @Published private(set) var zOrder: [CockpitRoute]
+    @Published private(set) var minimized: Set<CockpitRoute>
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
@@ -97,6 +100,7 @@ final class DesktopWindowManager: ObservableObject {
             resolvedOpen = sanitized.isEmpty ? Set(Self.defaultOpen) : Set(sanitized)
         }
         self.openRoutes = resolvedOpen
+        self.minimized = Set(desktopSanitizeRoutes(defaults.stringArray(forKey: Self.minimizedKey)).filter { resolvedOpen.contains($0) })
         if defaults.object(forKey: Self.zOrderKey) == nil {
             self.zOrder = Array(Self.defaultOpen)
         } else {
@@ -113,12 +117,14 @@ final class DesktopWindowManager: ObservableObject {
 
     func open(_ route: CockpitRoute) {
         openRoutes.insert(route)
+        minimized.remove(route)
         if !zOrder.contains(route) { zOrder.append(route) } else { bringToFront(route) }
         persist()
     }
 
     func close(_ route: CockpitRoute) {
         openRoutes.remove(route)
+        minimized.remove(route)
         zOrder.removeAll { $0 == route }
         persist()
     }
@@ -130,6 +136,20 @@ final class DesktopWindowManager: ObservableObject {
     func bringToFront(_ route: CockpitRoute) {
         zOrder.removeAll { $0 == route }
         zOrder.append(route)
+        persist()
+    }
+
+    func isMinimized(_ route: CockpitRoute) -> Bool { minimized.contains(route) }
+
+    func minimize(_ route: CockpitRoute) {
+        guard openRoutes.contains(route) else { return }
+        minimized.insert(route)
+        persist()
+    }
+
+    func unminimize(_ route: CockpitRoute) {
+        minimized.remove(route)
+        if !zOrder.contains(route) { zOrder.append(route) } else { bringToFront(route); return }
         persist()
     }
 
@@ -152,5 +172,6 @@ final class DesktopWindowManager: ObservableObject {
     private func persist() {
         defaults.set(openRoutes.map(\.rawValue).sorted(), forKey: Self.openKey)
         defaults.set(zOrder.map(\.rawValue), forKey: Self.zOrderKey)
+        defaults.set(minimized.map(\.rawValue).sorted(), forKey: Self.minimizedKey)
     }
 }
