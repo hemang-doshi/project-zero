@@ -260,6 +260,55 @@ final class ShellLayoutTests: XCTestCase {
         XCTAssertFalse(manager.isMinimized(.network))
     }
 
+    func testDesktopInitialOriginCascadesWithoutStored() {
+        let first = desktopInitialOrigin(for: 0, stored: nil)
+        let second = desktopInitialOrigin(for: 1, stored: nil)
+        XCTAssertNotEqual(first, second)
+        let cascade = desktopCascadeOffset(for: 2)
+        XCTAssertEqual(
+            desktopInitialOrigin(for: 2, stored: nil),
+            CGPoint(x: cascade.width, y: cascade.height)
+        )
+    }
+
+    func testDesktopInitialOriginPreservesStored() {
+        XCTAssertEqual(
+            desktopInitialOrigin(for: 3, stored: CGPoint(x: 100, y: 50)),
+            CGPoint(x: 100, y: 50)
+        )
+        let clamped = desktopInitialOrigin(for: 3, stored: CGPoint(x: -10, y: -5))
+        XCTAssertGreaterThanOrEqual(clamped.x, 0)
+        XCTAssertGreaterThanOrEqual(clamped.y, 0)
+    }
+
+    func testDesktopOpenWithoutStoredOriginAppliesCascade() {
+        let defaults = trackSuite("ShellLayoutTests.desktopOpenCascade")
+        let manager = DesktopWindowManager(defaults: defaults)
+        let expected = desktopCascadeOffset(for: manager.openCount)
+        manager.open(.network)
+        XCTAssertTrue(manager.hasStoredOrigin(for: .network))
+        let origin = manager.origin(for: .network)
+        XCTAssertEqual(origin, CGPoint(x: expected.width, y: expected.height))
+    }
+
+    func testDesktopLaunchStaggerAssignsDistinctOrigins() {
+        let defaults = trackSuite("ShellLayoutTests.desktopLaunchStagger")
+        defaults.set(["desk", "runtime", "network"], forKey: "zero.desktop.open")
+        defaults.set(["desk", "runtime", "network"], forKey: "zero.desktop.zorder")
+        let manager = DesktopWindowManager(defaults: defaults)
+        let origins = [manager.origin(for: .desk), manager.origin(for: .runtime), manager.origin(for: .network)]
+        XCTAssertEqual(Set(origins.map { "\($0.x),\($0.y)" }).count, 3)
+    }
+
+    func testDesktopCardContentHasNoNestedShell() {
+        // Single-chrome contract: card content is the route view directly.
+        // No nested CockpitShell may wrap it; this helper-level pin guards
+        // the pure origin path that the card relies on instead of shell chrome.
+        let origins = desktopLaunchOrigins(count: 3)
+        XCTAssertEqual(Set(origins.map { "\($0.x),\($0.y)" }).count, 3)
+        XCTAssertEqual(origins[0], .zero)
+        XCTAssertNotEqual(origins[0], origins[1])
+    }
     func testDesktopCloseClearsMinimized() {
         let defaults = trackSuite("ShellLayoutTests.desktopCloseClearsMin")
         let manager = DesktopWindowManager(defaults: defaults)

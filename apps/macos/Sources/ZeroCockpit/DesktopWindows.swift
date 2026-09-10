@@ -15,7 +15,24 @@ func desktopCascadeOffset(for index: Int) -> CGSize {
     return CGSize(width: CGFloat(slot) * step, height: CGFloat(slot) * step)
 }
 
-/// Pure sanitize: keep known route IDs, drop unknowns.
+/// Pure initial origin: stored origin wins (clamped ≥ 0); when there is no
+/// stored origin, cascade by open count so cards never share 0,0.
+func desktopInitialOrigin(for openCount: Int, stored: CGPoint?) -> CGPoint {
+    guard let stored else {
+        let cascade = desktopCascadeOffset(for: openCount)
+        return CGPoint(x: cascade.width, y: cascade.height)
+    }
+    return CGPoint(x: max(stored.x, 0), y: max(stored.y, 0))
+}
+
+/// Pure launch stagger: distinct cascade origins by index in
+/// `desktopApps()` order for routes lacking stored origins.
+func desktopLaunchOrigins(count: Int) -> [CGPoint] {
+    (0..<count).map {
+        let cascade = desktopCascadeOffset(for: $0)
+        return CGPoint(x: cascade.width, y: cascade.height)
+    }
+}
 func desktopSanitizeRoutes(_ stored: [String]?) -> [CockpitRoute] {
     guard let stored else { return [] }
     return stored.compactMap { CockpitRoute(rawValue: $0) }
@@ -109,6 +126,16 @@ final class DesktopWindowManager: ObservableObject {
             let rest = CockpitRoute.allCases.filter { resolvedOpen.contains($0) && !front.contains($0) }
             self.zOrder = front + rest
         }
+        // Launch stagger: stored-open routes lacking stored origins get
+        // distinct cascade origins by index in desktopApps() order.
+        let ordered = CockpitRoute.allCases.filter { resolvedOpen.contains($0) }
+        for (index, route) in ordered.enumerated() {
+            if defaults.object(forKey: "zero.desktop.origin.\(route.rawValue)") == nil {
+                let cascade = desktopCascadeOffset(for: index)
+                DesktopWindowGeometry(route: route, defaults: defaults).origin =
+                    CGPoint(x: cascade.width, y: cascade.height)
+            }
+        }
     }
 
     var openCount: Int { openRoutes.count }
@@ -116,6 +143,10 @@ final class DesktopWindowManager: ObservableObject {
     func isOpen(_ route: CockpitRoute) -> Bool { openRoutes.contains(route) }
 
     func open(_ route: CockpitRoute) {
+        if !openRoutes.contains(route) && !hasStoredOrigin(for: route) {
+            let cascade = desktopCascadeOffset(for: openRoutes.count)
+            setOrigin(CGPoint(x: cascade.width, y: cascade.height), for: route)
+        }
         openRoutes.insert(route)
         minimized.remove(route)
         if !zOrder.contains(route) { zOrder.append(route) } else { bringToFront(route) }
@@ -155,6 +186,10 @@ final class DesktopWindowManager: ObservableObject {
 
     func origin(for route: CockpitRoute) -> CGPoint {
         DesktopWindowGeometry(route: route, defaults: defaults).origin
+    }
+
+    func hasStoredOrigin(for route: CockpitRoute) -> Bool {
+        defaults.object(forKey: "zero.desktop.origin.\(route.rawValue)") != nil
     }
 
     func setOrigin(_ point: CGPoint, for route: CockpitRoute) {
