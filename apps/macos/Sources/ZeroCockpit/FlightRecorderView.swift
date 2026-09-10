@@ -138,7 +138,7 @@ struct FlightProjection {
         } else {
             notices.append("No runtime snapshot is available.")
         }
-        let codexDrops = codexStore.truncation.threads + codexStore.truncation.turns + codexStore.truncation.items + codexStore.truncation.unknownEvents
+        let codexDrops = codexStore.truncation.threads + codexStore.truncation.turns + codexStore.truncation.items + codexStore.truncation.unknownEvents + codexStore.truncation.approvals
         if codexDrops > 0 || codexStore.truncation.metadata {
             notices.append("Codex memory history has dropped or clipped content.")
         }

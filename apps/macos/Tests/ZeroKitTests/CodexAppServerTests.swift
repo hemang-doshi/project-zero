@@ -347,6 +347,9 @@ final class CodexAppServerTests: XCTestCase {
         }
         XCTAssertEqual(store.approvals.count, 64)
         XCTAssertEqual(store.approvals.first?.id, .integer(6))
+        // Dropped approvals are never silent: the eviction count surfaces
+        // in the existing history drop-count copy.
+        XCTAssertEqual(store.truncation.approvals, 6)
     }
 
     private func params(delta: String) -> CodexJSON {
