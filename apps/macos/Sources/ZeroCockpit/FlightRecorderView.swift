@@ -487,7 +487,9 @@ public struct FlightRecorderView: View {
         if wide {
             HStack(alignment: .top, spacing: 14) {
                 recordsPanel.frame(maxWidth: .infinity, alignment: .top)
-                inspector.frame(width: 410, alignment: .top)
+                ResizablePane(.inspector(key: "flightRecorder.inspector", defaultWidth: 410)) {
+                    inspector
+                }
             }
         } else {
             VStack(spacing: 14) { recordsPanel; inspector }
@@ -578,6 +580,7 @@ public struct FlightRecorderView: View {
 
     private var inspector: some View {
         NetworkFlightPanel {
+            InspectorPopoutButton(kind: .flightRecorder)
             if let record = selectedRecord {
                 VStack(alignment: .leading, spacing: 14) {
                     HStack(alignment: .top) {
