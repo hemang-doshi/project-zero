@@ -77,27 +77,47 @@ private struct CockpitCommands: Commands {
 
 private struct CockpitWindow: View {
     @ObservedObject var model: CockpitModel
+    @StateObject private var windows = DesktopWindowManager()
     @State private var lifecycleRegistered = false
-
-    private var activeDesktopApp: DesktopApp {
-        desktopApps().first { $0.route == model.selection.route }
-            ?? DesktopApp(id: CockpitRoute.desk.rawValue, title: CockpitRoute.desk.title, route: .desk)
-    }
 
     var body: some View {
         // In-window desktop: owner wallpaper asset when supplied, grass/
-        // dot-grid fallback otherwise. Single active-route card; shell chrome
-        // stays as-is inside it. Local layout state only, no daemon writes.
+        // dot-grid fallback otherwise. All open routes render as overlapping
+        // DesktopCards; closed routes mount nothing. Local layout state only.
         DesktopCanvas {
-            DesktopCard(app: activeDesktopApp, selection: model.selection) {
-                CockpitShell(
-                    selection: $model.selection,
-                    status: model.runtimeStatusLabel,
-                    version: "v\(ZeroRelease.version) · \(ZeroRelease.build)",
-                    transparentBackground: true
-                ) {
-                    CockpitRouteContent(model: model)
+            ZStack(alignment: .topLeading) {
+                ForEach(desktopApps().filter { windows.isOpen($0.route) }) { app in
+                    DesktopCard(
+                        app: app,
+                        selection: model.selection,
+                        initialOrigin: windows.origin(for: app.route),
+                        initialSize: windows.size(for: app.route),
+                        onClose: { windows.close(app.route) },
+                        onFocus: {
+                            windows.bringToFront(app.route)
+                            model.selection.route = app.route
+                        },
+                        onMove: { windows.setOrigin($0, for: app.route) },
+                        onResize: { windows.setSize($0, for: app.route) },
+                        content: {
+                            CockpitShell(
+                                selection: $model.selection,
+                                status: model.runtimeStatusLabel,
+                                version: "v\(ZeroRelease.version) · \(ZeroRelease.build)",
+                                transparentBackground: true
+                            ) {
+                                CockpitRouteView(route: app.route, model: model)
+                            }
+                        },
+                        panel: { _ in EmptyView() }
+                    )
+                    .zIndex(zIndex(for: app.route))
                 }
+            }
+            .padding(48)
+            VStack {
+                Spacer()
+                dockStrip
             }
         }
         .frame(minWidth: 900, minHeight: 640)
@@ -112,20 +132,51 @@ private struct CockpitWindow: View {
             model.windowDidDisappear()
         }
     }
+
+    private func zIndex(for route: CockpitRoute) -> Double {
+        Double(windows.zOrder.firstIndex(of: route) ?? 0)
+    }
+
+    private var dockStrip: some View {
+        HStack(spacing: 8) {
+            ForEach(CockpitRoute.allCases) { route in
+                let isOpen = windows.isOpen(route)
+                Button {
+                    if !isOpen {
+                        // New windows cascade by open count.
+                        let cascade = desktopCascadeOffset(for: windows.openCount)
+                        windows.setOrigin(CGPoint(x: cascade.width, y: cascade.height), for: route)
+                    }
+                    windows.toggle(route)
+                    if windows.isOpen(route) {
+                        model.selection.route = route
+                    }
+                } label: {
+                    Label(route.title, systemImage: route.symbol)
+                        .labelStyle(.iconOnly)
+                        .font(.system(size: 18))
+                        .frame(width: 44, height: 44)
+                        .background(isOpen ? ZeroTheme.orange.opacity(0.25) : ZeroTheme.workstation, in: RoundedRectangle(cornerRadius: 10))
+                }
+                .buttonStyle(ZeroButtonStyle(.quiet))
+                .focusEffectDisabled()
+                .help("\(isOpen ? "Close" : "Open") \(route.title)")
+                .accessibilityLabel("\(isOpen ? "Close" : "Open") \(route.title)")
+            }
+        }
+        .padding(8)
+        .background(ZeroTheme.navigation.opacity(0.9), in: RoundedRectangle(cornerRadius: 14))
+        .frame(maxWidth: .infinity)
+    }
 }
 
-/// All seven desktop apps in rail order (desk/runtime/network/flightRecorder/
-/// airlock/zeroBot/skillLab). Pure: no model, daemon, or layout state.
-func desktopApps() -> [DesktopApp] {
-    CockpitRoute.allCases.map { DesktopApp(id: $0.rawValue, title: $0.title, route: $0) }
-}
-
-private struct CockpitRouteContent: View {
+private struct CockpitRouteView: View {
+    let route: CockpitRoute
     @ObservedObject var model: CockpitModel
 
     @ViewBuilder
     var body: some View {
-        switch model.selection.route {
+        switch route {
         case .desk:
             DeskView(model: model)
         case .runtime:
@@ -141,6 +192,21 @@ private struct CockpitRouteContent: View {
         case .skillLab:
             SkillLabView(model: model)
         }
+    }
+}
+
+/// All seven desktop apps in rail order (desk/runtime/network/flightRecorder/
+/// airlock/zeroBot/skillLab). Pure: no model, daemon, or layout state.
+func desktopApps() -> [DesktopApp] {
+    CockpitRoute.allCases.map { DesktopApp(id: $0.rawValue, title: $0.title, route: $0) }
+}
+
+private struct CockpitRouteContent: View {
+    @ObservedObject var model: CockpitModel
+
+    @ViewBuilder
+    var body: some View {
+        CockpitRouteView(route: model.selection.route, model: model)
     }
 }
 

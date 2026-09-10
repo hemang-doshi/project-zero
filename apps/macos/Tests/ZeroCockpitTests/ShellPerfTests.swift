@@ -208,4 +208,17 @@ final class ShellPerfTests: XCTestCase {
         )
         XCTAssertEqual(accumulatedOffset(.zero, .zero), .zero)
     }
+
+    func testDesktopSizeClampMath() {
+        XCTAssertEqual(desktopClampSize(CGSize(width: 100, height: 100)), CGSize(width: 320, height: 240))
+        XCTAssertEqual(desktopClampSize(CGSize(width: 2000, height: 2000)), CGSize(width: 1100, height: 900))
+        XCTAssertEqual(desktopClampSize(CGSize(width: 560, height: 480)), CGSize(width: 560, height: 480))
+    }
+
+    func testDesktopCascadeOffsetsDiffer() {
+        let first = desktopCascadeOffset(for: 0)
+        let second = desktopCascadeOffset(for: 1)
+        XCTAssertNotEqual(first, second)
+        XCTAssertEqual(desktopCascadeOffset(for: 0), CGSize(width: 0, height: 0))
+    }
 }
