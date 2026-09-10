@@ -348,6 +348,14 @@ final class ZeroBotViewTests: XCTestCase {
         XCTAssertFalse(projection.canInterrupt(threadID: "history", turnID: "turn-1"))
     }
 
+    func testHarnessLockMirrorsOnMismatch() {
+        XCTAssertTrue(isModelAllowed("gpt-5.6-sol", in: .codex))
+        XCTAssertFalse(isModelAllowed("gpt-5.6-sol", in: .opencode))
+        XCTAssertFalse(isModelAllowed("muse-spark-1.3", in: .codex))
+        XCTAssertTrue(isModelAllowed("muse-spark-1.3", in: .opencode))
+        XCTAssertTrue(mirrorPath(for: .opencode, threadID: "t1").path.contains("zero-meta/opencode"))
+    }
+
     @MainActor
     func testConstructingViewDoesNotConnectCodexOrStartWork() {
         let model = CockpitModel.preview()
