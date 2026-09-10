@@ -135,13 +135,20 @@ private enum TopologySceneBuilder {
         let corePosition = SCNVector3(0, 0.4, 0)
 
         let nonCore = placed.filter { $0.kind != .core }
+        // Slot the combined non-core row (live devices + dimmed upcoming)
+        // but reserve the center gap for core: when the middle slot would
+        // hold a live device, shift the live row half a slot so no live
+        // node lands at x=0 under the core sphere. Upcoming keeps its slot
+        // in the dimmed back row.
+        let middleIsLive = nonCore.count % 2 == 1 && nonCore[nonCore.count / 2].kind != .upcoming
         for node in placed {
             let position: SCNVector3
             if node.kind == .core {
                 position = corePosition
             } else {
                 let deviceIndex = nonCore.firstIndex(of: node) ?? 0
-                let slot = Float(deviceIndex) - Float(nonCore.count - 1) / 2.0
+                var slot = Float(deviceIndex) - Float(nonCore.count - 1) / 2.0
+                if node.kind != .upcoming && middleIsLive { slot += 0.5 }
                 position = SCNVector3(slot * 2.1, node.kind == .upcoming ? -0.9 : 0.1, node.kind == .upcoming ? -1.2 : 0)
             }
             let geometry = geometry(for: node.kind)
