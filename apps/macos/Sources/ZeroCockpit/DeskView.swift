@@ -321,7 +321,7 @@ public struct DeskView: View {
                     facts.runtimeStatusLabel,
                     symbol: facts.isLive ? "checkmark.circle.fill" : "wifi.slash",
                     tone: facts.runtimeStatusTone
-                )
+                ).equatable()
                 Text(facts.isLive ? "Revision \(facts.revisionLabel)" : "Committed state unavailable")
                     .font(DeskRuntimeType.evidence)
                     .foregroundStyle(ZeroTheme.secondaryInk)
@@ -350,13 +350,13 @@ public struct DeskView: View {
                     Text("Local focus")
                         .font(DeskRuntimeType.title)
                     Spacer()
-                    ZeroStatusBadge(facts.sessionState, tone: sessionTone(facts.sessionState))
+                    ZeroStatusBadge(facts.sessionState, tone: sessionTone(facts.sessionState)).equatable()
                 }
                 VStack(alignment: .leading, spacing: 4) {
                     Text(facts.activeProjectName)
                         .font(DeskRuntimeType.heading)
                         .textSelection(.enabled)
-                    Text(facts.focusElapsedLabel)
+                    FocusElapsedText(model: model)
                         .font(.system(.title, design: .monospaced).weight(.black))
                         .monospacedDigit()
                     Text(facts.deliveryState.presentation.detail)
@@ -387,7 +387,7 @@ public struct DeskView: View {
                     codex.connectionLabel,
                     symbol: codex.isConnected ? "terminal.fill" : "terminal",
                     tone: codex.isConnected ? .healthy : .neutral
-                )
+                ).equatable()
             }
             Text(codex.workLabel)
                 .font(DeskRuntimeType.callout)
@@ -783,7 +783,24 @@ struct DeskRuntimeCard<Content: View>: View {
     }
 }
 
-struct DeskRuntimeMetricCard: View {
+/// Narrow clock-reading leaf: the only Desk subtree that re-evaluates on the
+/// 1Hz tick. The rest of DeskView subscribes to the model, which no longer
+/// publishes per second.
+struct FocusElapsedText: View {
+    @ObservedObject var model: CockpitModel
+    @ObservedObject var tick: CockpitClockSource
+
+    init(model: CockpitModel) {
+        self.model = model
+        _tick = ObservedObject(wrappedValue: model.clockSource)
+    }
+
+    var body: some View {
+        Text(model.focusElapsedLabel(at: tick.now))
+    }
+}
+
+struct DeskRuntimeMetricCard: View, Equatable {
     let label: String
     let value: String
     let detail: String
@@ -798,7 +815,7 @@ struct DeskRuntimeMetricCard: View {
                         .font(DeskRuntimeType.micro)
                         .foregroundStyle(ZeroTheme.secondaryInk)
                     Spacer()
-                    ZeroStatusBadge(badge, tone: tone)
+                    ZeroStatusBadge(badge, tone: tone).equatable()
                 }
                 Text(value)
                     .font(.system(.title2, design: .rounded).weight(.black))
@@ -812,7 +829,7 @@ struct DeskRuntimeMetricCard: View {
     }
 }
 
-struct DeskRuntimeSectionHeader: View {
+struct DeskRuntimeSectionHeader: View, Equatable {
     let title: String
     let badge: String?
 
@@ -839,7 +856,7 @@ struct DeskRuntimeSectionHeader: View {
     }
 }
 
-struct DeskRuntimeEmptyState: View {
+struct DeskRuntimeEmptyState: View, Equatable {
     let symbol: String
     let title: String
     let detail: String
@@ -861,7 +878,7 @@ struct DeskRuntimeEmptyState: View {
     }
 }
 
-struct DeskRuntimeMonoValue: View {
+struct DeskRuntimeMonoValue: View, Equatable {
     let value: String
 
     init(_ value: String) { self.value = value }
@@ -874,8 +891,13 @@ struct DeskRuntimeMonoValue: View {
     }
 }
 
-struct DeskRuntimeEvidenceRows: View {
+struct DeskRuntimeEvidenceRows: View, Equatable {
     let rows: [(String, String)]
+
+    static func == (lhs: DeskRuntimeEvidenceRows, rhs: DeskRuntimeEvidenceRows) -> Bool {
+        guard lhs.rows.count == rhs.rows.count else { return false }
+        return zip(lhs.rows, rhs.rows).allSatisfy { $0 == $1 }
+    }
 
     var body: some View {
         LazyVStack(spacing: 0) {

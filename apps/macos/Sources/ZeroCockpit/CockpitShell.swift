@@ -115,6 +115,49 @@ public struct ZeroTabStrip: View {
     }
 }
 
+/// Value-stable shell chrome: status text only changes on connection
+/// transitions, so an unchanged header skips layout on each invalidation.
+struct CockpitGlobalHeader: View, Equatable {
+    let status: String
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Text("Z0")
+                .font(.system(size: 16, weight: .black, design: .monospaced))
+                .foregroundStyle(ZeroTheme.navigation)
+                .padding(6)
+                .background(ZeroTheme.ink, in: RoundedRectangle(cornerRadius: 5))
+                .accessibilityHidden(true)
+            Text("Project Zero").font(.system(size: 16, weight: .bold))
+            Spacer(minLength: 16)
+            Text(status)
+                .font(.system(size: 10, weight: .medium, design: .monospaced))
+                .foregroundStyle(ZeroTheme.secondaryInk)
+                .lineLimit(2)
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 8)
+        .background(ZeroTheme.workstation)
+        .overlay(alignment: .bottom) { ZeroTheme.line.frame(height: 1) }
+    }
+}
+
+/// Value-stable shell chrome: only the route title varies, on navigation.
+struct CockpitFooter: View, Equatable {
+    let routeTitle: String
+
+    var body: some View {
+        HStack {
+            Text("Project Zero / Personal local runtime")
+            Spacer()
+            Text(routeTitle)
+        }
+        .font(.system(size: 9, weight: .medium, design: .monospaced))
+        .padding(.horizontal, 20)
+        .padding(.vertical, 6)
+        .background(ZeroTheme.navigation)
+    }
+}
 /// The system owns the real titlebar. This frame is the Stitch workstation inside it.
 public struct CockpitShell<Content: View, Instruments: View>: View {
     @Binding private var selection: CockpitSelection
@@ -142,7 +185,7 @@ public struct CockpitShell<Content: View, Instruments: View>: View {
     public var body: some View {
         GeometryReader { geometry in
             VStack(spacing: 0) {
-                globalHeader
+                CockpitGlobalHeader(status: status).equatable()
                 HStack(alignment: .top, spacing: 16) {
                     if geometry.size.width >= 1000 { environmentRail }
                     workstation
@@ -154,7 +197,7 @@ public struct CockpitShell<Content: View, Instruments: View>: View {
                     }
                 }
                 .padding(geometry.size.width >= 1000 ? 20 : 12)
-                footer
+                CockpitFooter(routeTitle: selection.route.title).equatable()
             }
         }
         .background {
@@ -163,27 +206,6 @@ public struct CockpitShell<Content: View, Instruments: View>: View {
         .foregroundStyle(ZeroTheme.ink)
         .tint(ZeroTheme.orange)
         .preferredColorScheme(.light)
-    }
-
-    private var globalHeader: some View {
-        HStack(spacing: 12) {
-            Text("Z0")
-                .font(.system(size: 16, weight: .black, design: .monospaced))
-                .foregroundStyle(ZeroTheme.navigation)
-                .padding(6)
-                .background(ZeroTheme.ink, in: RoundedRectangle(cornerRadius: 5))
-                .accessibilityHidden(true)
-            Text("Project Zero").font(.system(size: 16, weight: .bold))
-            Spacer(minLength: 16)
-            Text(status)
-                .font(.system(size: 10, weight: .medium, design: .monospaced))
-                .foregroundStyle(ZeroTheme.secondaryInk)
-                .lineLimit(2)
-        }
-        .padding(.horizontal, 20)
-        .padding(.vertical, 8)
-        .background(ZeroTheme.workstation)
-        .overlay(alignment: .bottom) { ZeroTheme.line.frame(height: 1) }
     }
 
     private var environmentRail: some View {
@@ -222,18 +244,6 @@ public struct CockpitShell<Content: View, Instruments: View>: View {
         .clipShape(RoundedRectangle(cornerRadius: 12))
         .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(ZeroTheme.ink.opacity(0.2)))
         .shadow(color: .black.opacity(0.18), radius: 18, x: 0, y: 10)
-    }
-
-    private var footer: some View {
-        HStack {
-            Text("Project Zero / Personal local runtime")
-            Spacer()
-            Text(selection.route.title)
-        }
-        .font(.system(size: 9, weight: .medium, design: .monospaced))
-        .padding(.horizontal, 20)
-        .padding(.vertical, 6)
-        .background(ZeroTheme.navigation)
     }
 }
 

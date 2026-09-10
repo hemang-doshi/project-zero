@@ -679,11 +679,25 @@ struct AirlockProjection {
 
 public struct AirlockView: View {
     @ObservedObject private var model: CockpitModel
+    @ObservedObject private var tick: CockpitClockSource
     @State private var inspectorPanel: PanelSelection = .primary
 
-    public init(model: CockpitModel) { self.model = model }
+    public init(model: CockpitModel) {
+        self.model = model
+        _tick = ObservedObject(wrappedValue: model.clockSource)
+    }
 
-    private var projection: AirlockProjection { AirlockProjection(model: model) }
+    /// Deadline countdowns read the narrow clock publisher: only Airlock
+    /// re-evaluates per second, not every route sharing the model.
+    private var projection: AirlockProjection {
+        AirlockProjection(
+            snapshot: model.snapshot,
+            runtimeConnection: model.runtimeConnection,
+            codexStore: model.codex.store,
+            codexConnection: model.codexConnection,
+            now: tick.now
+        )
+    }
 
     public var body: some View {
         GeometryReader { proxy in

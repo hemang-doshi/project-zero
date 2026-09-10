@@ -14,7 +14,7 @@ public extension ZeroTheme {
     static let authorityOrange = orange
 }
 
-public enum ZeroTone: Sendable {
+public enum ZeroTone: Sendable, Equatable {
     case neutral, healthy, attention, error, authority
 
     public var color: Color {
@@ -157,7 +157,7 @@ public struct ZeroButtonStyle: ButtonStyle {
     }
 }
 
-public struct ZeroStatusBadge: View {
+public struct ZeroStatusBadge: View, Equatable {
     private let label: String
     private let symbol: String
     private let tone: ZeroTone

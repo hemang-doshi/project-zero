@@ -3,10 +3,12 @@ import SwiftUI
 
 public struct MenuCompanion: View {
     @ObservedObject private var model: CockpitModel
+    @ObservedObject private var tick: CockpitClockSource
     @Environment(\.openWindow) private var openWindow
 
     public init(model: CockpitModel) {
         self.model = model
+        _tick = ObservedObject(wrappedValue: model.clockSource)
     }
 
     public var body: some View {
@@ -67,7 +69,7 @@ public struct MenuCompanion: View {
     }
 
     private var focusSummary: String {
-        let summary = "\(model.activeProjectName) · \(model.focusElapsedLabel)"
+        let summary = "\(model.activeProjectName) · \(model.focusElapsedLabel(at: tick.now))"
         if model.runtimeConnection == .live { return summary }
         return model.snapshot == nil ? "Unavailable · 0:00:00" : "Last known: \(summary)"
     }
