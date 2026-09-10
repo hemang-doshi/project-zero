@@ -68,13 +68,13 @@ public struct ProviderPicker: View {
                     .fill(statusColor)
                     .frame(width: 7, height: 7)
                 Text(labelText)
-                    .font(.zero(size: 12, weight: .semibold))
-                    .foregroundStyle(ZeroTheme.primaryAuthority)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(ZeroTheme.authority)
                     .lineLimit(1)
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 6)
-            .background(Color.white, in: RoundedRectangle(cornerRadius: 8))
+            .background(ZeroTheme.panel, in: RoundedRectangle(cornerRadius: 8))
         }
         .help(helpText)
         .accessibilityLabel("Provider and model")
@@ -89,7 +89,7 @@ public struct ProviderPicker: View {
     }
 
     private var statusColor: Color {
-        selection.isAdvertisedModel(in: advertised) ? ZeroTheme.statusGreen : ZeroTheme.errorRed
+        selection.isAdvertisedModel(in: advertised) ? ZeroTheme.environment : ZeroTheme.authority
     }
 
     private var helpText: String {

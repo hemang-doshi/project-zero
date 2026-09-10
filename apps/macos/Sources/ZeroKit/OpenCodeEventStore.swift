@@ -37,21 +37,14 @@ public struct OpenCodeEventStore: Equatable, Sendable {
     public static let defaultMaximumUnknownEvents = 100
     public static let maximumTranscriptBytes = 32_768
     public static let maximumMetadataBytes = 8_192
-    /// Session map cap: transcripts are tail-bounded per session, but the
-    /// session COUNT was unbounded — one entry per session ID per session.
-    /// Drop-oldest beyond 32 sessions; per-eval reductions iterate sessions.
 
     public private(set) var sessions: [String: OpenCodeSession] = [:]
     public private(set) var unknownEvents: [OpenCodeEvent] = []
     public private(set) var truncation = OpenCodeHistoryTruncation()
     private let maximumUnknownEvents: Int
-    private let maximumSessions: Int
-    private var sessionOrder: [String] = []
 
-    public init(maximumUnknownEvents: Int = OpenCodeEventStore.defaultMaximumUnknownEvents,
-                maximumSessions: Int = 32) {
+    public init(maximumUnknownEvents: Int = OpenCodeEventStore.defaultMaximumUnknownEvents) {
         self.maximumUnknownEvents = max(0, maximumUnknownEvents)
-        self.maximumSessions = max(1, maximumSessions)
     }
 
     public func session(id: String) -> OpenCodeSession? { sessions[id] }
@@ -72,11 +65,6 @@ public struct OpenCodeEventStore: Equatable, Sendable {
             )
             if session.contentTruncated { truncation.content = true }
             sessions[sessionID] = session
-            sessionOrder.removeAll { $0 == sessionID }
-            sessionOrder.append(sessionID)
-            while sessionOrder.count > maximumSessions {
-                sessions.removeValue(forKey: sessionOrder.removeFirst())
-            }
             return
         }
         retain(event)
