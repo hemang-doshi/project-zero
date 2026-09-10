@@ -144,6 +144,12 @@ final class NetworkFlightViewTests: XCTestCase {
         XCTAssertTrue(NetworkTargetPresentation.wrapsFullIdentity)
     }
 
+    func testUpcomingNodesAreGated() {
+        let nodes = buildTopologyNodes(snapshotNodes: [])
+        XCTAssertTrue(nodes.contains(where: { $0.kind == .upcoming }))
+        XCTAssertEqual(gatedUpcomingCount(nodes), nodes.filter { $0.kind == .upcoming }.count)
+    }
+
     func testFlightFiltersAreCombinedWithoutInventingRows() throws {
         let snapshot = try CockpitSnapshot.decode(Data(snapshotJSON.utf8))
         let projection = FlightProjection(

@@ -22,7 +22,7 @@ func gatedUpcomingCount(_ nodes: [TopologyNode]) -> Int { nodes.filter { $0.kind
 
 /// Native SceneKit topology. All geometry is drawn locally from the bounded
 /// snapshot projection; no daemon, WebKit, or network fetch is involved.
-struct TopologySceneView: View, Equatable {
+struct TopologySceneView: View {
     let nodes: [TopologyNode]
 
     var upcoming: [TopologyNode] { nodes.filter { $0.kind == .upcoming } }
@@ -42,7 +42,7 @@ struct TopologySceneView: View, Equatable {
 #endif
             if !upcoming.isEmpty {
                 Text("GATED — UPCOMING")
-                    .font(.zeroMono(size: 9, weight: .bold))
+                    .font(.system(size: 9, weight: .bold, design: .monospaced))
                     .foregroundStyle(ZeroTheme.secondaryInk)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 5)
@@ -63,7 +63,7 @@ struct TopologySceneView: View, Equatable {
 
 /// 2D list fallback when SceneKit is unavailable. Upcoming rows are dimmed
 /// and non-interactive behind the GATED overlay owned by `TopologySceneView`.
-struct TopologyFallbackList: View, Equatable {
+struct TopologyFallbackList: View {
     let nodes: [TopologyNode]
 
     var body: some View {
@@ -73,10 +73,10 @@ struct TopologyFallbackList: View, Equatable {
                     Image(systemName: symbol(for: node.kind))
                         .foregroundStyle(ZeroTheme.secondaryInk)
                     Text(node.id)
-                        .font(.zeroMono(size: 11, weight: .medium))
+                        .font(.system(size: 11, weight: .medium, design: .monospaced))
                     Spacer()
                     Text(node.status)
-                        .font(.zeroMono(size: 9, weight: .bold))
+                        .font(.system(size: 9, weight: .bold, design: .monospaced))
                         .foregroundStyle(ZeroTheme.secondaryInk)
                 }
                 .padding(.horizontal, 10)
@@ -111,36 +111,18 @@ private struct TopologySCNView: NSViewRepresentable {
         view.allowsCameraControl = false
         view.autoenablesDefaultLighting = true
         view.backgroundColor = .clear
-        // Static topology: no animation loop. Continuous rendering would
-        // repaint every frame on the main thread for an unchanged scene.
-        view.rendersContinuously = false
-        context.coordinator.lastBuilt = nodes
         return view
     }
 
     func updateNSView(_ view: SCNView, context: Context) {
-        // Rebuilding the full SCNScene per pass costs a full scene-graph
-        // layout; the node set only changes on topology updates.
-        guard context.coordinator.lastBuilt != nodes else { return }
-        context.coordinator.lastBuilt = nodes
         view.scene = TopologySceneBuilder.scene(nodes: nodes)
         view.allowsCameraControl = false
     }
-
-    func makeCoordinator() -> Coordinator { Coordinator() }
-
-    final class Coordinator {
-        var lastBuilt: [TopologyNode]?
-    }
 }
 
-enum TopologySceneBuilder {
+private enum TopologySceneBuilder {
     static func scene(nodes: [TopologyNode]) -> SCNScene {
         let scene = SCNScene()
-        // Static topology: nothing animates, so pause the scene to kill any
-        // SceneKit-driven per-frame main-thread work. Rendering stays
-        // on-demand via `rendersContinuously = false` on the view.
-        scene.isPaused = true
         let cameraNode = SCNNode()
         cameraNode.camera = SCNCamera()
         cameraNode.position = SCNVector3(0, 1.2, 8.5)
@@ -152,21 +134,12 @@ enum TopologySceneBuilder {
         let placed = live + upcoming
         let corePosition = SCNVector3(0, 0.4, 0)
 
-        let nonCore = placed.filter { $0.kind != .core }
-        // Slot the combined non-core row (live devices + dimmed upcoming)
-        // but reserve the center gap for core: when the middle slot would
-        // hold a live device, shift the live row half a slot so no live
-        // node lands at x=0 under the core sphere. Upcoming keeps its slot
-        // in the dimmed back row.
-        let middleIsLive = nonCore.count % 2 == 1 && nonCore[nonCore.count / 2].kind != .upcoming
-        for node in placed {
+        for (index, node) in placed.enumerated() {
             let position: SCNVector3
             if node.kind == .core {
                 position = corePosition
             } else {
-                let deviceIndex = nonCore.firstIndex(of: node) ?? 0
-                var slot = Float(deviceIndex) - Float(nonCore.count - 1) / 2.0
-                if node.kind != .upcoming && middleIsLive { slot += 0.5 }
+                let slot = Float(index) - Float(placed.count - 1) / 2.0
                 position = SCNVector3(slot * 2.1, node.kind == .upcoming ? -0.9 : 0.1, node.kind == .upcoming ? -1.2 : 0)
             }
             let geometry = geometry(for: node.kind)
