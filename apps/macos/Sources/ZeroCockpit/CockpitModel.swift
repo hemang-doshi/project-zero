@@ -115,6 +115,15 @@ public final class CockpitModel: ObservableObject {
     public let runtime: CockpitClient
     public let codex: CodexAppServer
 
+    /// Unified provider choice driving the single provider → model → policy
+    /// dropdown. Defaults to Codex; existing Codex paths keep working.
+    @Published public var activeProvider: ProviderID = .codex
+    /// Per-provider session registries. A Codex thread ID is never valid for
+    /// OpenCode and vice versa, so the two namespaces stay separate; shared
+    /// skills (not threads) are the only cross-provider surface.
+    @Published public var codexThreadSettings: [String: CodexSettings] = [:]
+    @Published public var openCodeThreadSettings: [String: OpenCodeThreadSettings] = [:]
+
     private struct DeliveryBaseline: Codable, Sendable {
         let commandID: String
         let snapshotRevision: UInt64
