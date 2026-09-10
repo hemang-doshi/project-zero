@@ -4,6 +4,12 @@ import XCTest
 import ZeroKit
 
 final class DeskRuntimeViewTests: XCTestCase {
+    func testDeskTypeScaleMatchesStitch() {
+        XCTAssertGreaterThanOrEqual(DeskTypeScale.bodyPointSize, 15)
+        XCTAssertGreaterThanOrEqual(DeskTypeScale.headerPointSize, 24)
+        XCTAssertEqual(DeskTypeScale.bodyFontName, "Inter")
+    }
+
     func testLayoutBreakpointsPreserveWideDashboardAndCompactStack() {
         XCTAssertEqual(DeskRuntimeLayout.mode(for: 1_020), .wide)
         XCTAssertEqual(DeskRuntimeLayout.mode(for: 1_019), .regular)
