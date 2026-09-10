@@ -46,6 +46,15 @@ final class ThemeStateTests: XCTestCase {
         }
     }
 
+    func testRailTileHasNoWhiteFill() throws {
+        let presentation = ZeroRailPresentation(selected: false)
+        XCTAssertEqual(presentation.background, .clear)
+    }
+
+    func testSelectedRailKeepsOrangeContinuity() throws {
+        XCTAssertEqual(ZeroRailPresentation(selected: true).accent, ZeroTheme.authorityOrange)
+    }
+
     private func luminance(_ color: Color.Resolved) -> Double {
         func linear(_ value: Float) -> Double {
             let channel = Double(value)

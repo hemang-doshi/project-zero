@@ -11,6 +11,7 @@ public extension ZeroTheme {
     static let line = Color(red: 222 / 255, green: 215 / 255, blue: 202 / 255)
     static let orange = Color(red: 245 / 255, green: 78 / 255, blue: 0)
     static let orangePressed = Color(red: 168 / 255, green: 51 / 255, blue: 0)
+    static let authorityOrange = orange
 }
 
 public enum ZeroTone: Sendable {
@@ -66,6 +67,29 @@ struct ZeroAuthorityPresentation {
         return contrast == .increased ? .black : ZeroTheme.ink
     }
     var background: Color { isPressed ? ZeroTheme.orangePressed : ZeroTheme.orange }
+}
+
+// Rail tiles read as glyphs on the green desktop: unselected tiles are fully
+// transparent, and selection keeps the reviewed pressed-orange edge plus the
+// authority-orange continuity token. Selected fill is unchanged.
+struct ZeroRailPresentation {
+    let selected: Bool
+
+    init(selected: Bool) {
+        self.selected = selected
+    }
+
+    var background: Color {
+        selected ? ZeroTheme.navigation : .clear
+    }
+
+    var border: Color {
+        selected ? ZeroTheme.orangePressed : .clear
+    }
+
+    var accent: Color {
+        ZeroTheme.authorityOrange
+    }
 }
 
 public struct ZeroButtonStyle: ButtonStyle {
