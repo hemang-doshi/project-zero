@@ -251,10 +251,15 @@ public struct DeskView: View {
     public var body: some View {
         GeometryReader { proxy in
             let layout = DeskRuntimeLayout.mode(for: proxy.size.width, accessibilitySize: dynamicTypeSize.isAccessibilitySize)
+            // One facts build per evaluation: every helper below takes this
+            // value instead of rebuilding from the model. The evaluation is
+            // synchronous on the main actor, so the value cannot go stale
+            // mid-evaluation; the next model change re-evaluates and rebuilds.
+            let facts = DeskRuntimeFacts(model: model)
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
-                    hero(layout: layout)
-                    evidenceShowcase(layout: layout)
+                    hero(facts: facts, layout: layout)
+                    evidenceShowcase(facts: facts, layout: layout)
                 }
                 .padding(layout == .compact ? 16 : 28)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -266,8 +271,7 @@ public struct DeskView: View {
     }
 
     @ViewBuilder
-    private func hero(layout: DeskRuntimeLayout) -> some View {
-        let facts = DeskRuntimeFacts(model: model)
+    private func hero(facts: DeskRuntimeFacts, layout: DeskRuntimeLayout) -> some View {
         if layout == .wide {
             HStack(alignment: .top, spacing: 28) {
                 heroCopy(facts: facts).frame(maxWidth: .infinity, alignment: .leading)
@@ -399,7 +403,7 @@ public struct DeskView: View {
         .accessibilityLabel("Codex work, \(codex.connectionLabel), \(codex.workLabel), \(codex.approvalCount) actionable approvals, \(codex.retainedApprovalCount) retained approval records")
     }
 
-    private func evidenceShowcase(layout: DeskRuntimeLayout) -> some View {
+    private func evidenceShowcase(facts: DeskRuntimeFacts, layout: DeskRuntimeLayout) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 4) {
@@ -422,9 +426,9 @@ public struct DeskView: View {
 
             Group {
                 switch evidenceTab {
-                case .attention: attentionEvidence(layout: layout)
-                case .delivery: deliveryEvidence(layout: layout)
-                case .activity: activityEvidence(layout: layout)
+                case .attention: attentionEvidence(facts: facts, layout: layout)
+                case .delivery: deliveryEvidence(facts: facts, layout: layout)
+                case .activity: activityEvidence(facts: facts, layout: layout)
                 }
             }
             .padding(layout == .compact ? 16 : 20)
@@ -436,11 +440,11 @@ public struct DeskView: View {
     }
 
     @ViewBuilder
-    private func attentionEvidence(layout: DeskRuntimeLayout) -> some View {
-        let explanation = attentionExplanation
+    private func attentionEvidence(facts: DeskRuntimeFacts, layout: DeskRuntimeLayout) -> some View {
+        let explanation = attentionExplanation(facts: facts)
         if layout == .wide {
             HStack(alignment: .top, spacing: 22) {
-                attentionRecord.frame(maxWidth: .infinity, alignment: .leading)
+                attentionRecord(facts: facts).frame(maxWidth: .infinity, alignment: .leading)
                 evidenceExplanation(
                     title: explanation.title,
                     detail: explanation.detail
@@ -449,7 +453,7 @@ public struct DeskView: View {
             }
         } else {
             VStack(alignment: .leading, spacing: 18) {
-                attentionRecord
+                attentionRecord(facts: facts)
                 evidenceExplanation(
                     title: explanation.title,
                     detail: explanation.detail
@@ -458,8 +462,8 @@ public struct DeskView: View {
         }
     }
 
-    private var attentionExplanation: (title: String, detail: String) {
-        switch DeskRuntimeFacts(model: model).attentionSource {
+    private func attentionExplanation(facts: DeskRuntimeFacts) -> (title: String, detail: String) {
+        switch facts.attentionSource {
         case .codexApproval:
             return ("Codex authority stays separate", "Review the exact Project Zero-owned Codex request in Zero Bot; it never crosses the zerod approval path.")
         case .runtimeApproval, .runtimeFiring:
@@ -472,8 +476,7 @@ public struct DeskView: View {
     }
 
     @ViewBuilder
-    private var attentionRecord: some View {
-        let facts = DeskRuntimeFacts(model: model)
+    private func attentionRecord(facts: DeskRuntimeFacts) -> some View {
         switch facts.attentionSource {
         case .runtimeApproval:
             if let approval = facts.authoritativeSnapshot?.approvals.first {
@@ -537,8 +540,7 @@ public struct DeskView: View {
     }
 
     @ViewBuilder
-    private func deliveryEvidence(layout: DeskRuntimeLayout) -> some View {
-        let facts = DeskRuntimeFacts(model: model)
+    private func deliveryEvidence(facts: DeskRuntimeFacts, layout: DeskRuntimeLayout) -> some View {
         let delivery = facts.deliveryState.presentation
         let displayNodes = facts.authoritativeSnapshot?.nodes.filter {
             !$0.revoked && ($0.capabilities.contains("display.render") || $0.capabilities.contains("display.clear"))
@@ -588,8 +590,7 @@ public struct DeskView: View {
     }
 
     @ViewBuilder
-    private func activityEvidence(layout: DeskRuntimeLayout) -> some View {
-        let facts = DeskRuntimeFacts(model: model)
+    private func activityEvidence(facts: DeskRuntimeFacts, layout: DeskRuntimeLayout) -> some View {
         if !facts.isLive {
             DeskRuntimeEmptyState(
                 symbol: "clock.badge.questionmark",
@@ -608,14 +609,14 @@ public struct DeskView: View {
                     content.frame(maxWidth: .infinity, alignment: .leading)
                     evidenceExplanation(
                         title: "Bounded, durable evidence",
-                        detail: truncationNote(for: "events")
+                        detail: truncationNote(facts: facts, for: "events")
                     )
                     .frame(width: 330)
                 }
             } else {
                 VStack(alignment: .leading, spacing: 18) {
                     content
-                    evidenceExplanation(title: "Bounded, durable evidence", detail: truncationNote(for: "events"))
+                    evidenceExplanation(title: "Bounded, durable evidence", detail: truncationNote(facts: facts, for: "events"))
                 }
             }
         } else {
@@ -642,8 +643,8 @@ public struct DeskView: View {
         .background(ZeroTheme.navigation.opacity(0.75), in: RoundedRectangle(cornerRadius: 8))
     }
 
-    private func truncationNote(for collection: String) -> String {
-        DeskRuntimeFacts(model: model).authoritativeSnapshot?.truncated[collection] == true
+    private func truncationNote(facts: DeskRuntimeFacts, for collection: String) -> String {
+        facts.authoritativeSnapshot?.truncated[collection] == true
             ? "The runtime marked this projection as truncated. Open the dedicated evidence surface before drawing historical conclusions."
             : "This is the newest row in the runtime's bounded display projection."
     }
