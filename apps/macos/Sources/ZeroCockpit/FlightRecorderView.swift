@@ -44,11 +44,15 @@ struct FlightRecord: Identifiable {
     let reference: String
     let fields: [(String, String)]
     let classification: FlightClassification
+    /// Render/clock/SSE noise (display.*, clock.tick, sse.keepalive, ready)
+    /// is hidden by default; the Show-all toggle reveals it.
+    let isNoise: Bool
 
     init(id: String, origin: FlightOrigin, originLabel: String? = nil,
          category: FlightCategory, timestamp: String, channel: String,
          actor: String, evidence: String, outcome: String, reference: String,
-         fields: [(String, String)], classification: FlightClassification) {
+         fields: [(String, String)], classification: FlightClassification,
+         isNoise: Bool = false) {
         self.id = id
         self.origin = origin
         self.originLabel = originLabel ?? origin.defaultLabel
@@ -61,6 +65,7 @@ struct FlightRecord: Identifiable {
         self.reference = reference
         self.fields = fields
         self.classification = classification
+        self.isNoise = isNoise
     }
 
     var searchableText: String {
@@ -167,7 +172,8 @@ struct FlightProjection {
                 channel: channel, actor: "zerod", evidence: id, outcome: "RECORDED",
                 reference: "SEQ \(sequence)",
                 fields: networkSafeEvidenceRows(record, keys: ["seq", "id", "kind", "time"]),
-                classification: .neutral
+                classification: .neutral,
+                isNoise: isNoiseRecord(record)
             )
         }
         let audit = snapshot.audit.compactMap { record -> FlightRecord? in
@@ -353,7 +359,11 @@ public struct FlightRecorderView: View {
             codexConnection: model.codexConnection
         )
     }
-    private var visibleRecords: [FlightRecord] { projection.filtered(category: category, outcome: outcome, query: query) }
+    private var visibleRecords: [FlightRecord] {
+        let base = projection.filtered(category: category, outcome: outcome, query: query)
+        guard !model.showAllRecords else { return base }
+        return base.filter { !$0.isNoise }
+    }
     private var selectionState: FlightSelectionState {
         FlightSelectionState.resolve(
             selectionID: model.selection.inspectionID,
@@ -455,6 +465,9 @@ public struct FlightRecorderView: View {
                         }
                     }
                 }
+                Toggle("Show all records (include render/clock noise)", isOn: $model.showAllRecords)
+                    .font(.system(size: 10, weight: .bold, design: .monospaced))
+                    .accessibilityLabel("Show all records")
                 HStack(spacing: 9) {
                     Image(systemName: "magnifyingglass")
                         .foregroundStyle(ZeroTheme.secondaryInk)
@@ -661,6 +674,11 @@ public struct FlightRecorderView: View {
                 .focusEffectDisabled()
         }
     }
+}
+
+func isNoiseRecord(_ record: RuntimeRecord) -> Bool {
+    let kind = (runtimeText(record, keys: ["kind"]) ?? "").lowercased()
+    return kind.hasPrefix("display.") || kind == "clock.tick" || kind == "sse.keepalive" || kind == "ready"
 }
 
 private func classify(_ status: String) -> FlightClassification {
