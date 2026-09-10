@@ -30,35 +30,114 @@ struct ZeroBotModelOption: Identifiable, Equatable, Sendable {
     let advertised: Bool
 }
 
+struct ZeroBotProjectBinding: Codable, Equatable, Sendable {
+    let projectID: String
+    let name: String
+    let path: String
+
+    init(projectID: String, name: String, path: String) {
+        self.projectID = projectID
+        self.name = name
+        self.path = path
+    }
+
+    init(_ project: CockpitProject) {
+        self.init(projectID: project.id, name: project.name, path: project.path)
+    }
+}
+
+enum ZeroBotProjectBindingCodec {
+    static func decode(_ encoded: String) -> [String: ZeroBotProjectBinding] {
+        guard let data = encoded.data(using: .utf8),
+              let bindings = try? JSONDecoder().decode([String: ZeroBotProjectBinding].self, from: data) else {
+            return [:]
+        }
+        return bindings
+    }
+
+    static func encode(_ bindings: [String: ZeroBotProjectBinding]) -> String {
+        guard let data = try? JSONEncoder().encode(bindings) else { return "" }
+        return String(decoding: data, as: UTF8.self)
+    }
+}
+
+struct ZeroBotEvidence: Equatable, Sendable {
+    let title: String
+    let content: String
+    let truncated: Bool
+}
+
+struct ZeroBotMetadataField: Equatable, Sendable {
+    let label: String
+    let value: String
+}
+
+enum ZeroBotApprovalAvailability: Equatable, Sendable {
+    case actionable
+    case blocked(String)
+
+    var reason: String? {
+        if case .blocked(let reason) = self { return reason }
+        return nil
+    }
+}
+
+struct ZeroBotThreadPresentation: Equatable {
+    let label: String
+    let symbol: String
+    let tone: ZeroTone
+}
+
+enum ZeroBotTypography {
+    static let usesDynamicTypeRelativeStyles = true
+    static let minimumProminentStyle: Font.TextStyle = .caption2
+
+    static func font(
+        _ style: Font.TextStyle,
+        weight: Font.Weight = .regular,
+        design: Font.Design = .default
+    ) -> Font {
+        .system(style, design: design, weight: weight)
+    }
+}
+
 struct ZeroBotProjection {
     let snapshot: CockpitSnapshot?
+    let runtimeConnection: RuntimeConnectionState
     let connection: CodexConnectionState
     let store: CodexEventStore
     let threadSettings: [String: CodexSettings]
+    let threadProjects: [String: ZeroBotProjectBinding]
     let models: [CodexJSON]
 
     @MainActor
-    init(model: CockpitModel) {
+    init(model: CockpitModel, threadProjects: [String: ZeroBotProjectBinding] = [:]) {
         self.init(
             snapshot: model.snapshot,
+            runtimeConnection: model.runtimeConnection,
             connection: model.codexConnection,
             store: model.codex.store,
             threadSettings: model.codex.threadSettings,
+            threadProjects: threadProjects,
             models: model.codex.models
         )
     }
 
     init(
         snapshot: CockpitSnapshot?,
+        runtimeConnection: RuntimeConnectionState = .live,
         connection: CodexConnectionState,
         store: CodexEventStore,
         threadSettings: [String: CodexSettings],
+        threadProjects: [String: ZeroBotProjectBinding] = [:],
         models: [CodexJSON]
     ) {
         self.snapshot = snapshot
+        self.runtimeConnection = runtimeConnection
         self.connection = connection
         self.store = store
         self.threadSettings = threadSettings
+        self.threadProjects = threadProjects
         self.models = models
     }
 
@@ -139,21 +218,46 @@ struct ZeroBotProjection {
         return threadSettings[threadID] != nil
     }
 
+    func projectBinding(threadID: String?) -> ZeroBotProjectBinding? {
+        guard let threadID else { return nil }
+        return threadProjects[threadID]
+    }
+
+    func projectSelectionMismatch(threadID: String?, selectedProjectID: String?) -> Bool {
+        guard let binding = projectBinding(threadID: threadID), let selectedProjectID else { return false }
+        return selectedProjectID != binding.projectID
+    }
+
+    func hasCurrentProjectBinding(threadID: String?) -> Bool {
+        guard runtimeConnection == .live,
+              snapshot != nil,
+              let threadID,
+              threadSettings[threadID] != nil,
+              store.thread(id: threadID) != nil,
+              let binding = threadProjects[threadID] else { return false }
+        return registeredProjects.contains {
+            $0.id == binding.projectID && $0.name == binding.name && $0.path == binding.path
+        }
+    }
+
     func settings(threadID: String?) -> CodexSettings? {
         guard let threadID else { return nil }
         return threadSettings[threadID]
     }
 
     func canStartThread(projectID: String?, modelID: String) -> Bool {
-        guard connection == .connected,
+        guard runtimeConnection == .live,
+              snapshot != nil,
+              connection == .connected,
               let projectID,
               isAdvertisedModel(modelID) else { return false }
         return registeredProjects.contains { $0.id == projectID }
     }
 
-    func canSend(threadID: String?, text: String) -> Bool {
+    func canSend(threadID: String?, selectedProjectID: String?, text: String) -> Bool {
         connection == .connected
-            && isOwned(threadID: threadID)
+            && hasCurrentProjectBinding(threadID: threadID)
+            && projectBinding(threadID: threadID)?.projectID == selectedProjectID
             && !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
@@ -168,7 +272,12 @@ struct ZeroBotProjection {
     }
 
     func canInterrupt(threadID: String?, turnID: String?) -> Bool {
-        connection == .connected && isOwned(threadID: threadID) && turnID != nil
+        guard connection == .connected,
+              hasCurrentProjectBinding(threadID: threadID),
+              let threadID,
+              let turnID,
+              let turn = store.thread(id: threadID)?.turns[turnID] else { return false }
+        return Self.isActive(status: turn.status)
     }
 
     var retainedOnly: Bool { connection != .connected }
@@ -177,8 +286,128 @@ struct ZeroBotProjection {
         retainedOnly ? "RETAINED · \(status.uppercased())" : status.uppercased()
     }
 
+    func evidenceTone(_ liveTone: ZeroTone) -> ZeroTone {
+        retainedOnly ? .neutral : liveTone
+    }
+
     var approvalCountLabel: String {
         "\(store.approvals.count) \(retainedOnly ? "RETAINED" : "PENDING")"
+    }
+
+    func threadPresentation(threadID: String?) -> ZeroBotThreadPresentation {
+        if retainedOnly {
+            return ZeroBotThreadPresentation(label: "RETAINED EVIDENCE", symbol: "archivebox.fill", tone: .neutral)
+        }
+        if hasCurrentProjectBinding(threadID: threadID) {
+            return ZeroBotThreadPresentation(label: "OWNED SESSION", symbol: "checkmark.shield.fill", tone: .healthy)
+        }
+        if isOwned(threadID: threadID) {
+            return ZeroBotThreadPresentation(label: "OWNERSHIP UNVERIFIED", symbol: "exclamationmark.shield.fill", tone: .attention)
+        }
+        return ZeroBotThreadPresentation(label: "HISTORY ONLY", symbol: "lock.fill", tone: .neutral)
+    }
+
+    func tokenUsageBadge(truncated: Bool) -> String {
+        if truncated { return "CLIPPED" }
+        return retainedOnly ? "RETAINED" : "CURRENT"
+    }
+
+    var retainedConnectionEvidence: String? {
+        guard retainedOnly, !store.threads.isEmpty || !store.approvals.isEmpty else { return nil }
+        switch connection {
+        case .failed(let message): return message.isEmpty ? "The local Codex transport failed." : message
+        case .exited(let code): return "The local Codex process exited with status \(code)."
+        case .disconnected: return "Codex is disconnected."
+        case .connecting: return "Codex is reconnecting; retained evidence is not actionable."
+        case .connected: return nil
+        }
+    }
+
+    func approvalAvailability(
+        _ approval: CodexApproval,
+        selectedThreadID: String?
+    ) -> ZeroBotApprovalAvailability {
+        guard Self.approvalResponse(method: approval.method, approve: true) != nil else {
+            return .blocked("This request method does not have a safely implemented response.")
+        }
+        guard store.approvals.contains(approval) else {
+            return .blocked("This exact request is no longer pending in the current Codex store.")
+        }
+        guard !Self.jsonText(approval.params).truncated else {
+            return .blocked("The request payload exceeds the safe display boundary.")
+        }
+        guard connection == .connected else {
+            return .blocked("Codex is not connected; this request is retained evidence only.")
+        }
+        guard runtimeConnection == .live, snapshot != nil else {
+            return .blocked("The Project Zero runtime and project registry must be live.")
+        }
+        guard let threadID = approval.params["threadId"].string, !threadID.isEmpty else {
+            return .blocked("The request has no exact thread identity.")
+        }
+        guard threadID == selectedThreadID else {
+            return .blocked("Select the exact requesting thread before responding.")
+        }
+        guard hasCurrentProjectBinding(threadID: threadID) else {
+            return .blocked("The request is not bound to a current Project Zero-owned project thread.")
+        }
+        guard let turnID = approval.params["turnId"].string, !turnID.isEmpty,
+              let turn = store.thread(id: threadID)?.turns[turnID], Self.isActive(status: turn.status) else {
+            return .blocked("The request does not match a current active turn in that thread.")
+        }
+        guard let itemID = approval.params["itemId"].string, !itemID.isEmpty,
+              let item = store.thread(id: threadID)?.item(id: itemID), item.turnID == turnID else {
+            return .blocked("The request item does not match that exact thread and turn.")
+        }
+        let category = ZeroBotItemCategory(kind: item.kind)
+        if approval.method == "item/commandExecution/requestApproval", category != .command {
+            return .blocked("The command approval does not match a command-execution item.")
+        }
+        if approval.method == "item/fileChange/requestApproval", category != .fileChange {
+            return .blocked("The file-change approval does not match a file-change item.")
+        }
+        return .actionable
+    }
+
+    var protocolErrorEvidence: ZeroBotEvidence? {
+        evidence(title: "APP-SERVER ERROR", value: store.lastError)
+    }
+
+    func turnErrorEvidence(_ turn: CodexTurn) -> ZeroBotEvidence? {
+        evidence(title: "TURN ERROR", value: turn.error)
+    }
+
+    func itemMetadataFields(_ item: CodexItem) -> [ZeroBotMetadataField] {
+        let metadata = item.metadata
+        var fields: [ZeroBotMetadataField] = []
+        switch ZeroBotItemCategory(kind: item.kind) {
+        case .command:
+            appendField("COMMAND", value: metadata["command"], suffix: nil, to: &fields)
+            appendField("WORKING DIRECTORY", value: metadata["cwd"], suffix: nil, to: &fields)
+            appendField("SOURCE", value: metadata["source"], suffix: nil, to: &fields)
+            appendField("PROCESS", value: metadata["processId"], suffix: nil, to: &fields)
+            appendField("EXIT CODE", value: metadata["exitCode"], suffix: nil, to: &fields)
+            appendField("DURATION", value: metadata["durationMs"], suffix: " ms", to: &fields)
+            appendField("PLUGIN", value: metadata["pluginId"], suffix: nil, to: &fields)
+            appendField("PLUGIN SCRIPT", value: metadata["scriptPath"], suffix: nil, to: &fields)
+            appendJSONField("PARSED ACTIONS", value: metadata["commandActions"], to: &fields)
+        case .fileChange:
+            appendJSONField("FILE CHANGES", value: metadata["changes"], to: &fields)
+        case .tool:
+            appendField("TOOL SERVER", value: metadata["server"], suffix: nil, to: &fields)
+            appendField("TOOL", value: metadata["tool"], suffix: nil, to: &fields)
+            appendField("NAMESPACE", value: metadata["namespace"], suffix: nil, to: &fields)
+            appendField("READ ONLY", value: metadata["readOnlyHint"], suffix: nil, to: &fields)
+            appendField("DURATION", value: metadata["durationMs"], suffix: " ms", to: &fields)
+            appendJSONField("ARGUMENTS", value: metadata["arguments"], to: &fields)
+        default:
+            break
+        }
+        return fields
+    }
+
+    func itemMetadataEvidence(_ item: CodexItem) -> ZeroBotEvidence? {
+        evidence(title: "BOUNDED ITEM METADATA", value: item.metadata)
     }
 
     static func approvalResponse(method: String, approve: Bool) -> CodexJSON? {
@@ -203,6 +432,35 @@ struct ZeroBotProjection {
         var suffix = data.suffix(limit)
         while let first = suffix.first, first & 0xC0 == 0x80 { suffix = suffix.dropFirst() }
         return ("…\n" + String(decoding: suffix, as: UTF8.self), true)
+    }
+
+    private func evidence(title: String, value: CodexJSON) -> ZeroBotEvidence? {
+        guard value != .null else { return nil }
+        let rendered = Self.jsonText(value)
+        return ZeroBotEvidence(title: title, content: rendered.text, truncated: rendered.truncated)
+    }
+
+    private func appendField(
+        _ label: String,
+        value: CodexJSON,
+        suffix: String?,
+        to fields: inout [ZeroBotMetadataField]
+    ) {
+        guard let scalar = Self.scalar(value), !scalar.isEmpty else { return }
+        fields.append(ZeroBotMetadataField(label: label, value: scalar + (suffix ?? "")))
+    }
+
+    private func appendJSONField(
+        _ label: String,
+        value: CodexJSON,
+        to fields: inout [ZeroBotMetadataField]
+    ) {
+        guard value != .null else { return }
+        let rendered = Self.jsonText(value, limit: 4_096)
+        fields.append(ZeroBotMetadataField(
+            label: label,
+            value: rendered.truncated ? "Clipped — inspect exact metadata below" : rendered.text
+        ))
     }
 
     private static func scalar(_ value: CodexJSON) -> String? {
@@ -236,16 +494,21 @@ public struct ZeroBotView: View {
     @State private var selectedThreadID: String?
     @State private var mode: CodexMode = .assist
     @State private var selectedModelID = CodexMode.assist.settings.model
+    @SceneStorage("projectZero.zeroBot.threadProjects.v1") private var encodedThreadProjects = ""
     @State private var intent = ""
     @State private var actionInFlight = false
     @State private var localNotice: String?
     @State private var expandedReasoning = Set<String>()
+    @State private var expandedMetadata = Set<String>()
     @State private var selectedUnknownIndex: Int?
     @FocusState private var composerFocused: Bool
 
     public init(model: CockpitModel) { self.model = model }
 
-    private var projection: ZeroBotProjection { ZeroBotProjection(model: model) }
+    private var threadProjects: [String: ZeroBotProjectBinding] {
+        ZeroBotProjectBindingCodec.decode(encodedThreadProjects)
+    }
+    private var projection: ZeroBotProjection { ZeroBotProjection(model: model, threadProjects: threadProjects) }
     private var selectedThread: CodexThread? { projection.thread(id: selectedThreadID) }
     private var activeTurn: CodexTurn? { projection.activeTurn(in: selectedThread) }
 
@@ -280,6 +543,9 @@ public struct ZeroBotView: View {
         .onChange(of: mode) { _, newMode in
             selectedModelID = newMode.settings.model
         }
+        .onChange(of: Set(model.codex.store.threads.keys)) { _, retainedThreadIDs in
+            storeThreadProjects(threadProjects.filter { retainedThreadIDs.contains($0.key) })
+        }
     }
 
     @ViewBuilder
@@ -287,18 +553,18 @@ public struct ZeroBotView: View {
         let identity = VStack(alignment: .leading, spacing: 7) {
             HStack(spacing: 7) {
                 Text("ZERO BOT")
-                    .font(.system(size: 10, weight: .black, design: .monospaced))
+                    .font(ZeroBotTypography.font(.caption, weight: .black, design: .monospaced))
                     .foregroundStyle(.white)
                     .padding(.horizontal, 6)
                     .padding(.vertical, 3)
                     .background(ZeroTheme.orange, in: RoundedRectangle(cornerRadius: 3))
                 Text(selectedThread.map(threadTitle) ?? "Project-owned Codex workspace")
-                    .font(.system(size: 12, weight: .bold, design: .monospaced))
+                    .font(ZeroBotTypography.font(.callout, weight: .bold, design: .monospaced))
                     .lineLimit(1)
                     .textSelection(.enabled)
             }
             Text("Live app-server evidence · explicit local authority · no desktop session scraping")
-                .font(.system(size: 11, weight: .medium))
+                .font(ZeroBotTypography.font(.callout, weight: .medium))
                 .foregroundStyle(ZeroTheme.secondaryInk)
         }
 
@@ -324,6 +590,7 @@ public struct ZeroBotView: View {
                 Button("Disconnect") {
                     model.disconnectCodex()
                     selectedThreadID = nil
+                    storeThreadProjects([:])
                     localNotice = "Codex disconnected. No thread or turn was started."
                 }
                 .buttonStyle(ZeroButtonStyle(.standard))
@@ -344,11 +611,11 @@ public struct ZeroBotView: View {
             VStack(alignment: .leading, spacing: 12) {
                 ZeroBotSectionHeader("Workspace Threads", badge: "\(projection.threads.count) VISIBLE")
                 Text("Select a registered project, then explicitly start a Project Zero-owned thread.")
-                    .font(.system(size: 11, weight: .medium))
+                    .font(ZeroBotTypography.font(.callout, weight: .medium))
                     .foregroundStyle(ZeroTheme.secondaryInk)
 
                 Text("REGISTERED PROJECTS")
-                    .font(.system(size: 9, weight: .bold, design: .monospaced))
+                    .font(ZeroBotTypography.font(.caption2, weight: .bold, design: .monospaced))
                     .foregroundStyle(ZeroTheme.secondaryInk)
                 if projection.registeredProjects.isEmpty {
                     ZeroBotEmpty(
@@ -369,9 +636,14 @@ public struct ZeroBotView: View {
                                     VStack(alignment: .leading, spacing: 2) {
                                         Text(project.name).lineLimit(1)
                                         Text(project.id)
-                                            .font(.system(size: 9, design: .monospaced))
+                                            .font(ZeroBotTypography.font(.caption2, design: .monospaced))
                                             .foregroundStyle(ZeroTheme.secondaryInk)
                                             .lineLimit(1)
+                                        Text(project.path)
+                                            .font(ZeroBotTypography.font(.caption2, design: .monospaced))
+                                            .foregroundStyle(ZeroTheme.secondaryInk)
+                                            .lineLimit(2)
+                                            .textSelection(.enabled)
                                     }
                                     Spacer(minLength: 4)
                                 }
@@ -385,7 +657,7 @@ public struct ZeroBotView: View {
                 }
                 if projection.snapshot?.truncated["projects"] == true {
                     Label("Project list is bounded", systemImage: "ellipsis.circle")
-                        .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                        .font(ZeroBotTypography.font(.caption2, weight: .semibold, design: .monospaced))
                         .foregroundStyle(ZeroTone.attention.color)
                 }
 
@@ -400,7 +672,7 @@ public struct ZeroBotView: View {
 
                 Divider().overlay(ZeroTheme.line)
                 Text("THREADS")
-                    .font(.system(size: 9, weight: .bold, design: .monospaced))
+                    .font(ZeroBotTypography.font(.caption2, weight: .bold, design: .monospaced))
                     .foregroundStyle(ZeroTheme.secondaryInk)
                 if projection.threads.isEmpty {
                     ZeroBotEmpty(
@@ -429,12 +701,12 @@ public struct ZeroBotView: View {
             Text(mode == .assist
                 ? "Assist is read-only and never approves actions."
                 : "Work may write in the registered workspace and asks before protected actions.")
-                .font(.system(size: 10, weight: .medium))
+                .font(ZeroBotTypography.font(.caption, weight: .medium))
                 .foregroundStyle(ZeroTheme.secondaryInk)
                 .fixedSize(horizontal: false, vertical: true)
 
             Text("MODEL")
-                .font(.system(size: 9, weight: .bold, design: .monospaced))
+                .font(ZeroBotTypography.font(.caption2, weight: .bold, design: .monospaced))
                 .foregroundStyle(ZeroTheme.secondaryInk)
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 5) {
@@ -445,7 +717,7 @@ public struct ZeroBotView: View {
                             VStack(alignment: .leading, spacing: 1) {
                                 Text(option.label).lineLimit(1)
                                 Text(option.advertised ? "ADVERTISED" : "POLICY DEFAULT")
-                                    .font(.system(size: 8, weight: .bold, design: .monospaced))
+                                    .font(ZeroBotTypography.font(.caption2, weight: .bold, design: .monospaced))
                                     .opacity(0.72)
                             }
                         }
@@ -465,24 +737,26 @@ public struct ZeroBotView: View {
     }
 
     private func threadButton(_ thread: CodexThread) -> some View {
-        let owned = projection.isOwned(threadID: thread.id)
-        let accessLabel = projection.retainedOnly ? "RETAINED" : (owned ? "OWNED" : "READ ONLY")
+        let presentation = projection.threadPresentation(threadID: thread.id)
         return Button {
             selectedThreadID = thread.id
+            if let binding = projection.projectBinding(threadID: thread.id) {
+                selectedProjectID = binding.projectID
+            }
         } label: {
             VStack(alignment: .leading, spacing: 5) {
                 HStack(spacing: 6) {
-                    Image(systemName: owned ? "lock.open.fill" : "lock.fill")
-                        .foregroundStyle(owned ? ZeroTone.healthy.color : ZeroTone.neutral.color)
+                    Image(systemName: presentation.symbol)
+                        .foregroundStyle(presentation.tone.color)
                     Text(threadTitle(thread))
-                        .font(.system(size: 11, weight: .bold))
+                        .font(ZeroBotTypography.font(.callout, weight: .bold))
                         .lineLimit(2)
                     Spacer(minLength: 3)
                 }
                 HStack(spacing: 5) {
-                    ZeroStatusBadge(accessLabel, tone: owned && !projection.retainedOnly ? .healthy : .neutral)
+                    ZeroStatusBadge(presentation.label, tone: presentation.tone)
                     Text(thread.id)
-                        .font(.system(size: 8, design: .monospaced))
+                        .font(ZeroBotTypography.font(.caption2, design: .monospaced))
                         .foregroundStyle(ZeroTheme.secondaryInk)
                         .lineLimit(1)
                 }
@@ -491,7 +765,7 @@ public struct ZeroBotView: View {
         }
         .buttonStyle(ZeroButtonStyle(.quiet, selected: selectedThreadID == thread.id))
         .focusEffectDisabled()
-        .accessibilityLabel("\(threadTitle(thread)), \(accessLabel.lowercased())")
+        .accessibilityLabel("\(threadTitle(thread)), \(presentation.label.lowercased())")
         .accessibilityValue(selectedThreadID == thread.id ? "Selected" : "Not selected")
     }
 
@@ -501,20 +775,32 @@ public struct ZeroBotView: View {
                 HStack(alignment: .top, spacing: 10) {
                     VStack(alignment: .leading, spacing: 3) {
                         Text(selectedThread.map(threadTitle) ?? "No thread selected")
-                            .font(.system(size: 17, weight: .black))
+                            .font(ZeroBotTypography.font(.title3, weight: .black))
                             .textSelection(.enabled)
                         Text(conversationSubtitle)
-                            .font(.system(size: 10, weight: .medium, design: .monospaced))
+                            .font(ZeroBotTypography.font(.caption, weight: .medium, design: .monospaced))
                             .foregroundStyle(ZeroTheme.secondaryInk)
                     }
                     Spacer()
                     if let selectedThreadID {
+                        let presentation = projection.threadPresentation(threadID: selectedThreadID)
                         ZeroStatusBadge(
-                            projection.isOwned(threadID: selectedThreadID) ? "OWNED SESSION" : "HISTORY ONLY",
-                            symbol: projection.isOwned(threadID: selectedThreadID) ? "checkmark.shield.fill" : "lock.fill",
-                            tone: projection.isOwned(threadID: selectedThreadID) ? .healthy : .neutral
+                            presentation.label,
+                            symbol: presentation.symbol,
+                            tone: presentation.tone
                         )
                     }
+                }
+
+                if let retainedConnectionEvidence = projection.retainedConnectionEvidence {
+                    Label(retainedConnectionEvidence, systemImage: "exclamationmark.triangle.fill")
+                        .font(ZeroBotTypography.font(.callout, weight: .semibold))
+                        .foregroundStyle(ZeroTone.error.color)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .textSelection(.enabled)
+                        .padding(9)
+                        .background(ZeroTone.error.color.opacity(0.07), in: RoundedRectangle(cornerRadius: 6))
+                        .accessibilityLabel("Retained Codex connection failure. \(retainedConnectionEvidence)")
                 }
 
                 if let thread = selectedThread {
@@ -522,7 +808,7 @@ public struct ZeroBotView: View {
                         ZeroBotEmpty(
                             symbol: "ellipsis.message",
                             title: "No streamed content yet",
-                            detail: projection.isOwned(threadID: thread.id)
+                            detail: projection.hasCurrentProjectBinding(threadID: thread.id)
                                 ? "Enter an intent below to start the first turn."
                                 : "This discovered thread has no retained events in the current connection."
                         )
@@ -551,13 +837,17 @@ public struct ZeroBotView: View {
         let category = ZeroBotItemCategory(kind: item.kind)
         return VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
-                ZeroStatusBadge(category.rawValue, symbol: itemSymbol(category), tone: itemTone(category))
+                ZeroStatusBadge(
+                    category.rawValue,
+                    symbol: itemSymbol(category),
+                    tone: projection.evidenceTone(itemTone(category))
+                )
                 Text(projection.evidenceStatus(item.status))
-                    .font(.system(size: 9, weight: .bold, design: .monospaced))
+                    .font(ZeroBotTypography.font(.caption2, weight: .bold, design: .monospaced))
                     .foregroundStyle(ZeroTheme.secondaryInk)
                 Spacer()
                 Text(item.id)
-                    .font(.system(size: 8, design: .monospaced))
+                    .font(ZeroBotTypography.font(.caption2, design: .monospaced))
                     .foregroundStyle(ZeroTheme.secondaryInk)
                     .lineLimit(1)
             }
@@ -581,12 +871,12 @@ public struct ZeroBotView: View {
             }
             if item.textTruncated || item.outputTruncated || item.metadataTruncated {
                 Label("Content clipped by the in-memory retention boundary", systemImage: "scissors")
-                    .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                    .font(ZeroBotTypography.font(.caption2, weight: .semibold, design: .monospaced))
                     .foregroundStyle(ZeroTone.attention.color)
             }
         }
         .padding(11)
-        .background(itemBackground(category), in: RoundedRectangle(cornerRadius: 8))
+        .background(projection.retainedOnly ? ZeroTheme.workstation : itemBackground(category), in: RoundedRectangle(cornerRadius: 8))
         .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(ZeroTheme.line))
         .accessibilityElement(children: .contain)
     }
@@ -596,20 +886,50 @@ public struct ZeroBotView: View {
         if !item.text.isEmpty {
             Text(item.text)
                 .font(category == .command || category == .tool
-                    ? .system(size: 11, design: .monospaced)
-                    : .system(size: 12, weight: .medium))
+                    ? ZeroBotTypography.font(.callout, design: .monospaced)
+                    : ZeroBotTypography.font(.body, weight: .medium))
                 .fixedSize(horizontal: false, vertical: true)
                 .textSelection(.enabled)
         }
         if !item.output.isEmpty {
-            ZeroBotCodeWell(title: "STREAMED OUTPUT", content: item.output, tone: category == .fileChange ? .healthy : .neutral)
+            ZeroBotCodeWell(
+                title: "STREAMED OUTPUT",
+                content: item.output,
+                tone: projection.evidenceTone(category == .fileChange ? .healthy : .neutral)
+            )
         }
-        if item.text.isEmpty && item.output.isEmpty {
-            let payload = ZeroBotProjection.jsonText(item.metadata)
-            ZeroBotCodeWell(title: "BOUNDED ITEM METADATA", content: payload.text, tone: .neutral)
-            if payload.truncated {
+        let fields = projection.itemMetadataFields(item)
+        if !fields.isEmpty {
+            VStack(alignment: .leading, spacing: 4) {
+                ForEach(Array(fields.enumerated()), id: \.offset) { _, field in
+                    ZeroBotPolicyRow(label: field.label, value: field.value)
+                }
+            }
+            .padding(8)
+            .background(ZeroTheme.navigation.opacity(0.55), in: RoundedRectangle(cornerRadius: 5))
+            .accessibilityLabel("Structured execution metadata")
+        }
+        if let metadata = projection.itemMetadataEvidence(item) {
+            Button {
+                if expandedMetadata.contains(item.id) { expandedMetadata.remove(item.id) }
+                else { expandedMetadata.insert(item.id) }
+            } label: {
+                HStack {
+                    Text(expandedMetadata.contains(item.id) ? "Hide exact bounded metadata" : "Inspect exact bounded metadata")
+                    Spacer()
+                    Image(systemName: expandedMetadata.contains(item.id) ? "chevron.up" : "chevron.down")
+                }
+            }
+            .buttonStyle(ZeroButtonStyle(.quiet, selected: expandedMetadata.contains(item.id)))
+            .focusEffectDisabled()
+            .accessibilityValue(expandedMetadata.contains(item.id) ? "Expanded" : "Collapsed")
+            .accessibilityHint("Shows the exact retained metadata payload for this item")
+            if expandedMetadata.contains(item.id) {
+                ZeroBotCodeWell(title: metadata.title, content: metadata.content, tone: .neutral)
+            }
+            if metadata.truncated {
                 Text("Inspector rendering clipped this payload further.")
-                    .font(.system(size: 9, design: .monospaced))
+                    .font(ZeroBotTypography.font(.caption2, design: .monospaced))
                     .foregroundStyle(ZeroTone.attention.color)
             }
         }
@@ -635,6 +955,7 @@ public struct ZeroBotView: View {
 
     private func approvalCard(_ approval: CodexApproval) -> some View {
         let responseSupported = ZeroBotProjection.approvalResponse(method: approval.method, approve: true) != nil
+        let availability = projection.approvalAvailability(approval, selectedThreadID: selectedThreadID)
         let payload = ZeroBotProjection.jsonText(approval.params)
         return VStack(alignment: .leading, spacing: 8) {
             HStack {
@@ -645,16 +966,16 @@ public struct ZeroBotView: View {
                 )
                 Spacer()
                 Text("REQUEST \(ZeroBotProjection.requestIDLabel(approval.id))")
-                    .font(.system(size: 8, design: .monospaced))
+                    .font(ZeroBotTypography.font(.caption2, design: .monospaced))
                     .textSelection(.enabled)
             }
             Text(approval.method)
-                .font(.system(size: 11, weight: .bold, design: .monospaced))
+                .font(ZeroBotTypography.font(.callout, weight: .bold, design: .monospaced))
                 .textSelection(.enabled)
             ZeroBotCodeWell(title: "EXACT REQUEST PAYLOAD", content: payload.text, tone: .attention)
-            if projection.retainedOnly {
-                Label("Codex is not connected. This is retained request evidence; no response can be sent.", systemImage: "lock.fill")
-                    .font(.system(size: 10, weight: .semibold))
+            if let reason = availability.reason {
+                Label(reason, systemImage: "lock.fill")
+                    .font(ZeroBotTypography.font(.callout, weight: .semibold))
                     .foregroundStyle(ZeroTheme.secondaryInk)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -667,10 +988,10 @@ public struct ZeroBotView: View {
                         .buttonStyle(ZeroButtonStyle(.authority))
                         .focusEffectDisabled()
                 }
-                .disabled(model.codexConnection != .connected || actionInFlight || payload.truncated)
+                .disabled(availability != .actionable || actionInFlight || payload.truncated)
             } else {
                 Label("This request needs a method-specific response that this client does not safely implement.", systemImage: "exclamationmark.shield")
-                    .font(.system(size: 10, weight: .semibold))
+                    .font(ZeroBotTypography.font(.callout, weight: .semibold))
                     .foregroundStyle(ZeroTone.attention.color)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -683,10 +1004,10 @@ public struct ZeroBotView: View {
     private var composer: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("SEND INTENT")
-                .font(.system(size: 9, weight: .bold, design: .monospaced))
+                .font(ZeroBotTypography.font(.caption2, weight: .bold, design: .monospaced))
                 .foregroundStyle(ZeroTheme.secondaryInk)
             TextEditor(text: $intent)
-                .font(.system(size: 12, design: .monospaced))
+                .font(ZeroBotTypography.font(.body, design: .monospaced))
                 .scrollContentBackground(.hidden)
                 .padding(8)
                 .frame(minHeight: 82, maxHeight: 150)
@@ -705,11 +1026,15 @@ public struct ZeroBotView: View {
                     .buttonStyle(ZeroButtonStyle(.authority))
                     .focusEffectDisabled()
                     .keyboardShortcut(.return, modifiers: [.command])
-                    .disabled(actionInFlight || !projection.canSend(threadID: selectedThreadID, text: intent))
+                    .disabled(actionInFlight || !projection.canSend(
+                        threadID: selectedThreadID,
+                        selectedProjectID: selectedProjectID,
+                        text: intent
+                    ))
             }
             if let reason = sendUnavailableReason {
                 Label(reason, systemImage: "info.circle")
-                    .font(.system(size: 9, weight: .medium))
+                    .font(ZeroBotTypography.font(.caption2, weight: .medium))
                     .foregroundStyle(ZeroTheme.secondaryInk)
             }
         }
@@ -719,6 +1044,7 @@ public struct ZeroBotView: View {
 
     private var composerPolicy: some View {
         let settings = projection.settings(threadID: selectedThreadID)
+        let binding = projection.projectBinding(threadID: selectedThreadID)
         return VStack(alignment: .leading, spacing: 2) {
             Text(settings?.model ?? "No owned thread policy")
             if let settings {
@@ -726,10 +1052,17 @@ public struct ZeroBotView: View {
             } else {
                 Text("New-session choices do not alter existing threads")
             }
+            if let binding {
+                Text("BOUND PROJECT · \(binding.name) [\(binding.projectID)]")
+                Text("REGISTERED SNAPSHOT PATH · \(binding.path)")
+                    .textSelection(.enabled)
+            } else if selectedThreadID != nil {
+                Text("NO VERIFIED PROJECT BINDING · SEND DISABLED")
+            }
         }
-        .font(.system(size: 9, weight: .semibold, design: .monospaced))
+        .font(ZeroBotTypography.font(.caption2, weight: .semibold, design: .monospaced))
         .foregroundStyle(ZeroTheme.secondaryInk)
-        .lineLimit(2)
+        .fixedSize(horizontal: false, vertical: true)
     }
 
     private var inspector: some View {
@@ -751,6 +1084,7 @@ public struct ZeroBotView: View {
                     )
                     if let thread = selectedThread { completedTurnEvidence(thread) }
                 }
+                if let thread = selectedThread { turnErrorEvidence(thread) }
                 tokenUsage
                 rawEvents
                 stateNotice
@@ -781,11 +1115,15 @@ public struct ZeroBotView: View {
 
             planView(turn)
             if !turn.diff.isEmpty {
-                ZeroBotCodeWell(title: "UNIFIED CODE DIFF", content: turn.diff, tone: .healthy)
+                ZeroBotCodeWell(
+                    title: "UNIFIED CODE DIFF",
+                    content: turn.diff,
+                    tone: projection.evidenceTone(.healthy)
+                )
             }
             if turn.contentTruncated {
                 Label("Run evidence is truncated", systemImage: "scissors")
-                    .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                    .font(ZeroBotTypography.font(.caption2, weight: .semibold, design: .monospaced))
                     .foregroundStyle(ZeroTone.attention.color)
             }
         }
@@ -798,20 +1136,20 @@ public struct ZeroBotView: View {
                 ZeroBotSectionHeader("Execution Stages", badge: "\(turn.plan.count)")
                 if let explanation = turn.explanation, !explanation.isEmpty {
                     Text(explanation)
-                        .font(.system(size: 10, weight: .medium))
+                        .font(ZeroBotTypography.font(.caption, weight: .medium))
                         .foregroundStyle(ZeroTheme.secondaryInk)
                         .textSelection(.enabled)
                 }
                 ForEach(Array(turn.plan.enumerated()), id: \.offset) { index, step in
                     HStack(alignment: .top, spacing: 7) {
                         Image(systemName: planSymbol(step.status))
-                            .foregroundStyle(planTone(step.status).color)
+                            .foregroundStyle(projection.evidenceTone(planTone(step.status)).color)
                         VStack(alignment: .leading, spacing: 2) {
                             Text(step.step)
-                                .font(.system(size: 10, weight: .semibold))
+                                .font(ZeroBotTypography.font(.caption, weight: .semibold))
                                 .fixedSize(horizontal: false, vertical: true)
                             Text("STEP \(index + 1) · \(step.status.uppercased())")
-                                .font(.system(size: 8, weight: .bold, design: .monospaced))
+                                .font(ZeroBotTypography.font(.caption2, weight: .bold, design: .monospaced))
                                 .foregroundStyle(ZeroTheme.secondaryInk)
                         }
                     }
@@ -830,7 +1168,31 @@ public struct ZeroBotView: View {
                 ZeroBotSectionHeader("Latest Retained Turn", badge: turn.status.uppercased())
                 ZeroBotPolicyRow(label: "Turn", value: turn.id)
                 planView(turn)
-                if !turn.diff.isEmpty { ZeroBotCodeWell(title: "UNIFIED CODE DIFF", content: turn.diff, tone: .healthy) }
+                if !turn.diff.isEmpty {
+                    ZeroBotCodeWell(
+                        title: "UNIFIED CODE DIFF",
+                        content: turn.diff,
+                        tone: projection.evidenceTone(.healthy)
+                    )
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func turnErrorEvidence(_ thread: CodexThread) -> some View {
+        let failedTurns = thread.turns.values
+            .filter { projection.turnErrorEvidence($0) != nil }
+            .sorted { $0.id < $1.id }
+        if !failedTurns.isEmpty {
+            VStack(alignment: .leading, spacing: 8) {
+                ZeroBotSectionHeader("Turn Failures", badge: "\(failedTurns.count) EVIDENCE")
+                ForEach(failedTurns, id: \.id) { turn in
+                    VStack(alignment: .leading, spacing: 5) {
+                        ZeroBotPolicyRow(label: "Turn", value: turn.id)
+                        turnErrorCard(turn)
+                    }
+                }
             }
         }
     }
@@ -840,7 +1202,7 @@ public struct ZeroBotView: View {
         if let thread = selectedThread, thread.tokenUsage != .null {
             let payload = ZeroBotProjection.jsonText(thread.tokenUsage)
             VStack(alignment: .leading, spacing: 7) {
-                ZeroBotSectionHeader("Token Usage", badge: payload.truncated ? "CLIPPED" : "LIVE")
+                ZeroBotSectionHeader("Token Usage", badge: projection.tokenUsageBadge(truncated: payload.truncated))
                 ZeroBotCodeWell(title: "APP-SERVER USAGE", content: payload.text, tone: .neutral)
             }
         }
@@ -851,7 +1213,7 @@ public struct ZeroBotView: View {
             ZeroBotSectionHeader("Protocol Inspector", badge: "\(projection.store.unknownEvents.count) RAW")
             if projection.store.unknownEvents.isEmpty {
                 Text("No unrecognized app-server events are retained.")
-                    .font(.system(size: 10, weight: .medium))
+                    .font(ZeroBotTypography.font(.caption, weight: .medium))
                     .foregroundStyle(ZeroTheme.secondaryInk)
             } else {
                 VStack(spacing: 5) {
@@ -862,7 +1224,7 @@ public struct ZeroBotView: View {
                             HStack(spacing: 6) {
                                 Image(systemName: "waveform.path.ecg")
                                 Text(event.method)
-                                    .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                                    .font(ZeroBotTypography.font(.caption2, weight: .semibold, design: .monospaced))
                                     .lineLimit(1)
                                 Spacer()
                                 Image(systemName: selectedUnknownIndex == index ? "chevron.up" : "chevron.down")
@@ -884,10 +1246,18 @@ public struct ZeroBotView: View {
 
     @ViewBuilder
     private var stateNotice: some View {
+        if let protocolError = projection.protocolErrorEvidence {
+            ZeroBotCodeWell(title: protocolError.title, content: protocolError.content, tone: .error)
+            if protocolError.truncated {
+                Text("App-server error evidence was clipped for display.")
+                    .font(ZeroBotTypography.font(.caption2, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(ZeroTone.attention.color)
+            }
+        }
         let message = model.codexActionError ?? localNotice
         if let message, !message.isEmpty {
             Label(message, systemImage: model.codexActionError == nil ? "checkmark.circle" : "exclamationmark.triangle")
-                .font(.system(size: 10, weight: .semibold))
+                .font(ZeroBotTypography.font(.callout, weight: .semibold))
                 .foregroundStyle(model.codexActionError == nil ? ZeroTone.healthy.color : ZeroTone.error.color)
                 .fixedSize(horizontal: false, vertical: true)
                 .textSelection(.enabled)
@@ -896,15 +1266,30 @@ public struct ZeroBotView: View {
         }
     }
 
+    @ViewBuilder
+    private func turnErrorCard(_ turn: CodexTurn) -> some View {
+        if let error = projection.turnErrorEvidence(turn) {
+            ZeroBotCodeWell(title: error.title, content: error.content, tone: .error)
+            if error.truncated {
+                Text("Turn error evidence was clipped for display.")
+                    .font(ZeroBotTypography.font(.caption2, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(ZeroTone.attention.color)
+            }
+        }
+    }
+
     private var historyFooter: some View {
         Label(projection.historyNotice, systemImage: "archivebox")
-            .font(.system(size: 9, weight: .medium, design: .monospaced))
+            .font(ZeroBotTypography.font(.caption2, weight: .medium, design: .monospaced))
             .foregroundStyle(ZeroTheme.secondaryInk)
             .fixedSize(horizontal: false, vertical: true)
             .accessibilityLabel("History boundary. \(projection.historyNotice)")
     }
 
     private var startThreadUnavailableReason: String? {
+        if model.runtimeConnection != .live || model.snapshot == nil {
+            return "Connect the Project Zero runtime and load a fresh project registry before starting a thread."
+        }
         if model.codexConnection != .connected { return "Connect Codex before starting a thread." }
         if selectedProjectID == nil { return "Select a registered project before starting a thread." }
         if !projection.isAdvertisedModel(selectedModelID) { return "Select a model advertised by this Codex connection." }
@@ -912,9 +1297,21 @@ public struct ZeroBotView: View {
     }
 
     private var sendUnavailableReason: String? {
+        if model.runtimeConnection != .live || model.snapshot == nil {
+            return "Project Zero runtime evidence is not live; sending is disabled."
+        }
         if model.codexConnection != .connected { return "Connect Codex before sending." }
         guard let selectedThreadID else { return "Select a thread before sending." }
         if !projection.isOwned(threadID: selectedThreadID) { return "This discovered thread is read-only; start a Project Zero-owned session." }
+        guard let binding = projection.projectBinding(threadID: selectedThreadID) else {
+            return "This thread has no verified Project Zero project binding; sending is disabled."
+        }
+        if !projection.hasCurrentProjectBinding(threadID: selectedThreadID) {
+            return "The bound project \(binding.name) no longer exactly matches the live registered path."
+        }
+        if projection.projectSelectionMismatch(threadID: selectedThreadID, selectedProjectID: selectedProjectID) {
+            return "Select the bound project \(binding.name) before sending to this thread."
+        }
         if intent.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return "Enter an intent before sending." }
         return nil
     }
@@ -937,6 +1334,8 @@ public struct ZeroBotView: View {
 
     private func connect() {
         guard !actionInFlight else { return }
+        storeThreadProjects([:])
+        selectedThreadID = nil
         actionInFlight = true
         localNotice = nil
         Task {
@@ -949,11 +1348,15 @@ public struct ZeroBotView: View {
     private func startThread() {
         guard !actionInFlight,
               let selectedProjectID,
+              let project = projection.registeredProjects.first(where: { $0.id == selectedProjectID }),
               projection.canStartThread(projectID: selectedProjectID, modelID: selectedModelID) else { return }
         actionInFlight = true
         localNotice = nil
         Task {
             if let id = await model.startCodexThread(projectID: selectedProjectID, model: selectedModelID, mode: mode) {
+                var bindings = threadProjects
+                bindings[id] = ZeroBotProjectBinding(project)
+                storeThreadProjects(bindings)
                 selectedThreadID = id
                 localNotice = "Created Project Zero-owned thread \(id)."
             }
@@ -964,7 +1367,11 @@ public struct ZeroBotView: View {
     private func sendIntent() {
         guard !actionInFlight,
               let selectedThreadID,
-              projection.canSend(threadID: selectedThreadID, text: intent) else { return }
+              projection.canSend(
+                threadID: selectedThreadID,
+                selectedProjectID: selectedProjectID,
+                text: intent
+              ) else { return }
         let submitted = intent.trimmingCharacters(in: .whitespacesAndNewlines)
         actionInFlight = true
         localNotice = nil
@@ -992,6 +1399,8 @@ public struct ZeroBotView: View {
 
     private func answer(_ approval: CodexApproval, approve: Bool) {
         guard !actionInFlight,
+              projection.approvalAvailability(approval, selectedThreadID: selectedThreadID) == .actionable,
+              !ZeroBotProjection.jsonText(approval.params).truncated,
               let response = ZeroBotProjection.approvalResponse(method: approval.method, approve: approve) else { return }
         actionInFlight = true
         localNotice = nil
@@ -1000,6 +1409,10 @@ public struct ZeroBotView: View {
             localNotice = "\(approve ? "Accepted" : "Declined") exact request \(ZeroBotProjection.requestIDLabel(approval.id))."
         }
         actionInFlight = false
+    }
+
+    private func storeThreadProjects(_ bindings: [String: ZeroBotProjectBinding]) {
+        encodedThreadProjects = ZeroBotProjectBindingCodec.encode(bindings)
     }
 
     private func threadTitle(_ thread: CodexThread) -> String {
@@ -1083,10 +1496,10 @@ private struct ZeroBotSectionHeader: View {
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             Text(title)
-                .font(.system(size: 12, weight: .black))
+                .font(ZeroBotTypography.font(.callout, weight: .black))
             Spacer(minLength: 5)
             Text(badge)
-                .font(.system(size: 8, weight: .bold, design: .monospaced))
+                .font(ZeroBotTypography.font(.caption2, weight: .bold, design: .monospaced))
                 .foregroundStyle(ZeroTheme.secondaryInk)
                 .padding(.horizontal, 5)
                 .padding(.vertical, 3)
@@ -1102,11 +1515,11 @@ private struct ZeroBotPolicyRow: View {
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             Text(label.uppercased())
-                .font(.system(size: 8, weight: .bold, design: .monospaced))
+                .font(ZeroBotTypography.font(.caption2, weight: .bold, design: .monospaced))
                 .foregroundStyle(ZeroTheme.secondaryInk)
             Spacer(minLength: 6)
             Text(value)
-                .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                .font(ZeroBotTypography.font(.caption2, weight: .semibold, design: .monospaced))
                 .multilineTextAlignment(.trailing)
                 .textSelection(.enabled)
         }
@@ -1121,11 +1534,11 @@ private struct ZeroBotCodeWell: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 5) {
             Text(title)
-                .font(.system(size: 8, weight: .bold, design: .monospaced))
+                .font(ZeroBotTypography.font(.caption2, weight: .bold, design: .monospaced))
                 .foregroundStyle(tone.color)
             ScrollView(.horizontal, showsIndicators: true) {
                 Text(content)
-                    .font(.system(size: 10, design: .monospaced))
+                    .font(ZeroBotTypography.font(.caption, design: .monospaced))
                     .textSelection(.enabled)
                     .fixedSize(horizontal: true, vertical: false)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -1145,9 +1558,9 @@ private struct ZeroBotEmpty: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             Label(title, systemImage: symbol)
-                .font(.system(size: 11, weight: .bold))
+                .font(ZeroBotTypography.font(.callout, weight: .bold))
             Text(detail)
-                .font(.system(size: 10, weight: .medium))
+                .font(ZeroBotTypography.font(.caption, weight: .medium))
                 .foregroundStyle(ZeroTheme.secondaryInk)
                 .fixedSize(horizontal: false, vertical: true)
         }
