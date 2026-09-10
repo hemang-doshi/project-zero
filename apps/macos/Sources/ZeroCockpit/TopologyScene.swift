@@ -22,7 +22,7 @@ func gatedUpcomingCount(_ nodes: [TopologyNode]) -> Int { nodes.filter { $0.kind
 
 /// Native SceneKit topology. All geometry is drawn locally from the bounded
 /// snapshot projection; no daemon, WebKit, or network fetch is involved.
-struct TopologySceneView: View {
+struct TopologySceneView: View, Equatable {
     let nodes: [TopologyNode]
 
     var upcoming: [TopologyNode] { nodes.filter { $0.kind == .upcoming } }
@@ -63,7 +63,7 @@ struct TopologySceneView: View {
 
 /// 2D list fallback when SceneKit is unavailable. Upcoming rows are dimmed
 /// and non-interactive behind the GATED overlay owned by `TopologySceneView`.
-struct TopologyFallbackList: View {
+struct TopologyFallbackList: View, Equatable {
     let nodes: [TopologyNode]
 
     var body: some View {
@@ -134,9 +134,13 @@ private struct TopologySCNView: NSViewRepresentable {
     }
 }
 
-private enum TopologySceneBuilder {
+enum TopologySceneBuilder {
     static func scene(nodes: [TopologyNode]) -> SCNScene {
         let scene = SCNScene()
+        // Static topology: nothing animates, so pause the scene to kill any
+        // SceneKit-driven per-frame main-thread work. Rendering stays
+        // on-demand via `rendersContinuously = false` on the view.
+        scene.isPaused = true
         let cameraNode = SCNNode()
         cameraNode.camera = SCNCamera()
         cameraNode.position = SCNVector3(0, 1.2, 8.5)

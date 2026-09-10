@@ -231,7 +231,7 @@ public struct NetworkView: View {
                 VStack(alignment: .trailing, spacing: 7) {
                     ZeroStatusBadge(facts.freshnessLabel,
                                     symbol: facts.isLive ? "lock.shield.fill" : "clock.badge.questionmark",
-                                    tone: facts.isLive ? .healthy : .attention)
+                                    tone: facts.isLive ? .healthy : .attention).equatable()
                     Text("Enrollment changes are unavailable in this display projection.")
                         .font(.system(size: 9, weight: .medium, design: .monospaced))
                         .foregroundStyle(ZeroTheme.secondaryInk)
@@ -242,7 +242,7 @@ public struct NetworkView: View {
                 title
                 ZeroStatusBadge(facts.freshnessLabel,
                                 symbol: facts.isLive ? "lock.shield.fill" : "clock.badge.questionmark",
-                                tone: facts.isLive ? .healthy : .attention)
+                                tone: facts.isLive ? .healthy : .attention).equatable()
                 Text("Enrollment changes are unavailable in this display projection.")
                     .font(.system(size: 9, weight: .medium, design: .monospaced))
                     .foregroundStyle(ZeroTheme.secondaryInk)
@@ -287,11 +287,11 @@ public struct NetworkView: View {
     private func topology(layout: NetworkLayout) -> some View {
         NetworkFlightPanel {
             VStack(alignment: .leading, spacing: 14) {
-                NetworkFlightSectionHeader("Spatial Topology Grid", badge: facts.isLive ? "OWNER-LOCAL LIVE" : "HISTORICAL SNAPSHOT")
+                NetworkFlightSectionHeader("Spatial Topology Grid", badge: facts.isLive ? "OWNER-LOCAL LIVE" : "HISTORICAL SNAPSHOT").equatable()
                 Text(facts.topologyNotice)
                     .font(.system(size: 10, weight: .medium, design: .monospaced))
                     .foregroundStyle(ZeroTheme.secondaryInk)
-                TopologySceneView(nodes: buildTopologyNodes(snapshotNodes: facts.nodes))
+                TopologySceneView(nodes: buildTopologyNodes(snapshotNodes: facts.nodes)).equatable()
                 if layout == .wide {
                     HStack(alignment: .top, spacing: 12) {
                         authorityCard
@@ -334,7 +334,7 @@ public struct NetworkView: View {
                 Spacer()
                 ZeroStatusBadge(facts.isLive ? "AUTHORITATIVE" : "UNCONFIRMED",
                                 symbol: facts.isLive ? "checkmark.seal.fill" : "clock.badge.questionmark",
-                                tone: facts.isLive ? .authority : .attention)
+                                tone: facts.isLive ? .authority : .attention).equatable()
             }
             NetworkFlightEvidenceRows(rows: [
                 ("Runtime", facts.snapshot?.runtimeVersion ?? "Unavailable"),
@@ -404,7 +404,7 @@ public struct NetworkView: View {
     private var capabilityEvidence: some View {
         NetworkFlightPanel {
             VStack(alignment: .leading, spacing: 12) {
-                NetworkFlightSectionHeader("Capability Invocation & Delivery Evidence", badge: facts.snapshot?.truncated["invocations"] == true ? "LOWER BOUND" : "BOUNDED")
+                NetworkFlightSectionHeader("Capability Invocation & Delivery Evidence", badge: facts.snapshot?.truncated["invocations"] == true ? "LOWER BOUND" : "BOUNDED").equatable()
                 Text(facts.evidenceNotice)
                     .font(.system(size: 10, weight: .medium))
                     .foregroundStyle(ZeroTheme.secondaryInk)
@@ -514,7 +514,7 @@ struct NetworkFlightPanel<Content: View>: View {
     }
 }
 
-struct NetworkFlightMetricCard: View {
+struct NetworkFlightMetricCard: View, Equatable {
     let label: String
     let value: String
     let detail: String
@@ -529,7 +529,7 @@ struct NetworkFlightMetricCard: View {
                         .font(.system(size: 9, weight: .bold, design: .monospaced))
                         .foregroundStyle(ZeroTheme.secondaryInk)
                     Spacer()
-                    ZeroStatusBadge(badge, tone: tone)
+                    ZeroStatusBadge(badge, tone: tone).equatable()
                 }
                 Text(value)
                     .font(.system(size: 21, weight: .black, design: .rounded))
@@ -544,7 +544,7 @@ struct NetworkFlightMetricCard: View {
     }
 }
 
-struct NetworkFlightSectionHeader: View {
+struct NetworkFlightSectionHeader: View, Equatable {
     let title: String
     let badge: String?
 
@@ -569,8 +569,13 @@ struct NetworkFlightSectionHeader: View {
     }
 }
 
-struct NetworkFlightEvidenceRows: View {
+struct NetworkFlightEvidenceRows: View, Equatable {
     let rows: [(String, String)]
+
+    static func == (lhs: NetworkFlightEvidenceRows, rhs: NetworkFlightEvidenceRows) -> Bool {
+        guard lhs.rows.count == rhs.rows.count else { return false }
+        return zip(lhs.rows, rhs.rows).allSatisfy { $0 == $1 }
+    }
 
     var body: some View {
         LazyVStack(spacing: 0) {
@@ -594,7 +599,7 @@ struct NetworkFlightEvidenceRows: View {
     }
 }
 
-struct NetworkFlightEmptyState: View {
+struct NetworkFlightEmptyState: View, Equatable {
     let symbol: String
     let title: String
     let detail: String

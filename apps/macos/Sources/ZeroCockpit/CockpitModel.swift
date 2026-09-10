@@ -104,11 +104,24 @@ public enum RuntimeCommandState: Equatable, Sendable {
 }
 
 @MainActor
+public final class CockpitClockSource: ObservableObject {
+    @Published public var now = Date()
+
+    public init(now: Date = Date()) { self.now = now }
+}
+
+@MainActor
 public final class CockpitModel: ObservableObject {
     @Published public var selection = CockpitSelection()
     @Published public private(set) var commandState: RuntimeCommandState = .idle
     @Published public private(set) var isWindowActive = false
-    @Published public private(set) var clock = Date()
+    /// Wall-clock for elapsed labels. Deliberately NOT @Published: publishing
+    /// the whole model every second re-evaluates every subscribed view and
+    /// re-lays-out entire windows. The 1Hz tick publishes only through
+    /// `clockSource`; clock-reading leaves subscribe to that instead.
+    public private(set) var clock = Date()
+    /// Narrow tick publisher. Only elapsed/expiry leaves observe this.
+    public let clockSource = CockpitClockSource()
     @Published public private(set) var codexActionError: String?
     @Published public private(set) var openCodeActionError: String?
 
@@ -259,17 +272,23 @@ public final class CockpitModel: ObservableObject {
         return session.project
     }
 
-    public var focusElapsedMilliseconds: Int64 {
+    public var focusElapsedMilliseconds: Int64 { focusElapsedMilliseconds(at: clock) }
+
+    public func focusElapsedMilliseconds(at now: Date) -> Int64 {
         guard let session = snapshot?.session else { return 0 }
         guard runtimeConnection == .live,
               session.state == "RUNNING",
               let receivedAt = runtime.receivedAt else { return session.elapsedMS }
-        let additional = max(0, clock.timeIntervalSince(receivedAt) * 1_000)
+        let additional = max(0, now.timeIntervalSince(receivedAt) * 1_000)
         return session.elapsedMS + Int64(additional)
     }
 
     public var focusElapsedLabel: String {
         CockpitFormat.elapsed(milliseconds: focusElapsedMilliseconds)
+    }
+
+    public func focusElapsedLabel(at now: Date) -> String {
+        CockpitFormat.elapsed(milliseconds: focusElapsedMilliseconds(at: now))
     }
 
     public var deliveryState: DeliveryState {
@@ -381,11 +400,16 @@ public final class CockpitModel: ObservableObject {
         runtime.start()
         runtime.refresh()
         clock = Date()
+        clockSource.now = clock
         clockTask = Task { [weak self] in
             while !Task.isCancelled {
                 do { try await Task.sleep(nanoseconds: 1_000_000_000) } catch { return }
                 guard let self, self.runtimeStarted else { return }
+                // Plain stored `clock` never publishes the model; only the
+                // narrow `clockSource` publisher fires, so just the
+                // clock-reading leaves re-evaluate each second.
                 self.clock = Date()
+                self.clockSource.now = self.clock
             }
         }
     }

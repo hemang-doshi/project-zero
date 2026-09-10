@@ -323,6 +323,13 @@ struct FlightRowPresentation: Equatable {
     }
 }
 
+enum FlightChronology {
+    /// Bounded render cap for the main chronology list: the LazyVStack only
+    /// instantiates visible rows, and anything beyond the cap collapses into
+    /// the "+N more" overflow disclosure below.
+    static let maxRenderedRows = 100
+}
+
 public struct FlightRecorderView: View {
     @ObservedObject private var model: CockpitModel
     @State private var category: FlightCategory = .all
@@ -392,7 +399,7 @@ public struct FlightRecorderView: View {
                     .rotationEffect(.degrees(-0.7))
                 ZeroStatusBadge(projection.isRuntimeLive ? "RING-0 LIVE" : "HISTORICAL / OFFLINE",
                                 symbol: projection.isRuntimeLive ? "record.circle" : "clock.badge.questionmark",
-                                tone: projection.isRuntimeLive ? .healthy : .attention)
+                                tone: projection.isRuntimeLive ? .healthy : .attention).equatable()
             }
             Text("Dense bounded runtime evidence and separately identified Codex bridge state. Missing timestamps, payloads, and proof are labelled rather than inferred.")
                 .font(.system(size: 12, weight: .medium))
@@ -412,7 +419,7 @@ public struct FlightRecorderView: View {
 
     private var unavailableOperations: some View {
         VStack(alignment: .trailing, spacing: 6) {
-            ZeroStatusBadge("READ-ONLY EVIDENCE", symbol: "eye.fill", tone: .neutral)
+            ZeroStatusBadge("READ-ONLY EVIDENCE", symbol: "eye.fill", tone: .neutral).equatable()
             Text("No verify, export, audit, or recording-control primitive is exposed.")
                 .font(.system(size: 8, weight: .medium, design: .monospaced))
                 .foregroundStyle(ZeroTheme.secondaryInk)
@@ -512,7 +519,7 @@ public struct FlightRecorderView: View {
     private var recordsPanel: some View {
         NetworkFlightPanel {
             VStack(alignment: .leading, spacing: 12) {
-                NetworkFlightSectionHeader("Ring-0 Event Chronology", badge: "\(visibleRecords.count) VISIBLE")
+                NetworkFlightSectionHeader("Ring-0 Event Chronology", badge: "\(visibleRecords.count) VISIBLE").equatable()
                 if visibleRecords.isEmpty {
                     NetworkFlightEmptyState(
                         symbol: projection.records.isEmpty ? "tray" : "line.3.horizontal.decrease.circle",
@@ -523,9 +530,9 @@ public struct FlightRecorderView: View {
                     ScrollView(.horizontal, showsIndicators: true) {
                         LazyVStack(spacing: 0) {
                             flightHeader
-                            ForEach(visibleRecords.prefix(100)) { record in flightRow(record) }
-                            if visibleRecords.count > 100 {
-                                Text("+\(visibleRecords.count - 100) more matching records (bounded render)")
+                            ForEach(visibleRecords.prefix(FlightChronology.maxRenderedRows)) { record in flightRow(record) }
+                            if visibleRecords.count > FlightChronology.maxRenderedRows {
+                                Text("+\(visibleRecords.count - FlightChronology.maxRenderedRows) more matching records (bounded render)")
                                     .font(.system(size: 9, weight: .medium, design: .monospaced))
                                     .foregroundStyle(ZeroTheme.secondaryInk)
                                     .padding(.vertical, 6)
@@ -625,7 +632,7 @@ public struct FlightRecorderView: View {
                         ("Channel", record.channel),
                         ("Actor", record.actor),
                         ("Reference", record.reference)
-                    ])
+                    ]).equatable()
                     VStack(alignment: .leading, spacing: 8) {
                         Label("SAFE EVIDENCE FIELDS", systemImage: "doc.text.magnifyingglass")
                             .font(.system(size: 10, weight: .bold, design: .monospaced))

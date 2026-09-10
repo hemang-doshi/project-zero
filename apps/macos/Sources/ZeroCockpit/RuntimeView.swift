@@ -38,10 +38,10 @@ public struct RuntimeView: View {
                 facts.runtimeStatusLabel,
                 symbol: facts.isLive ? "checkmark.circle.fill" : "wifi.slash",
                 tone: facts.runtimeStatusTone
-            )
+            ).equatable()
             Spacer(minLength: 8)
-            DeskRuntimeMonoValue("runtime \(facts.runtimeVersion)")
-            DeskRuntimeMonoValue("rev \(facts.revisionLabel)")
+            DeskRuntimeMonoValue("runtime \(facts.runtimeVersion)").equatable()
+            DeskRuntimeMonoValue("rev \(facts.revisionLabel)").equatable()
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
@@ -99,7 +99,7 @@ public struct RuntimeView: View {
                     facts.isLive ? "OWNER-LOCAL" : "OFFLINE",
                     symbol: "lock.shield.fill",
                     tone: facts.isLive ? .healthy : .error
-                )
+                ).equatable()
             }
         } else {
             VStack(alignment: .leading, spacing: 10) {
@@ -108,7 +108,7 @@ public struct RuntimeView: View {
                     facts.isLive ? "OWNER-LOCAL" : "OFFLINE",
                     symbol: "lock.shield.fill",
                     tone: facts.isLive ? .healthy : .error
-                )
+                ).equatable()
             }
         }
     }
@@ -120,7 +120,7 @@ public struct RuntimeView: View {
                     Label("FOCUS COMMAND SURFACE", systemImage: "bolt.fill")
                         .font(DeskRuntimeType.micro)
                     Spacer()
-                    ZeroStatusBadge(facts.sessionState, tone: sessionTone(facts.sessionState))
+                    ZeroStatusBadge(facts.sessionState, tone: sessionTone(facts.sessionState)).equatable()
                 }
                 Text(facts.activeProjectName)
                     .font(DeskRuntimeType.title)
@@ -134,34 +134,52 @@ public struct RuntimeView: View {
     private func metrics(layout: DeskRuntimeLayout) -> some View {
         let columns = Array(repeating: GridItem(.flexible(), spacing: 10), count: layout.metricColumns)
         return LazyVGrid(columns: columns, alignment: .leading, spacing: 10) {
-            DeskRuntimeMetricCard(
-                label: "Focus state",
-                value: facts.focusElapsedLabel,
-                detail: facts.activeProjectName,
-                badge: facts.sessionState,
-                tone: sessionTone(facts.sessionState)
-            )
+            // The focus card is the only ticking metric: its elapsed value
+            // reads the narrow clock publisher in a leaf, so the other three
+            // value-stable cards can skip re-layout via `.equatable()`.
+            focusMetricCard
             DeskRuntimeMetricCard(
                 label: "Integrations",
                 value: facts.isLive ? "\(facts.enabledIntegrationCount) enabled" : "Unavailable",
                 detail: integrationDetail,
                 badge: facts.isLive ? "LOCAL DATA" : "OFFLINE",
                 tone: facts.isLive ? .healthy : .error
-            )
+            ).equatable()
             DeskRuntimeMetricCard(
                 label: "Registered nodes",
                 value: facts.isLive ? "\(facts.onlineNodeCount) / \(facts.nodeCount) online" : "Unavailable",
                 detail: nodeDetail,
                 badge: facts.deliveryState.presentation.label.uppercased(),
                 tone: facts.deliveryState.presentation.tone
-            )
+            ).equatable()
             DeskRuntimeMetricCard(
                 label: "Attention",
                 value: facts.isLive ? facts.attentionLabel : "Unavailable",
                 detail: attentionDetail,
                 badge: facts.attentionCount == 0 && facts.isLive ? "CLEAR" : "REVIEW",
                 tone: !facts.isLive ? .error : (facts.attentionCount == 0 ? .healthy : .attention)
-            )
+            ).equatable()
+        }
+    }
+
+    private var focusMetricCard: some View {
+        DeskRuntimeCard {
+            VStack(alignment: .leading, spacing: 9) {
+                HStack(alignment: .top) {
+                    Text("FOCUS STATE")
+                        .font(DeskRuntimeType.micro)
+                        .foregroundStyle(ZeroTheme.secondaryInk)
+                    Spacer()
+                    ZeroStatusBadge(facts.sessionState, tone: sessionTone(facts.sessionState)).equatable()
+                }
+                FocusElapsedText(model: model)
+                    .font(.system(.title2, design: .rounded).weight(.black))
+                    .fixedSize(horizontal: false, vertical: true)
+                Text(facts.activeProjectName)
+                    .font(DeskRuntimeType.caption)
+                    .foregroundStyle(ZeroTheme.secondaryInk)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
     }
 
@@ -205,7 +223,7 @@ public struct RuntimeView: View {
                 DeskRuntimeSectionHeader(
                     "Missions Requiring Attention & Active Goals",
                     badge: facts.isLive ? "\(facts.runtimeWorkLabel) TOTAL" : "OFFLINE"
-                )
+                ).equatable()
                 if !facts.isLive {
                     DeskRuntimeEmptyState(
                         symbol: "wifi.slash",
@@ -246,11 +264,11 @@ public struct RuntimeView: View {
                             DeskRuntimeMonoValue("\(facts.activeFiringCount - 3) more active firing\(facts.activeFiringCount - 3 == 1 ? "" : "s") · inspect below")
                         }
                         if let session = facts.authoritativeSnapshot?.session, session.state != "IDLE" {
-                            workRow(
-                                status: session.state,
-                                title: session.project.isEmpty ? "Focus session" : session.project,
-                                rows: [("Session ID", session.id ?? "Unavailable"), ("Elapsed", model.focusElapsedLabel)],
-                                tone: sessionTone(session.state)
+                            SessionElapsedWorkRow(
+                                model: model,
+                                state: session.state,
+                                project: session.project.isEmpty ? "Focus session" : session.project,
+                                sessionID: session.id ?? "Unavailable"
                             )
                         }
                     }
@@ -263,26 +281,63 @@ public struct RuntimeView: View {
     private func workRow(status: String, title: String, rows: [(String, String)], tone: ZeroTone) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
-                ZeroStatusBadge(status, tone: tone)
+                ZeroStatusBadge(status, tone: tone).equatable()
                 Spacer()
             }
             Text(title)
                 .font(DeskRuntimeType.callout.weight(.bold))
                 .textSelection(.enabled)
-            if !rows.isEmpty { DeskRuntimeEvidenceRows(rows: rows) }
+            if !rows.isEmpty { DeskRuntimeEvidenceRows(rows: rows).equatable() }
         }
         .padding(11)
         .background(tone.color.opacity(0.055), in: RoundedRectangle(cornerRadius: 7))
         .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(tone.color.opacity(0.22)))
     }
 
+    /// Narrow clock-reading leaf for the session elapsed row: ticks via the
+    /// dedicated clock publisher instead of invalidating the missions list.
+    private struct SessionElapsedWorkRow: View {
+        @ObservedObject var model: CockpitModel
+        @ObservedObject var tick: CockpitClockSource
+        let state: String
+        let project: String
+        let sessionID: String
+
+        init(model: CockpitModel, state: String, project: String, sessionID: String) {
+            self.model = model
+            _tick = ObservedObject(wrappedValue: model.clockSource)
+            self.state = state
+            self.project = project
+            self.sessionID = sessionID
+        }
+
+        var body: some View {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    ZeroStatusBadge(state, tone: sessionTone(state)).equatable()
+                    Spacer()
+                }
+                Text(project)
+                    .font(DeskRuntimeType.callout.weight(.bold))
+                    .textSelection(.enabled)
+                DeskRuntimeEvidenceRows(rows: [
+                    ("Session ID", sessionID),
+                    ("Elapsed", model.focusElapsedLabel(at: tick.now))
+                ])
+            }
+            .padding(11)
+            .background(sessionTone(state).color.opacity(0.055), in: RoundedRectangle(cornerRadius: 7))
+            .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(sessionTone(state).color.opacity(0.22)))
+        }
+    }
+
     private var automationFirings: some View {
         DeskRuntimeCard {
             VStack(alignment: .leading, spacing: 10) {
-                DeskRuntimeSectionHeader(
+                    DeskRuntimeSectionHeader(
                     "Automation Firings",
                     badge: facts.isLive ? firingCountLabel : "OFFLINE"
-                )
+                ).equatable()
                 if !facts.isLive {
                     DeskRuntimeEmptyState(
                         symbol: "bolt.badge.clock",
