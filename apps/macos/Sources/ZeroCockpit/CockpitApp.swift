@@ -101,14 +101,8 @@ private struct CockpitWindow: View {
                         onMove: { windows.setOrigin($0, for: app.route) },
                         onResize: { windows.setSize($0, for: app.route) },
                         content: {
-                            CockpitShell(
-                                selection: $model.selection,
-                                status: model.runtimeStatusLabel,
-                                version: "v\(ZeroRelease.version) · \(ZeroRelease.build)",
-                                transparentBackground: true
-                            ) {
-                                CockpitRouteView(route: app.route, model: model)
-                            }
+                            CockpitRouteView(route: app.route, model: model)
+                                .padding(12)
                         },
                         panel: { _ in EmptyView() }
                     )
@@ -215,7 +209,7 @@ private struct CockpitWindow: View {
     }
 }
 
-private struct CockpitRouteView: View {
+struct CockpitRouteView: View {
     let route: CockpitRoute
     @ObservedObject var model: CockpitModel
 
