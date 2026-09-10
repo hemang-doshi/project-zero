@@ -86,13 +86,14 @@ private struct CockpitWindow: View {
         // DesktopCards; closed routes mount nothing. Local layout state only.
         DesktopCanvas {
             ZStack(alignment: .topLeading) {
-                ForEach(desktopApps().filter { windows.isOpen($0.route) }) { app in
+                ForEach(desktopApps().filter { windows.isOpen($0.route) && !windows.isMinimized($0.route) }) { app in
                     DesktopCard(
                         app: app,
                         selection: model.selection,
                         initialOrigin: windows.origin(for: app.route),
                         initialSize: windows.size(for: app.route),
                         onClose: { closeRoute(app.route) },
+                        onMinimize: { minimizeRoute(app.route) },
                         onFocus: {
                             windows.bringToFront(app.route)
                             model.selection.route = app.route
@@ -146,7 +147,7 @@ private struct CockpitWindow: View {
     /// Close a window and repoint selection to the new front window, or to
     /// `.desk` (opened if needed) when nothing remains — something always mounts.
     private func closeRoute(_ route: CockpitRoute) {
-        let fallback = desktopFallbackSelection(closed: route, zOrder: windows.zOrder)
+        let fallback = desktopFallbackSelection(closed: route, zOrder: windows.zOrder, minimized: windows.minimized)
         windows.close(route)
         if !windows.isOpen(fallback) {
             windows.open(fallback)
@@ -154,12 +155,33 @@ private struct CockpitWindow: View {
         model.selection.route = fallback
     }
 
+    /// Minimize a window: stays in the open set but mounts nothing; dock
+    /// shows a dot, clicking restores. Front window repoints selection to
+    /// the frontmost non-minimized open window, else .desk.
+    private func minimizeRoute(_ route: CockpitRoute) {
+        windows.minimize(route)
+        if model.selection.route == route {
+            let fallback = desktopFallbackSelection(closed: route, zOrder: windows.zOrder, minimized: windows.minimized)
+            if !windows.isOpen(fallback) {
+                windows.open(fallback)
+            } else if windows.isMinimized(fallback) {
+                windows.unminimize(fallback)
+            }
+            model.selection.route = fallback
+        }
+    }
+
     private var dockStrip: some View {
         HStack(spacing: 8) {
             ForEach(CockpitRoute.allCases) { route in
                 let isOpen = windows.isOpen(route)
+                let isMinimized = windows.isMinimized(route)
                 Button {
-                    if isOpen {
+                    if isMinimized {
+                        windows.unminimize(route)
+                        windows.bringToFront(route)
+                        model.selection.route = route
+                    } else if isOpen {
                         closeRoute(route)
                     } else {
                         // New windows cascade by open count.
@@ -169,16 +191,22 @@ private struct CockpitWindow: View {
                         model.selection.route = route
                     }
                 } label: {
-                    Label(route.title, systemImage: route.symbol)
-                        .labelStyle(.iconOnly)
-                        .font(.system(size: 18))
-                        .frame(width: 44, height: 44)
-                        .background(isOpen ? ZeroTheme.orange.opacity(0.25) : ZeroTheme.workstation, in: RoundedRectangle(cornerRadius: 10))
+                    VStack(spacing: 2) {
+                        Label(route.title, systemImage: route.symbol)
+                            .labelStyle(.iconOnly)
+                            .font(.system(size: 18))
+                            .frame(width: 44, height: 44)
+                            .background(isOpen ? ZeroTheme.orange.opacity(0.25) : ZeroTheme.workstation, in: RoundedRectangle(cornerRadius: 10))
+                        Circle()
+                            .fill(ZeroTheme.orange)
+                            .frame(width: 4, height: 4)
+                            .opacity(isMinimized ? 1 : 0)
+                    }
                 }
                 .buttonStyle(ZeroButtonStyle(.quiet))
                 .focusEffectDisabled()
-                .help("\(isOpen ? "Close" : "Open") \(route.title)")
-                .accessibilityLabel("\(isOpen ? "Close" : "Open") \(route.title)")
+                .help("\(isMinimized ? "Restore" : isOpen ? "Close" : "Open") \(route.title)")
+                .accessibilityLabel("\(isMinimized ? "Restore" : isOpen ? "Close" : "Open") \(route.title)")
             }
         }
         .padding(8)

@@ -90,6 +90,37 @@ extension InspectorPopoutKind {
     }
 }
 
+/// macOS traffic lights: red close, yellow minimize, green in-canvas
+/// fullscreen toggle. Dimmed to gray when the window is not front/active.
+struct DesktopTrafficLights: View {
+    let isActive: Bool
+    let title: String
+    var onClose: (() -> Void)? = nil
+    var onMinimize: (() -> Void)? = nil
+    var onZoom: (() -> Void)? = nil
+
+    var body: some View {
+        HStack(spacing: 8) {
+            light(color: Color(red: 1.0, green: 0.373, blue: 0.341), label: "Close \(title)", action: onClose)
+            light(color: Color(red: 0.996, green: 0.737, blue: 0.180), label: "Minimize \(title)", action: onMinimize)
+            light(color: Color(red: 0.157, green: 0.784, blue: 0.251), label: "Toggle \(title) fullscreen", action: onZoom)
+        }
+    }
+
+    private func light(color: Color, label: String, action: (() -> Void)?) -> some View {
+        Button { action?() } label: {
+            Circle()
+                .fill(isActive ? color : Color.gray.opacity(0.4))
+                .frame(width: 12, height: 12)
+        }
+        .buttonStyle(.plain)
+        .focusEffectDisabled()
+        .help(label)
+        .accessibilityLabel(label)
+        .disabled(action == nil)
+    }
+}
+
 /// One draggable/resizable/fullscreen app card on the desktop canvas.
 ///
 /// - Drag the header to move (in-memory offset, no daemon write).
@@ -108,6 +139,7 @@ struct DesktopCard<Content: View, Panel: View>: View {
     let content: () -> Content
     let panel: (PanelSelection) -> Panel
     var onClose: (() -> Void)? = nil
+    var onMinimize: (() -> Void)? = nil
     var onFocus: (() -> Void)? = nil
     var onMove: ((CGPoint) -> Void)? = nil
     var onResize: ((CGSize) -> Void)? = nil
@@ -126,6 +158,7 @@ struct DesktopCard<Content: View, Panel: View>: View {
         initialOrigin: CGPoint = .zero,
         initialSize: CGSize = CGSize(width: 560, height: 480),
         onClose: (() -> Void)? = nil,
+        onMinimize: (() -> Void)? = nil,
         onFocus: (() -> Void)? = nil,
         onMove: ((CGPoint) -> Void)? = nil,
         onResize: ((CGSize) -> Void)? = nil,
@@ -138,6 +171,7 @@ struct DesktopCard<Content: View, Panel: View>: View {
         self.content = content
         self.panel = panel
         self.onClose = onClose
+        self.onMinimize = onMinimize
         self.onFocus = onFocus
         self.onMove = onMove
         self.onResize = onResize
@@ -296,6 +330,13 @@ struct DesktopCard<Content: View, Panel: View>: View {
 
     private var header: some View {
         HStack(spacing: 8) {
+            DesktopTrafficLights(
+                isActive: isActive,
+                title: app.title,
+                onClose: onClose,
+                onMinimize: onMinimize,
+                onZoom: { isFullscreen.toggle() }
+            )
             Image(systemName: app.route.symbol)
                 .accessibilityHidden(true)
             Text(app.title)
@@ -304,26 +345,6 @@ struct DesktopCard<Content: View, Panel: View>: View {
             if let kind = InspectorPopoutKind(desktopRoute: app.route) {
                 InspectorPopoutButton(kind: kind)
             }
-            Button {
-                isFullscreen = true
-            } label: {
-                Label("Fullscreen", systemImage: "arrow.up.left.and.arrow.down.right")
-            }
-            .buttonStyle(ZeroButtonStyle(.quiet))
-            .focusEffectDisabled()
-            .help("Show \(app.title) fullscreen")
-            .accessibilityLabel("Show \(app.title) fullscreen")
-            if onClose != nil {
-                Button {
-                    onClose?()
-                } label: {
-                    Label("Close", systemImage: "xmark")
-                }
-                .buttonStyle(ZeroButtonStyle(.quiet))
-                .focusEffectDisabled()
-                .help("Close \(app.title)")
-                .accessibilityLabel("Close \(app.title)")
-            }
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
@@ -331,7 +352,6 @@ struct DesktopCard<Content: View, Panel: View>: View {
         .gesture(
             DragGesture(minimumDistance: 4)
                 .onChanged { value in
-                    onFocus?()
                     dragTranslation = value.translation
                 }
                 .onEnded { value in
@@ -339,6 +359,7 @@ struct DesktopCard<Content: View, Panel: View>: View {
                     origin = CGPoint(x: max(end.x, 0), y: max(end.y, 0))
                     dragTranslation = .zero
                     onMove?(origin)
+                    onFocus?()
                 }
         )
         .accessibilityElement(children: .contain)
