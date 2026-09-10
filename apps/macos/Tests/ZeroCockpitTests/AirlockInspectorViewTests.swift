@@ -354,6 +354,10 @@ final class AirlockInspectorViewTests: XCTestCase {
         XCTAssertNil(projection.item(selectionID: "runtime-approval-7"))
     }
 
+    func testAirlockStatsRowCountsPending() {
+        XCTAssertEqual(airlockPendingCount(approvals: ["a", "b"], firings: ["c"]), 3)
+    }
+
     private let snapshotJSON = #"""
     {
       "version":"0.1","revision":42,"timestamp":"2026-09-10T00:00:00Z","status":"RUNNING","runtime_version":"0.2.0",

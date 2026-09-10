@@ -1,6 +1,8 @@
 import SwiftUI
 import ZeroKit
 
+func airlockPendingCount(approvals: [String], firings: [String]) -> Int { approvals.count + firings.count }
+
 enum AirlockOrigin: String, Equatable, Sendable {
     case runtime = "PROJECT ZERO"
     case codex = "CODEX"
@@ -677,6 +679,7 @@ struct AirlockProjection {
 
 public struct AirlockView: View {
     @ObservedObject private var model: CockpitModel
+    @State private var inspectorPanel: PanelSelection = .primary
 
     public init(model: CockpitModel) { self.model = model }
 
@@ -688,7 +691,7 @@ public struct AirlockView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
                     header(wide: wide)
-                    metrics(columns: proxy.size.width >= 900 ? 4 : (proxy.size.width >= 620 ? 2 : 1))
+                    statsRow
                     approvalWorkspace(wide: wide)
                     lowerEvidence(wide: wide)
                 }
@@ -704,10 +707,11 @@ public struct AirlockView: View {
     @ViewBuilder
     private func header(wide: Bool) -> some View {
         let heading = VStack(alignment: .leading, spacing: 7) {
-            HStack(spacing: 8) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Text("Airlock: Local Boundary & Outbound Egress Gate")
                     .font(.title2.weight(.black))
                     .tracking(-0.6)
+                    .lineSpacing(2)
                     .fixedSize(horizontal: false, vertical: true)
                 ZeroStatusBadge(
                     "EXPLICIT LOCAL AUTHORITY",
@@ -742,39 +746,40 @@ public struct AirlockView: View {
         }
     }
 
-    private func metrics(columns: Int) -> some View {
-        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: columns), spacing: 10) {
-            NetworkFlightMetricCard(
-                label: "Visible requests",
-                value: projection.approvalCountLabel,
-                detail: projection.approvals.isEmpty
-                    ? "No decision evidence is visible"
-                    : "\(projection.actionableApprovalCount) currently actionable; retained rows stay explicit",
-                badge: projection.actionableApprovalCount == 0 ? "EVIDENCE" : "LOCAL OWNER",
-                tone: projection.actionableApprovalCount == 0 ? .neutral : .error
-            )
-            NetworkFlightMetricCard(
-                label: "Project Zero",
-                value: String(projection.runtimeApprovalCount),
-                detail: projection.runtimeConnectionLabel,
-                badge: projection.runtimeIsLive ? "LIVE" : "CACHED",
-                tone: runtimeConnectionTone
-            )
-            NetworkFlightMetricCard(
-                label: "Codex callbacks",
-                value: String(projection.codexApprovalCount),
-                detail: projection.codexConnectionLabel,
-                badge: projection.codexIsConnected ? "CONNECTED" : "RETAINED",
-                tone: codexConnectionTone
-            )
-            NetworkFlightMetricCard(
-                label: "Audited decisions",
+    private var statsRow: some View {
+        let firingIDs = projection.snapshot?.firings.compactMap {
+            networkRuntimeText($0, keys: ["id", "seq"])
+        } ?? []
+        let pending = airlockPendingCount(
+            approvals: projection.approvals.map(\.id),
+            firings: firingIDs
+        )
+        return HStack(alignment: .firstTextBaseline, spacing: 18) {
+            statCell(value: "\(pending)", label: "PENDING")
+            statCell(value: String(projection.runtimeApprovalCount), label: "PROJECT ZERO")
+            statCell(value: String(projection.codexApprovalCount), label: "CODEX")
+            statCell(
                 value: "\(projection.audit.count)\(projection.snapshot?.truncated["audit"] == true ? "+" : "")",
-                detail: "Bounded durable approval decisions",
-                badge: projection.snapshot?.truncated["audit"] == true ? "LOWER BOUND" : "BOUNDED",
-                tone: .neutral
+                label: "AUDITED"
             )
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Airlock pending stats")
+    }
+
+    private func statCell(value: String, label: String) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(value)
+                .font(.headline.monospaced())
+                .lineSpacing(2)
+                .fixedSize(horizontal: false, vertical: true)
+            Text(label)
+                .font(.caption2.weight(.bold).monospaced())
+                .foregroundStyle(ZeroTheme.secondaryInk)
+                .lineSpacing(2)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     @ViewBuilder
@@ -783,16 +788,20 @@ public struct AirlockView: View {
             HStack(alignment: .top, spacing: 14) {
                 approvalQueue.frame(maxWidth: .infinity, alignment: .top)
                 ResizablePane(.inspector(key: "airlock.inspector", defaultWidth: 390)) {
-                    VStack(alignment: .leading, spacing: 8) {
-                        InspectorPopoutButton(kind: .airlock)
-                        InspectorView(model: model)
+                    PanelHost(selected: $inspectorPanel, options: [.primary]) { _ in
+                        VStack(alignment: .leading, spacing: 8) {
+                            InspectorPopoutButton(kind: .airlock)
+                            InspectorView(model: model)
+                        }
                     }
                 }
             }
         } else {
             VStack(alignment: .leading, spacing: 14) {
                 approvalQueue
-                InspectorView(model: model)
+                PanelHost(selected: $inspectorPanel, options: [.primary]) { _ in
+                    InspectorView(model: model)
+                }
             }
         }
     }
@@ -843,7 +852,7 @@ public struct AirlockView: View {
 
     private func approvalCard(_ item: AirlockApprovalItem) -> some View {
         VStack(alignment: .leading, spacing: 11) {
-            HStack(alignment: .top, spacing: 9) {
+            HStack(alignment: .firstTextBaseline, spacing: 9) {
                 Image(systemName: item.origin == .runtime ? "lock.shield.fill" : "terminal.fill")
                     .font(.headline)
                     .foregroundStyle(item.origin == .runtime ? ZeroTheme.orangePressed : ZeroTone.attention.color)
@@ -851,10 +860,12 @@ public struct AirlockView: View {
                 VStack(alignment: .leading, spacing: 3) {
                     Text(item.action)
                         .font(.headline.monospaced())
+                        .lineSpacing(2)
                         .textSelection(.enabled)
                     Text(item.target)
                         .font(.caption.monospaced())
                         .foregroundStyle(ZeroTheme.secondaryInk)
+                        .lineSpacing(2)
                         .textSelection(.enabled)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -969,16 +980,17 @@ public struct AirlockView: View {
             Text(label)
                 .font(.caption2.weight(.bold).monospaced())
                 .foregroundStyle(ZeroTheme.secondaryInk)
+                .lineSpacing(2)
             ScrollView(.horizontal, showsIndicators: false) {
                 Text(value)
                     .font(.caption.monospaced())
+                    .lineSpacing(2)
                     .textSelection(.enabled)
                     .fixedSize()
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(8)
-        .background(ZeroTheme.navigation.opacity(0.5), in: RoundedRectangle(cornerRadius: 5))
+        .padding(.vertical, 4)
     }
 
     @ViewBuilder
@@ -996,28 +1008,27 @@ public struct AirlockView: View {
     }
 
     private var auditLedger: some View {
-        NetworkFlightPanel {
-            VStack(alignment: .leading, spacing: 10) {
-                NetworkFlightSectionHeader("Historical Approval Ledger", badge: "\(projection.audit.count) VISIBLE")
-                if projection.audit.isEmpty {
-                    NetworkFlightEmptyState(
-                        symbol: "clock.arrow.circlepath",
-                        title: "No approval decisions in bounded history",
-                        detail: projection.runtimeIsLive ? "The current snapshot contains no matching durable audit rows." : "Runtime history is unavailable while no retained snapshot is present."
-                    )
-                } else {
-                    ScrollView(.horizontal, showsIndicators: true) {
-                        LazyVStack(spacing: 0) {
-                            auditRow(time: "TIME", action: "ACTION", target: "TARGET", actor: "ACTOR", decision: "OUTCOME", evidence: "EVIDENCE", header: true)
-                            ForEach(projection.audit) {
-                                auditRow(time: $0.time, action: $0.action, target: $0.target, actor: $0.actor, decision: $0.decision, evidence: $0.evidence)
-                            }
+        VStack(alignment: .leading, spacing: 10) {
+            NetworkFlightSectionHeader("Historical Approval Ledger", badge: "\(projection.audit.count) VISIBLE")
+            if projection.audit.isEmpty {
+                NetworkFlightEmptyState(
+                    symbol: "clock.arrow.circlepath",
+                    title: "No approval decisions in bounded history",
+                    detail: projection.runtimeIsLive ? "The current snapshot contains no matching durable audit rows." : "Runtime history is unavailable while no retained snapshot is present."
+                )
+            } else {
+                ScrollView(.horizontal, showsIndicators: true) {
+                    LazyVStack(spacing: 0) {
+                        auditRow(time: "TIME", action: "ACTION", target: "TARGET", actor: "ACTOR", decision: "OUTCOME", evidence: "EVIDENCE", header: true)
+                        ForEach(projection.audit) {
+                            auditRow(time: $0.time, action: $0.action, target: $0.target, actor: $0.actor, decision: $0.decision, evidence: $0.evidence)
                         }
-                        .frame(minWidth: 800)
                     }
+                    .frame(minWidth: 800)
                 }
             }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private func auditRow(time: String, action: String, target: String, actor: String, decision: String, evidence: String, header: Bool = false) -> some View {
@@ -1045,34 +1056,32 @@ public struct AirlockView: View {
     }
 
     private var policyPanel: some View {
-        NetworkFlightPanel {
-            VStack(alignment: .leading, spacing: 10) {
-                NetworkFlightSectionHeader("Runtime Policies", badge: "READ-ONLY")
-                if projection.policies.isEmpty {
-                    NetworkFlightEmptyState(
-                        symbol: "checklist.unchecked",
-                        title: "No policies projected",
-                        detail: "Airlock does not fabricate boundary rules or expose an unsupported create-policy control."
-                    )
-                } else {
-                    ForEach(projection.policies) { policy in
-                        HStack(spacing: 9) {
-                            Image(systemName: policy.enabled ? "checkmark.shield.fill" : "shield.slash")
-                                .foregroundStyle(policy.enabled ? ZeroTone.healthy.color : ZeroTheme.secondaryInk)
-                                .accessibilityHidden(true)
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(policy.id).font(.caption.weight(.bold).monospaced()).textSelection(.enabled)
-                                Text(policy.status).font(.caption2.monospaced()).foregroundStyle(ZeroTheme.secondaryInk)
-                            }
-                            Spacer()
-                            ZeroStatusBadge(policy.enabled ? "ENABLED" : policy.status, tone: policy.enabled ? .healthy : .neutral)
+        VStack(alignment: .leading, spacing: 10) {
+            NetworkFlightSectionHeader("Runtime Policies", badge: "READ-ONLY")
+            if projection.policies.isEmpty {
+                NetworkFlightEmptyState(
+                    symbol: "checklist.unchecked",
+                    title: "No policies projected",
+                    detail: "Airlock does not fabricate boundary rules or expose an unsupported create-policy control."
+                )
+            } else {
+                ForEach(projection.policies) { policy in
+                    HStack(alignment: .firstTextBaseline, spacing: 9) {
+                        Image(systemName: policy.enabled ? "checkmark.shield.fill" : "shield.slash")
+                            .foregroundStyle(policy.enabled ? ZeroTone.healthy.color : ZeroTheme.secondaryInk)
+                            .accessibilityHidden(true)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(policy.id).font(.caption.weight(.bold).monospaced()).lineSpacing(2).textSelection(.enabled)
+                            Text(policy.status).font(.caption2.monospaced()).foregroundStyle(ZeroTheme.secondaryInk).lineSpacing(2)
                         }
-                        .padding(10)
-                        .background(ZeroTheme.navigation.opacity(0.45), in: RoundedRectangle(cornerRadius: 7))
+                        Spacer()
+                        ZeroStatusBadge(policy.enabled ? "ENABLED" : policy.status, tone: policy.enabled ? .healthy : .neutral)
                     }
+                    .padding(.vertical, 6)
                 }
             }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private func disclosureNotice(_ message: String, tone: ZeroTone) -> some View {
