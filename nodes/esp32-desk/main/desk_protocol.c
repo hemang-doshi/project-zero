@@ -2,6 +2,7 @@
 #include <math.h>
 #include <stdalign.h>
 #include <stddef.h>
+#include <stdio.h>
 #include <string.h>
 static union {
   max_align_t align;
@@ -140,4 +141,66 @@ bool zero_audio_object(const cJSON *o, zero_levels *levels) {
  }
  if(!next.session_id[0]||!next.sequence)return false;
  *levels=next;return true;
+}
+
+int zero_link_format(char *out, size_t cap, const zero_link_evidence *e) {
+  if (!out || !e || cap < ZERO_LINK_JSON_MAX)
+    return -1;
+  if (e->rssi_dbm < -100 || e->rssi_dbm > 0)
+    return -1;
+  if (e->wifi_reason > 255)
+    return -1;
+  if (e->downtime_ms < 0 || (double)e->downtime_ms > 9007199254740991.0)
+    return -1;
+  unsigned missed = e->hb_sent >= e->hb_acked ? e->hb_sent - e->hb_acked : 0;
+  int n = snprintf(out, cap,
+                   "{\"rssi\":%d,\"reason\":%u,\"downtime_ms\":%lld,"
+                   "\"hb_sent\":%u,\"hb_acked\":%u,\"hb_missed\":%u,"
+                   "\"socket_drops\":%u,\"wifi_drops\":%u}",
+                   e->rssi_dbm, e->wifi_reason, (long long)e->downtime_ms,
+                   e->hb_sent, e->hb_acked, missed, e->socket_drops,
+                   e->wifi_drops);
+  if (n < 0 || n >= (int)cap || n >= ZERO_LINK_JSON_MAX)
+    return -1;
+  return n;
+}
+
+zero_rejoin_cause zero_rejoin_classify(unsigned wifi_reason) {
+  switch (wifi_reason) {
+  case 15: /* 4WAY_HANDSHAKE_TIMEOUT */
+  case 16: /* GROUP_KEY_UPDATE_TIMEOUT */
+  case 17: /* IE_IN_4WAY_DIFFERS */
+  case 18: /* GROUP_CIPHER_INVALID */
+  case 19: /* PAIRWISE_CIPHER_INVALID */
+  case 20: /* AKMP_INVALID */
+  case 21: /* UNSUPP_RSN_IE_VERSION */
+  case 22: /* INVALID_RSN_IE_CAP */
+  case 23: /* 802_1X_AUTH_FAILED */
+  case 24: /* CIPHER_SUITE_REJECTED */
+  case 202: /* AUTH_FAIL */
+  case 203: /* ASSOC_FAIL */
+  case 204: /* HANDSHAKE_TIMEOUT */
+  case 205: /* CONNECTION_FAIL */
+    return ZERO_REJOIN_AUTH;
+  default:
+    return ZERO_REJOIN_TRANSIENT;
+  }
+}
+
+unsigned zero_rejoin_delay_ms(zero_rejoin_cause cause, unsigned consecutive,
+                              unsigned rand16) {
+  if (consecutive > 16)
+    consecutive = 16;
+  if (cause == ZERO_REJOIN_AUTH) {
+    unsigned backoff = ZERO_REJOIN_SLOW_BASE_MS << consecutive;
+    if (consecutive >= 3 || backoff > ZERO_REJOIN_SLOW_CAP_MS)
+      backoff = ZERO_REJOIN_SLOW_CAP_MS;
+    return backoff + (rand16 % (ZERO_REJOIN_SLOW_JITTER_MS + 1));
+  }
+  {
+    unsigned backoff = ZERO_REJOIN_FAST_BASE_MS << consecutive;
+    if (consecutive >= 4 || backoff > ZERO_REJOIN_FAST_CAP_MS)
+      backoff = ZERO_REJOIN_FAST_CAP_MS;
+    return backoff + (rand16 % (ZERO_REJOIN_FAST_JITTER_MS + 1));
+  }
 }

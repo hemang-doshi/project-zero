@@ -33,5 +33,104 @@ int main(void) {
   assert(!zero_button_update(&b, 0, 310));
   assert(!zero_button_update(&b, 1, 320));
   assert(zero_button_update(&b, 1, 380));
+  /* Task 7 link evidence: bounded serialization + zero-growth proxy. */
+  {
+    zero_link_evidence e = {.rssi_dbm = -62, .wifi_reason = 2, .downtime_ms = 1340,
+                            .hb_sent = 10, .hb_acked = 9, .socket_drops = 1, .wifi_drops = 2};
+    char link[ZERO_LINK_JSON_MAX], tiny[16];
+    assert(zero_link_format(NULL, sizeof(link), &e) == -1);
+    assert(zero_link_format(link, sizeof(link), NULL) == -1);
+    assert(zero_link_format(tiny, sizeof(tiny), &e) == -1);
+    int n = zero_link_format(link, sizeof(link), &e);
+    assert(n > 0 && n < ZERO_LINK_JSON_MAX);
+    /* Exact schema round-trips through a real JSON parser. */
+    cJSON *parsed = cJSON_Parse(link);
+    assert(parsed);
+    const cJSON *rssi = cJSON_GetObjectItemCaseSensitive(parsed, "rssi");
+    const cJSON *reason = cJSON_GetObjectItemCaseSensitive(parsed, "reason");
+    const cJSON *down = cJSON_GetObjectItemCaseSensitive(parsed, "downtime_ms");
+    const cJSON *sent = cJSON_GetObjectItemCaseSensitive(parsed, "hb_sent");
+    const cJSON *acked = cJSON_GetObjectItemCaseSensitive(parsed, "hb_acked");
+    const cJSON *missed = cJSON_GetObjectItemCaseSensitive(parsed, "hb_missed");
+    const cJSON *sdrops = cJSON_GetObjectItemCaseSensitive(parsed, "socket_drops");
+    const cJSON *wdrops = cJSON_GetObjectItemCaseSensitive(parsed, "wifi_drops");
+    assert(cJSON_IsNumber(rssi) && rssi->valueint == -62);
+    assert(cJSON_IsNumber(reason) && reason->valueint == 2);
+    assert(cJSON_IsNumber(down) && (int64_t)down->valuedouble == 1340);
+    assert(cJSON_IsNumber(sent) && sent->valueint == 10);
+    assert(cJSON_IsNumber(acked) && acked->valueint == 9);
+    assert(cJSON_IsNumber(missed) && missed->valueint == 1);
+    assert(cJSON_IsNumber(sdrops) && sdrops->valueint == 1);
+    assert(cJSON_IsNumber(wdrops) && wdrops->valueint == 2);
+    assert(cJSON_GetArraySize(parsed) == 8);
+    cJSON_Delete(parsed);
+    /* Deterministic: same input always yields byte-identical output (no hidden
+       growth; the firmware path allocates nothing — caller buffer only). */
+    char again[ZERO_LINK_JSON_MAX];
+    for (int i = 0; i < 200; i++) {
+      assert(zero_link_format(again, sizeof(again), &e) == n);
+      assert(!strcmp(link, again));
+    }
+    /* Out-of-range inputs are rejected, never truncated into lies. */
+    zero_link_evidence bad = e;
+    bad.rssi_dbm = 5; assert(zero_link_format(link, sizeof(link), &bad) == -1);
+    bad = e; bad.rssi_dbm = -101; assert(zero_link_format(link, sizeof(link), &bad) == -1);
+    bad = e; bad.wifi_reason = 256; assert(zero_link_format(link, sizeof(link), &bad) == -1);
+    bad = e; bad.downtime_ms = -1; assert(zero_link_format(link, sizeof(link), &bad) == -1);
+    /* Worst-case field widths still fit the bound. */
+    zero_link_evidence max = {.rssi_dbm = -100, .wifi_reason = 255,
+                              .downtime_ms = 9007199254740991LL, .hb_sent = 4294967295u,
+                              .hb_acked = 0, .socket_drops = 4294967295u, .wifi_drops = 4294967295u};
+    int m = zero_link_format(link, sizeof(link), &max);
+    assert(m > 0 && m < ZERO_LINK_JSON_MAX);
+  }
+  /* Task 7 rejoin policy: reason-aware backoff with jitter, pinned bounds. */
+  {
+    assert(zero_rejoin_classify(0) == ZERO_REJOIN_TRANSIENT);
+    assert(zero_rejoin_classify(2) == ZERO_REJOIN_TRANSIENT);
+    assert(zero_rejoin_classify(7) == ZERO_REJOIN_TRANSIENT);
+    assert(zero_rejoin_classify(200) == ZERO_REJOIN_TRANSIENT);
+    assert(zero_rejoin_classify(201) == ZERO_REJOIN_TRANSIENT);
+    assert(zero_rejoin_classify(206) == ZERO_REJOIN_TRANSIENT);
+    assert(zero_rejoin_classify(15) == ZERO_REJOIN_AUTH);
+    assert(zero_rejoin_classify(23) == ZERO_REJOIN_AUTH);
+    assert(zero_rejoin_classify(202) == ZERO_REJOIN_AUTH);
+    assert(zero_rejoin_classify(204) == ZERO_REJOIN_AUTH);
+    unsigned fast0 = zero_rejoin_delay_ms(ZERO_REJOIN_TRANSIENT, 0, 0);
+    assert(fast0 == ZERO_REJOIN_FAST_BASE_MS);
+    unsigned fast0j = zero_rejoin_delay_ms(ZERO_REJOIN_TRANSIENT, 0, 499);
+    assert(fast0j >= ZERO_REJOIN_FAST_BASE_MS &&
+           fast0j < ZERO_REJOIN_FAST_BASE_MS + ZERO_REJOIN_FAST_JITTER_MS + 1);
+    for (unsigned r = 0; r < 600; r++) {
+      unsigned d = zero_rejoin_delay_ms(ZERO_REJOIN_TRANSIENT, 0, r);
+      assert(d >= 500 && d <= 1000);
+    }
+    unsigned prev = 0;
+    for (unsigned c = 0; c < 8; c++) {
+      unsigned d = zero_rejoin_delay_ms(ZERO_REJOIN_TRANSIENT, c, 0);
+      assert(d >= prev);
+      prev = d;
+    }
+    for (unsigned r = 0; r < 600; r++) {
+      unsigned d = zero_rejoin_delay_ms(ZERO_REJOIN_TRANSIENT, 99, r);
+      assert(d >= ZERO_REJOIN_FAST_CAP_MS &&
+             d <= ZERO_REJOIN_FAST_CAP_MS + ZERO_REJOIN_FAST_JITTER_MS);
+    }
+    unsigned slow0 = zero_rejoin_delay_ms(ZERO_REJOIN_AUTH, 0, 0);
+    assert(slow0 == ZERO_REJOIN_SLOW_BASE_MS);
+    for (unsigned r = 0; r < 600; r++) {
+      unsigned d = zero_rejoin_delay_ms(ZERO_REJOIN_AUTH, 0, r);
+      assert(d >= 10000 && d <= 20000);
+    }
+    for (unsigned r = 0; r < 600; r++) {
+      unsigned d = zero_rejoin_delay_ms(ZERO_REJOIN_AUTH, 99, r);
+      assert(d >= ZERO_REJOIN_SLOW_CAP_MS &&
+             d <= ZERO_REJOIN_SLOW_CAP_MS + ZERO_REJOIN_SLOW_JITTER_MS);
+    }
+    /* Fast path always rejoins sooner than the slow path at equal streak. */
+    for (unsigned c = 0; c < 6; c++)
+      assert(zero_rejoin_delay_ms(ZERO_REJOIN_TRANSIENT, c, 1234) <
+             zero_rejoin_delay_ms(ZERO_REJOIN_AUTH, c, 1234));
+  }
   return 0;
 }
