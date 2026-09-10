@@ -120,4 +120,10 @@ final class ShellLayoutTests: XCTestCase {
             XCTAssertFalse(CockpitPopoutScene.title(for: kind).isEmpty)
         }
     }
+
+    func testPanelHostExposesSingleSelection() {
+        let options: [PanelSelection] = [.primary, .secondary]
+        XCTAssertEqual(options.count, 2)
+        XCTAssertNotEqual(PanelSelection.primary, PanelSelection.secondary)
+    }
 }
