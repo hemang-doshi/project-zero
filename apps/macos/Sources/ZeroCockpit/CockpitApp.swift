@@ -92,7 +92,7 @@ private struct CockpitWindow: View {
                         selection: model.selection,
                         initialOrigin: windows.origin(for: app.route),
                         initialSize: windows.size(for: app.route),
-                        onClose: { windows.close(app.route) },
+                        onClose: { closeRoute(app.route) },
                         onFocus: {
                             windows.bringToFront(app.route)
                             model.selection.route = app.route
@@ -121,6 +121,12 @@ private struct CockpitWindow: View {
             }
         }
         .frame(minWidth: 900, minHeight: 640)
+        .onChange(of: model.selection.route) { route in
+            // Route ALL selection writes (keyboard shortcuts, rail, tab
+            // strip) through the window manager so a closed/background
+            // route opens and fronts its window.
+            windows.open(route)
+        }
         .onAppear {
             guard !lifecycleRegistered else { return }
             lifecycleRegistered = true
@@ -137,18 +143,29 @@ private struct CockpitWindow: View {
         Double(windows.zOrder.firstIndex(of: route) ?? 0)
     }
 
+    /// Close a window and repoint selection to the new front window, or to
+    /// `.desk` (opened if needed) when nothing remains — something always mounts.
+    private func closeRoute(_ route: CockpitRoute) {
+        let fallback = desktopFallbackSelection(closed: route, zOrder: windows.zOrder)
+        windows.close(route)
+        if !windows.isOpen(fallback) {
+            windows.open(fallback)
+        }
+        model.selection.route = fallback
+    }
+
     private var dockStrip: some View {
         HStack(spacing: 8) {
             ForEach(CockpitRoute.allCases) { route in
                 let isOpen = windows.isOpen(route)
                 Button {
-                    if !isOpen {
+                    if isOpen {
+                        closeRoute(route)
+                    } else {
                         // New windows cascade by open count.
                         let cascade = desktopCascadeOffset(for: windows.openCount)
                         windows.setOrigin(CGPoint(x: cascade.width, y: cascade.height), for: route)
-                    }
-                    windows.toggle(route)
-                    if windows.isOpen(route) {
+                        windows.open(route)
                         model.selection.route = route
                     }
                 } label: {
@@ -199,15 +216,6 @@ private struct CockpitRouteView: View {
 /// airlock/zeroBot/skillLab). Pure: no model, daemon, or layout state.
 func desktopApps() -> [DesktopApp] {
     CockpitRoute.allCases.map { DesktopApp(id: $0.rawValue, title: $0.title, route: $0) }
-}
-
-private struct CockpitRouteContent: View {
-    @ObservedObject var model: CockpitModel
-
-    @ViewBuilder
-    var body: some View {
-        CockpitRouteView(route: model.selection.route, model: model)
-    }
 }
 
 private struct CockpitSettings: View {
