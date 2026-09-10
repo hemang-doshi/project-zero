@@ -136,6 +136,23 @@ final class ProviderBridgeTests: XCTestCase {
         XCTAssertEqual(store.session(id: "s1")?.transcript, "hello world")
     }
 
+    func testOpenCodeSessionsAreBoundedDroppingOldest() throws {
+        var store = OpenCodeEventStore(maximumSessions: 2)
+        for id in ["a", "b", "c"] {
+            store.reduce(OpenCodeEvent(
+                method: "session/update",
+                params: .object(["update": .object([
+                    "sessionUpdate": .string("agent_message_chunk"),
+                    "content": .object(["type": .string("text"), "text": .string("hi")])
+                ])]),
+                sessionID: id
+            ))
+        }
+        XCTAssertEqual(store.sessions.count, 2)
+        XCTAssertNil(store.session(id: "a"))
+        XCTAssertNotNil(store.session(id: "c"))
+    }
+
     func testOpenCodeServerRequestsNeverAutoReply() async throws {
         let transport = RecordingACPTransport(handshake: .v1(models: ["gpt-5-mini"]))
         let bridge = OpenCodeBridge(transport: transport, executablePath: "/usr/bin/false")

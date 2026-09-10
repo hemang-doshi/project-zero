@@ -300,7 +300,7 @@ public struct DeskView: View {
                 Text("completely")
                 Text("self-governing")
                     .padding(.horizontal, 5)
-                    .background(Color(red: 0.73, green: 0.93, blue: 0.96))
+                    .background(ZeroTheme.highlightBlue)
                     .rotationEffect(.degrees(-0.6))
             }
             .font(DeskRuntimeType.hero)
@@ -310,7 +310,7 @@ public struct DeskView: View {
                 Text("One local cockpit for committed runtime state, explicit authority, and owner-started Codex work.")
                 Text("Zero cognitive friction; no invented evidence.")
                     .padding(.horizontal, 4)
-                    .background(Color(red: 0.98, green: 0.87, blue: 0.52).opacity(0.75))
+                    .background(ZeroTheme.markerYellow.opacity(0.75))
             }
             .font(DeskRuntimeType.body)
             .foregroundStyle(ZeroTheme.secondaryInk)
@@ -878,8 +878,8 @@ struct DeskRuntimeEvidenceRows: View {
     let rows: [(String, String)]
 
     var body: some View {
-        VStack(spacing: 0) {
-            ForEach(Array(rows.enumerated()), id: \.offset) { index, row in
+        LazyVStack(spacing: 0) {
+            ForEach(Array(rows.prefix(100).enumerated()), id: \.offset) { index, row in
                 ViewThatFits(in: .horizontal) {
                     HStack(alignment: .top, spacing: 12) {
                         evidenceLabel(row.0)
@@ -896,7 +896,7 @@ struct DeskRuntimeEvidenceRows: View {
             }
         }
         .padding(.horizontal, 10)
-        .background(Color(red: 0.95, green: 0.95, blue: 0.97), in: RoundedRectangle(cornerRadius: 6))
+        .background(ZeroTheme.cardCream, in: RoundedRectangle(cornerRadius: 6))
     }
 
     private func evidenceLabel(_ value: String) -> some View {

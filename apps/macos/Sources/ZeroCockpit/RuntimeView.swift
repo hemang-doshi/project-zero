@@ -58,7 +58,7 @@ public struct RuntimeView: View {
                         Text("Local Personal Runtime:")
                         Text("Authoritative")
                             .padding(.horizontal, 5)
-                            .background(Color(red: 0.96, green: 0.67, blue: 0.18).opacity(0.82))
+                            .background(ZeroTheme.brandOrange.opacity(0.82))
                             .rotationEffect(.degrees(-0.8))
                     }
                     Text("& Operational")
@@ -291,7 +291,7 @@ public struct RuntimeView: View {
                     )
                 } else if let firings = facts.authoritativeSnapshot?.firings, !firings.isEmpty {
                     firingStateSummary
-                    ForEach(Array(firings.enumerated()), id: \.offset) { _, record in
+                    ForEach(Array(firings.prefix(100).enumerated()), id: \.offset) { _, record in
                         let state = runtimeText(record, keys: ["state"])?.uppercased() ?? "UNKNOWN"
                         workRow(
                             status: state,
@@ -323,7 +323,7 @@ public struct RuntimeView: View {
     }
 
     private var observation: some View {
-        DeskRuntimeCard(accent: Color(red: 0.96, green: 0.67, blue: 0.18)) {
+        DeskRuntimeCard(accent: ZeroTheme.brandOrange) {
             VStack(alignment: .leading, spacing: 10) {
                 HStack {
                     Label("OBSERVATION", systemImage: "bolt.fill")
@@ -376,7 +376,7 @@ public struct RuntimeView: View {
                     .padding(.top, 12)
                 } else if let events = facts.authoritativeSnapshot?.events, !events.isEmpty {
                     ScrollView(.horizontal, showsIndicators: true) {
-                        VStack(spacing: 0) {
+                        LazyVStack(spacing: 0) {
                             activityHeader
                             ForEach(Array(events.prefix(8).enumerated()), id: \.offset) { _, event in
                                 activityRow(event)

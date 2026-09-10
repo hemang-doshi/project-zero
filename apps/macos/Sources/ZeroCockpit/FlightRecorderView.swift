@@ -388,7 +388,7 @@ public struct FlightRecorderView: View {
                 Text("Deterministic Event Ledger")
                     .font(.system(size: 12, weight: .bold))
                     .padding(.horizontal, 5)
-                    .background(Color(red: 0.96, green: 0.75, blue: 0.28).opacity(0.78))
+                    .background(ZeroTheme.markerYellow.opacity(0.78))
                     .rotationEffect(.degrees(-0.7))
                 ZeroStatusBadge(projection.isRuntimeLive ? "RING-0 LIVE" : "HISTORICAL / OFFLINE",
                                 symbol: projection.isRuntimeLive ? "record.circle" : "clock.badge.questionmark",
@@ -523,7 +523,13 @@ public struct FlightRecorderView: View {
                     ScrollView(.horizontal, showsIndicators: true) {
                         LazyVStack(spacing: 0) {
                             flightHeader
-                            ForEach(visibleRecords) { record in flightRow(record) }
+                            ForEach(visibleRecords.prefix(100)) { record in flightRow(record) }
+                            if visibleRecords.count > 100 {
+                                Text("+\(visibleRecords.count - 100) more matching records (bounded render)")
+                                    .font(.system(size: 9, weight: .medium, design: .monospaced))
+                                    .foregroundStyle(ZeroTheme.secondaryInk)
+                                    .padding(.vertical, 6)
+                            }
                         }
                         .frame(minWidth: 820)
                     }
@@ -635,7 +641,7 @@ public struct FlightRecorderView: View {
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     .padding(12)
-                    .background(Color(red: 0.95, green: 0.95, blue: 0.97), in: RoundedRectangle(cornerRadius: 7))
+                    .background(ZeroTheme.cardCream, in: RoundedRectangle(cornerRadius: 7))
                     .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(ZeroTheme.line))
                     Text("Mark audited, verify tree, export, and replay are unavailable because this projection supplies no exact owner-authorized primitive.")
                         .font(.system(size: 9, weight: .medium, design: .monospaced))

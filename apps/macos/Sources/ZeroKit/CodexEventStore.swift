@@ -77,7 +77,11 @@ public struct CodexHistoryTruncation: Equatable, Sendable {
     public fileprivate(set) var metadata = false
 }
 
-/// Unknown notifications remain inspectable, but never trigger an action.
+    /// Retention: threads 8 / turns-per-thread 32 / items-per-thread 128 /
+    /// unknownEvents 100 (all drop-oldest, pending-approval pins exempt) /
+    /// pending approvals 64 (drop-oldest; approvals resolve explicitly, so an
+    /// unbounded session would otherwise grow this array without limit and
+    /// every per-eval reduction iterates it via pinned-thread scans).
 public struct CodexEventStore: Equatable, Sendable {
     public private(set) var threads: [String: CodexThread] = [:]
     public private(set) var approvals: [CodexApproval] = []
@@ -104,6 +108,7 @@ public struct CodexEventStore: Equatable, Sendable {
             if method.hasSuffix("/requestApproval") || method == "item/tool/requestUserInput" {
                 approvals.removeAll { $0.id == id }
                 approvals.append(CodexApproval(id: id, method: method, params: params))
+                trimHistory()
             } else { retain(event) }
             return
         }
@@ -173,6 +178,10 @@ public struct CodexEventStore: Equatable, Sendable {
     /// Pending approvals are never discarded or clipped. Their context may exceed
     /// history counts by the client's bounded pending-request limit (64 by default).
     private mutating func trimHistory() {
+        if approvals.count > 64 {
+            let overflow = approvals.count - 64
+            approvals.removeFirst(overflow)
+        }
         let pinnedThreads = Set(approvals.compactMap { $0.params["threadId"].string })
         while threadOrder.count > limits.threads,
               let index = threadOrder.firstIndex(where: { !pinnedThreads.contains($0) }) {

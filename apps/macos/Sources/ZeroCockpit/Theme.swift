@@ -17,4 +17,8 @@ public extension ZeroTheme {
     static let navBorder = Color(red: 0xDE/255, green: 0xD7/255, blue: 0xCA/255)
     static let canvasTan = Color(red: 0xE9/255, green: 0xE3/255, blue: 0xD7/255)
     static let windowCanvas = Color(red: 0xDB/255, green: 0xE3/255, blue: 0xD3/255)
+    static let hoverOrange = Color(red: 0xE0/255, green: 0x47/255, blue: 0x00/255)
+    static let markerYellow = Color(red: 0xF7/255, green: 0xDF/255, blue: 0x94/255)
+    static let statusGreen = Color(red: 0x10/255, green: 0xB9/255, blue: 0x81/255)
+    static let highlightBlue = Color(red: 0x3B/255, green: 0x82/255, blue: 0xF6/255)
 }
