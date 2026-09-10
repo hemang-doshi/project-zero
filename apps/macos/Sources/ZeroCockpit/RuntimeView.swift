@@ -3,6 +3,7 @@ import ZeroKit
 
 public struct RuntimeView: View {
     @ObservedObject private var model: CockpitModel
+    @StateObject private var machineTelemetry = LiveMachineTelemetry()
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     public init(model: CockpitModel) {
@@ -540,12 +541,72 @@ public struct RuntimeView: View {
                     ("Observed at", facts.authoritativeSnapshot?.timestamp ?? "Unavailable"),
                     ("Release build", releaseBuild)
                 ])
-                Text("CPU, RAM, WAL rate, latency, and hardware attestation are not projected by this snapshot.")
+                machineTileGrid(sample: machineTelemetry.current)
+                Text("Local-only machine telemetry · 1s cadence · snapshot projection unchanged. WAL rate, latency, and hardware attestation are not projected by this snapshot.")
                     .font(DeskRuntimeType.caption)
                     .foregroundStyle(ZeroTheme.secondaryInk)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
+        .onAppear { machineTelemetry.start() }
+        .onDisappear { machineTelemetry.stop() }
+    }
+
+    private func machineTileGrid(sample: MachineSample) -> some View {
+        let columns = Array(repeating: GridItem(.flexible(), spacing: 8), count: 2)
+        return LazyVGrid(columns: columns, spacing: 8) {
+            machineTile(
+                label: "CPU",
+                value: sample.cpuPercent > 0 ? String(format: "%.1f%%", sample.cpuPercent) : "—",
+                detail: sample.cpuPercent > 0 ? "processor load" : "Unavailable"
+            )
+            machineTile(
+                label: "RAM",
+                value: sample.memoryPressure > 0 ? "\(Int((sample.memoryPressure * 100).rounded()))%" : "—",
+                detail: sample.memoryPressure > 0 ? "memory pressure" : "Unavailable"
+            )
+            machineTile(
+                label: "SSD R+W",
+                value: (sample.diskReadBps + sample.diskWriteBps) > 0
+                    ? "\(byteRate(sample.diskReadBps)) ↓ · \(byteRate(sample.diskWriteBps)) ↑"
+                    : "—",
+                detail: (sample.diskReadBps + sample.diskWriteBps) > 0 ? "disk throughput" : "Unavailable"
+            )
+            machineTile(
+                label: "GPU",
+                value: sample.gpuPercent.map { String(format: "%.0f%%", $0) } ?? "Unavailable",
+                detail: sample.gpuPercent == nil ? "Unavailable" : "graphics load"
+            )
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Local machine telemetry")
+    }
+
+    private func machineTile(label: String, value: String, detail: String) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(label.uppercased())
+                .font(DeskRuntimeType.micro)
+                .foregroundStyle(ZeroTheme.secondaryInk)
+            Text(value)
+                .font(.system(.title3, design: .rounded).weight(.bold))
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+            Text(detail)
+                .font(DeskRuntimeType.caption)
+                .foregroundStyle(ZeroTheme.secondaryInk)
+                .lineLimit(1)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(10)
+        .background(ZeroTheme.navigation.opacity(0.45), in: RoundedRectangle(cornerRadius: 7))
+    }
+
+    private func byteRate(_ bps: Int64) -> String {
+        let value = Double(bps)
+        if value >= 1_000_000_000 { return String(format: "%.1f GB/s", value / 1_000_000_000) }
+        if value >= 1_000_000 { return String(format: "%.1f MB/s", value / 1_000_000) }
+        if value >= 1_000 { return String(format: "%.1f KB/s", value / 1_000) }
+        return "\(bps) B/s"
     }
 
     private var integrationDetail: String {

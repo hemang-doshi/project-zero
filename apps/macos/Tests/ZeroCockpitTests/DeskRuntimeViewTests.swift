@@ -181,6 +181,14 @@ final class DeskRuntimeViewTests: XCTestCase {
         XCTAssertEqual(facts.runtimeWorkLabel, "0")
     }
 
+    func testTelemetrySamplerReturnsSymmetricTiles() {
+        let sampler = MockTelemetrySampler(fixed: MachineSample(cpuPercent: 12.4, memoryPressure: 0.5, diskReadBps: 1024, diskWriteBps: 2048, gpuPercent: 7))
+        let sample = sampler.sample()
+        XCTAssertEqual(sample.cpuPercent, 12.4, accuracy: 0.01)
+        XCTAssertNotNil(sample.gpuPercent)
+        XCTAssertGreaterThan(sample.diskReadBps + sample.diskWriteBps, 0)
+    }
+
     private func codexStoreWithActiveWork() -> CodexEventStore {
         var store = CodexEventStore()
         store.reduce(.notification(method: "thread/started", params: .object([
