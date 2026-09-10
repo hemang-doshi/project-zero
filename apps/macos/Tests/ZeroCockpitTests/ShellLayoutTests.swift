@@ -176,4 +176,33 @@ final class ShellLayoutTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(origin.x, 0)
         XCTAssertGreaterThanOrEqual(origin.y, 0)
     }
+
+    func testDesktopCloseFallsBackSelectionToFrontWindow() {
+        let defaults = trackSuite("ShellLayoutTests.desktopCloseFallback")
+        let manager = DesktopWindowManager(defaults: defaults)
+        manager.open(.network)
+        manager.bringToFront(.network)
+        // Simulate closeRoute(_:): fallback computed from pre-close zOrder.
+        let fallback = desktopFallbackSelection(closed: .network, zOrder: manager.zOrder)
+        manager.close(.network)
+        XCTAssertEqual(fallback, .runtime)
+        XCTAssertTrue(manager.isOpen(fallback))
+    }
+
+    func testDesktopCloseLastWindowFallsBackToDesk() {
+        XCTAssertEqual(desktopFallbackSelection(closed: .desk, zOrder: [.desk]), .desk)
+    }
+
+    func testDesktopKeyboardSelectOpensAndFronts() {
+        let defaults = trackSuite("ShellLayoutTests.desktopKeyboardSelect")
+        let manager = DesktopWindowManager(defaults: defaults)
+        // Simulate .onChange(of: selection.route): every selection write
+        // routes through open(), which fronts.
+        manager.open(.skillLab)
+        XCTAssertTrue(manager.isOpen(.skillLab))
+        XCTAssertEqual(manager.zOrder.last, .skillLab)
+        manager.bringToFront(.desk)
+        manager.open(.skillLab)
+        XCTAssertEqual(manager.zOrder.last, .skillLab)
+    }
 }

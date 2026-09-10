@@ -21,6 +21,12 @@ func desktopSanitizeRoutes(_ stored: [String]?) -> [CockpitRoute] {
     return stored.compactMap { CockpitRoute(rawValue: $0) }
 }
 
+/// Pure fallback: after closing a route, selection repoints to the new
+/// front window (`zOrder.last`), or `.desk` when nothing remains open.
+func desktopFallbackSelection(closed: CockpitRoute, zOrder: [CockpitRoute]) -> CockpitRoute {
+    zOrder.filter { $0 != closed }.last ?? .desk
+}
+
 /// Per-window origin + size state, persisted locally in UserDefaults.
 struct DesktopWindowGeometry {
     let route: CockpitRoute
