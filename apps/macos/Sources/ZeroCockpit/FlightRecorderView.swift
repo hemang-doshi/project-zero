@@ -260,21 +260,30 @@ struct FlightProjection {
     }
 
     private static func orderByProjectedTime(_ records: [FlightRecord]) -> [FlightRecord] {
+        // Parse each timestamp once. The previous comparator re-parsed both
+        // operands on every comparison (O(n log n) ISO8601 parses per build,
+        // ~38 s for 5000 records). Formatters stay per-call: DateFormatter is
+        // not thread-safe, and two allocations are O(1) against the build.
         let fractional = ISO8601DateFormatter()
         fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         let wholeSecond = ISO8601DateFormatter()
         wholeSecond.formatOptions = [.withInternetDateTime]
         func date(_ value: String) -> Date? {
-            fractional.date(from: value) ?? wholeSecond.date(from: value)
+            // Both formats require the "T" date/time separator, so values
+            // without one ("Not projected", "Unavailable", ...) can never
+            // parse; skipping them returns the same nil faster.
+            guard value.contains("T") else { return nil }
+            return fractional.date(from: value) ?? wholeSecond.date(from: value)
         }
-        return records.enumerated().sorted { lhs, rhs in
-            switch (date(lhs.element.timestamp), date(rhs.element.timestamp)) {
+        let keys = records.map { date($0.timestamp) }
+        return records.indices.sorted { lhs, rhs in
+            switch (keys[lhs], keys[rhs]) {
             case let (left?, right?) where left != right: return left > right
             case (_?, nil): return true
             case (nil, _?): return false
-            default: return lhs.offset < rhs.offset
+            default: return lhs < rhs
             }
-        }.map(\.element)
+        }.map { records[$0] }
     }
 }
 
@@ -336,7 +345,14 @@ public struct FlightRecorderView: View {
         .accessibilityLabel("Flight Recorder event and evidence explorer")
     }
 
-    private var projection: FlightProjection { FlightProjection(model: model) }
+    private var projection: FlightProjection {
+        ProjectionCache.shared.flightProjection(
+            snapshot: model.snapshot,
+            runtimeConnection: model.runtimeConnection,
+            codexStore: model.codex.store,
+            codexConnection: model.codexConnection
+        )
+    }
     private var visibleRecords: [FlightRecord] { projection.filtered(category: category, outcome: outcome, query: query) }
     private var selectionState: FlightSelectionState {
         FlightSelectionState.resolve(

@@ -8,7 +8,7 @@ import ZeroKit
 /// each projection must build in under half its baseline or under 50 ms,
 /// whichever is larger.
 final class ShellPerfTests: XCTestCase {
-    func largeSnapshotJSON(nodes: Int, invocations: Int) -> String {
+    func largeSnapshotJSON(nodes: Int, invocations: Int, revision: UInt64 = 99) -> String {
         let nodeRows = (0..<nodes).map { i in
             #"{"id":"node-\#(i)","revoked":false,"status":"ONLINE","capabilities":["display.render"]}"#
         }.joined(separator: ",")
@@ -16,7 +16,7 @@ final class ShellPerfTests: XCTestCase {
             #"{"id":"invoke-\#(i)","principal":"owner","node":"node-\#(i)","capability":"display.render","status":"SUCCEEDED","approved":1,"attempts":1}"#
         }.joined(separator: ",")
         return """
-        {"version":"0.1","revision":99,"timestamp":"2026-09-10T00:00:00Z","status":"RUNNING","runtime_version":"0.2.0",\
+        {"version":"0.1","revision":\(revision),"timestamp":"2026-09-10T00:00:00Z","status":"RUNNING","runtime_version":"0.2.0",\
         "release":{"version":"0.2.0","build":"7"},\
         "session":{"id":"s","project_id":"p","project":"Project Zero","state":"RUNNING","elapsed_ms":1,"since_ms":0,"revision":3},\
         "integrations":[],"policies":[],"context":{},"projects":[],"node_profiles":[],\
@@ -53,5 +53,137 @@ final class ShellPerfTests: XCTestCase {
     func testZeroBotProjectionBuildScales() {
         let model = CockpitModel.preview()
         measure { _ = ZeroBotProjection(model: model) }
+    }
+
+    // MARK: - Task 1 budget guards (regression only, not RED)
+
+    /// Task 0 means were 0.031 ms (network), 8.97 ms (flight), 0.71 ms (desk),
+    /// 0.087 ms (zero-bot): every budget is max(half baseline, 50 ms) = 50 ms.
+    /// These assert the micro-projection cost stays flat; the real RED is below.
+    func testNetworkFactsWithinBudget() throws {
+        let snapshot = try CockpitSnapshot.decode(Data(largeSnapshotJSON(nodes: 200, invocations: 0).utf8))
+        let start = CFAbsoluteTimeGetCurrent()
+        _ = NetworkFacts(snapshot: snapshot, connection: .live)
+        XCTAssertLessThan(CFAbsoluteTimeGetCurrent() - start, 0.05)
+    }
+
+    func testFlightProjectionWithinBudget() throws {
+        let snapshot = try CockpitSnapshot.decode(Data(largeSnapshotJSON(nodes: 200, invocations: 0).utf8))
+        let store = CodexEventStore()
+        let start = CFAbsoluteTimeGetCurrent()
+        _ = FlightProjection(
+            snapshot: snapshot,
+            runtimeConnection: .live,
+            codexStore: store,
+            codexConnection: .disconnected
+        )
+        XCTAssertLessThan(CFAbsoluteTimeGetCurrent() - start, 0.05)
+    }
+
+    @MainActor
+    func testDeskRuntimeFactsWithinBudget() {
+        let model = CockpitModel.preview()
+        let start = CFAbsoluteTimeGetCurrent()
+        _ = DeskRuntimeFacts(model: model)
+        XCTAssertLessThan(CFAbsoluteTimeGetCurrent() - start, 0.05)
+    }
+
+    // MARK: - Task 1 RED: dominant route-switch cost
+
+    /// Bounded daemon history at a realistic upper bound: 200 nodes plus
+    /// 2000 invocations, 1500 events and 1500 audits (5000 flight records).
+    func heavyHistoryJSON(nodes: Int, invocations: Int, events: Int, audits: Int) -> String {
+        let nodeRows = (0..<nodes).map { i in
+            #"{"id":"node-\#(i)","revoked":false,"status":"ONLINE","capabilities":["display.render"],"last_seen":"2026-09-10T00:00:00Z"}"#
+        }.joined(separator: ",")
+        let invocationRows = (0..<invocations).map { i in
+            #"{"id":"invoke-\#(i)","principal":"owner","node":"node-\#(i % max(nodes, 1))","capability":"display.render","status":"SUCCEEDED","approved":1,"deadline":"2026-09-10T01:00:00Z","attempts":1}"#
+        }.joined(separator: ",")
+        let eventRows = (0..<events).map { i in
+            let second = String(format: "%02d", i % 60)
+            return #"{"seq":\#(i),"id":"event-\#(i)","kind":"session.changed","time":"2026-09-10T00:00:\#(second)Z"}"#
+        }.joined(separator: ",")
+        let auditRows = (0..<audits).map { i in
+            let second = String(format: "%02d", i % 60)
+            return #"{"seq":\#(i),"principal":"owner","action":"session.start","target":"runtime","decision":"ALLOW","correlation":"event-\#(i)","time":"2026-09-10T00:01:\#(second)Z","previous_hash":"prev","hash":"hash"}"#
+        }.joined(separator: ",")
+        return """
+        {"version":"0.1","revision":99,"timestamp":"2026-09-10T00:00:00Z","status":"RUNNING","runtime_version":"0.2.0",\
+        "release":{"version":"0.2.0","build":"7"},\
+        "session":{"id":"s","project_id":"p","project":"Project Zero","state":"RUNNING","elapsed_ms":1,"since_ms":0,"revision":3},\
+        "integrations":[],"policies":[],"context":{},"projects":[],"node_profiles":[],\
+        "nodes":[\(nodeRows)],"invocations":[\(invocationRows)],"approvals":[],"firings":[],\
+        "events":[\(eventRows)],"audit":[\(auditRows)],"truncated":{}}
+        """
+    }
+
+    /// RED for the profiled dominant cost: `FlightProjection.orderByProjectedTime`
+    /// re-parses every ISO8601 timestamp on every sort comparison
+    /// (O(n log n) parses per route switch). Measured pre-fix: ~20 s for
+    /// 5000 records. Threshold 8.0 s absorbs CI noise while failing pre-fix
+    /// by more than 2x; the post-fix target is under 1 s.
+    func testFlightProjectionHeavyHistoryWithinBudget() throws {
+        let snapshot = try CockpitSnapshot.decode(
+            Data(heavyHistoryJSON(nodes: 200, invocations: 2000, events: 1500, audits: 1500).utf8))
+        let store = CodexEventStore()
+        let start = CFAbsoluteTimeGetCurrent()
+        let projection = FlightProjection(
+            snapshot: snapshot,
+            runtimeConnection: .live,
+            codexStore: store,
+            codexConnection: .disconnected
+        )
+        let elapsed = CFAbsoluteTimeGetCurrent() - start
+        XCTAssertEqual(projection.records.count, 5000)
+        // Newest timestamp wins: audits at 00:01 beat events at 00:00, and the
+        // first :59 audit in stable order is i=59. Pins sort-order preservation.
+        XCTAssertEqual(projection.records.first?.id, "runtime-audit-59")
+        XCTAssertLessThan(elapsed, 8.0)
+    }
+
+    // MARK: - Task 1: revision-keyed projection reuse across route switches
+
+    /// A route switch with unchanged state must do zero rebuild work: the
+    /// second and later builds with an identical key are cache hits.
+    /// (RED pre-fix: `ProjectionCache` does not exist.)
+    @MainActor
+    func testRouteSwitchWithUnchangedRevisionReusesCachedProjection() throws {
+        let snapshot = try CockpitSnapshot.decode(Data(largeSnapshotJSON(nodes: 200, invocations: 50).utf8))
+        let store = CodexEventStore()
+        let cache = ProjectionCache()
+        let first = cache.flightProjection(
+            snapshot: snapshot, runtimeConnection: .live,
+            codexStore: store, codexConnection: .disconnected)
+        let start = CFAbsoluteTimeGetCurrent()
+        for _ in 0..<10 {
+            let next = cache.flightProjection(
+                snapshot: snapshot, runtimeConnection: .live,
+                codexStore: store, codexConnection: .disconnected)
+            XCTAssertEqual(next.records.map(\.id), first.records.map(\.id))
+        }
+        XCTAssertLessThan(CFAbsoluteTimeGetCurrent() - start, 0.05)
+
+        let netFirst = cache.networkFacts(snapshot: snapshot, connection: .live)
+        let netStart = CFAbsoluteTimeGetCurrent()
+        for _ in 0..<10 {
+            let next = cache.networkFacts(snapshot: snapshot, connection: .live)
+            XCTAssertEqual(next.evidenceRows.map(\.evidenceID), netFirst.evidenceRows.map(\.evidenceID))
+        }
+        XCTAssertLessThan(CFAbsoluteTimeGetCurrent() - netStart, 0.05)
+    }
+
+    /// A new revision or a changed connection must rebuild, never serve stale facts.
+    @MainActor
+    func testCachedProjectionInvalidatesOnChangedInput() throws {
+        let cache = ProjectionCache()
+        let v99 = try CockpitSnapshot.decode(Data(largeSnapshotJSON(nodes: 10, invocations: 5, revision: 99).utf8))
+        let v100 = try CockpitSnapshot.decode(Data(largeSnapshotJSON(nodes: 10, invocations: 5, revision: 100).utf8))
+        let live = cache.networkFacts(snapshot: v99, connection: .live)
+        let hit = cache.networkFacts(snapshot: v99, connection: .live)
+        XCTAssertEqual(hit.nodes.map(\.id), live.nodes.map(\.id))
+        let rebuilt = cache.networkFacts(snapshot: v100, connection: .live)
+        XCTAssertEqual(rebuilt.nodes.map(\.id), live.nodes.map(\.id))
+        let offline = cache.networkFacts(snapshot: v99, connection: .offline)
+        XCTAssertFalse(offline.isLive)
     }
 }

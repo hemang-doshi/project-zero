@@ -49,6 +49,12 @@ struct NetworkFacts {
     let connection: RuntimeConnectionState
     let nodes: [CockpitNode]
     let evidenceRows: [NetworkEvidenceRow]
+    /// First display-capable evidence row per target node. Replaces the
+    /// previous per-node linear scan of `evidenceRows` (O(nodes × rows)
+    /// per topology render); first-in-row-order wins, exactly as before.
+    private let deliveryIndex: [String: NetworkEvidenceRow]
+    /// Node profiles by node id; first-in-snapshot-order wins, as before.
+    private let profileIndex: [String: RuntimeRecord]
 
     init(snapshot: CockpitSnapshot?, connection: RuntimeConnectionState) {
         self.snapshot = snapshot
@@ -68,6 +74,25 @@ struct NetworkFacts {
                 attempts: networkRuntimeText(record, keys: ["attempts"]) ?? "Unavailable"
             )
         } ?? []
+        var deliveryIndex: [String: NetworkEvidenceRow] = [:]
+        deliveryIndex.reserveCapacity(evidenceRows.count)
+        for row in evidenceRows {
+            if (row.capability == "display.render" || row.capability == "display.clear"),
+               deliveryIndex[row.target] == nil {
+                deliveryIndex[row.target] = row
+            }
+        }
+        self.deliveryIndex = deliveryIndex
+        var profileIndex: [String: RuntimeRecord] = [:]
+        if let profiles = snapshot?.nodeProfiles {
+            profileIndex.reserveCapacity(profiles.count)
+            for record in profiles {
+                if let id = networkRuntimeText(record, keys: ["id"]), profileIndex[id] == nil {
+                    profileIndex[id] = record
+                }
+            }
+        }
+        self.profileIndex = profileIndex
     }
 
     @MainActor
@@ -105,7 +130,7 @@ struct NetworkFacts {
     }
 
     func profile(for node: CockpitNode) -> RuntimeRecord? {
-        snapshot?.nodeProfiles.first { networkRuntimeText($0, keys: ["id"]) == node.id }
+        profileIndex[node.id]
     }
 
     func lifecycleStatus(for node: CockpitNode) -> String {
@@ -132,9 +157,7 @@ struct NetworkFacts {
         guard node.capabilities.contains("display.render") || node.capabilities.contains("display.clear") else {
             return NetworkDelivery(label: "Connected", detail: "The daemon reports this node online.", tone: .healthy)
         }
-        guard let row = evidenceRows.first(where: {
-            $0.target == node.id && ($0.capability == "display.render" || $0.capability == "display.clear")
-        }) else {
+        guard let row = deliveryIndex[node.id] else {
             return NetworkDelivery(label: "Connected", detail: "Online; no projected display invocation proves delivery.", tone: .healthy)
         }
         switch row.status.uppercased() {
@@ -176,7 +199,9 @@ public struct NetworkView: View {
         .accessibilityLabel("Network topology and node authority")
     }
 
-    private var facts: NetworkFacts { NetworkFacts(model: model) }
+    private var facts: NetworkFacts {
+        ProjectionCache.shared.networkFacts(snapshot: model.snapshot, connection: model.runtimeConnection)
+    }
 
     @ViewBuilder
     private func header(layout: NetworkLayout) -> some View {
@@ -282,7 +307,7 @@ public struct NetworkView: View {
                         }
                     }
                 } else {
-                    VStack(spacing: 12) {
+                    LazyVStack(spacing: 12) {
                         authorityCard
                         ForEach(facts.nodes) { node in nodeCard(node) }
                     }
@@ -390,7 +415,7 @@ public struct NetworkView: View {
                     )
                 } else {
                     ScrollView(.horizontal, showsIndicators: true) {
-                        VStack(spacing: 0) {
+                        LazyVStack(spacing: 0) {
                             networkEvidenceHeader
                             ForEach(facts.evidenceRows) { row in networkEvidenceRow(row) }
                         }
