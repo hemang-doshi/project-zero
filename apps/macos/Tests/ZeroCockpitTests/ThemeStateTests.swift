@@ -55,6 +55,13 @@ final class ThemeStateTests: XCTestCase {
         XCTAssertEqual(ZeroRailPresentation(selected: true).accent, ZeroTheme.authorityOrange)
     }
 
+    func testExactStitchTokensExist() {
+        XCTAssertEqual(ZeroTheme.brandOrange, Color(red: 0xF5/255, green: 0x4E/255, blue: 0x00/255))
+        XCTAssertEqual(ZeroTheme.primaryAuthority, Color(red: 0xA8/255, green: 0x33/255, blue: 0x00/255))
+        XCTAssertEqual(ZeroType.bodyFontName, "Inter")
+        XCTAssertEqual(ZeroType.codeFontName, "JetBrains Mono")
+    }
+
     private func luminance(_ color: Color.Resolved) -> Double {
         func linear(_ value: Float) -> Double {
             let channel = Double(value)
