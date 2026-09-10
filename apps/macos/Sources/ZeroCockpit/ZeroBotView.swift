@@ -520,9 +520,13 @@ public struct ZeroBotView: View {
                     sessionHeader(wide: wide)
                     if wide {
                         HStack(alignment: .top, spacing: 12) {
-                            explorer.frame(width: 250)
+                            ResizablePane(.explorer(key: "zeroBot.explorer", defaultWidth: 250), handleEdge: .trailing) {
+                                explorer
+                            }
                             conversation.frame(maxWidth: .infinity)
-                            inspector.frame(width: 330)
+                            ResizablePane(.inspector(key: "zeroBot.inspector", defaultWidth: 330)) {
+                                inspector
+                            }
                         }
                     } else {
                         VStack(alignment: .leading, spacing: 12) {
@@ -1068,6 +1072,7 @@ public struct ZeroBotView: View {
     private var inspector: some View {
         ZeroBotCard {
             VStack(alignment: .leading, spacing: 12) {
+                InspectorPopoutButton(kind: .zeroBot)
                 ZeroBotSectionHeader(
                     projection.retainedOnly ? "Retained Run" : "Current Run",
                     badge: activeTurn.map { projection.evidenceStatus($0.status) } ?? "IDLE"

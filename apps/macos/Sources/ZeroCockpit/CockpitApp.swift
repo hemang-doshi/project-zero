@@ -17,6 +17,30 @@ public struct CockpitAppRoot: Scene {
             CockpitWindow(model: model)
         }
         .defaultSize(width: 1450, height: 900)
+        WindowGroup(
+            Text(CockpitPopoutScene.title(for: .flightRecorder)),
+            id: CockpitPopoutScene.sceneID(for: .flightRecorder),
+            for: String.self
+        ) { _ in
+            InspectorPopout(model: model, kind: .flightRecorder)
+        }
+        .defaultSize(width: 1100, height: 750)
+        WindowGroup(
+            Text(CockpitPopoutScene.title(for: .airlock)),
+            id: CockpitPopoutScene.sceneID(for: .airlock),
+            for: String.self
+        ) { _ in
+            InspectorPopout(model: model, kind: .airlock)
+        }
+        .defaultSize(width: 1100, height: 750)
+        WindowGroup(
+            Text(CockpitPopoutScene.title(for: .zeroBot)),
+            id: CockpitPopoutScene.sceneID(for: .zeroBot),
+            for: String.self
+        ) { _ in
+            InspectorPopout(model: model, kind: .zeroBot)
+        }
+        .defaultSize(width: 1100, height: 750)
         MenuBarExtra("Project Zero", systemImage: "circle.dotted") {
             MenuCompanion(model: model)
         }

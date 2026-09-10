@@ -782,7 +782,12 @@ public struct AirlockView: View {
         if wide {
             HStack(alignment: .top, spacing: 14) {
                 approvalQueue.frame(maxWidth: .infinity, alignment: .top)
-                InspectorView(model: model).frame(width: 390, alignment: .top)
+                ResizablePane(.inspector(key: "airlock.inspector", defaultWidth: 390)) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        InspectorPopoutButton(kind: .airlock)
+                        InspectorView(model: model)
+                    }
+                }
             }
         } else {
             VStack(alignment: .leading, spacing: 14) {
@@ -981,7 +986,9 @@ public struct AirlockView: View {
         if wide {
             HStack(alignment: .top, spacing: 14) {
                 auditLedger.frame(maxWidth: .infinity)
-                policyPanel.frame(width: 330)
+                ResizablePane(.explorer(key: "airlock.policy", defaultWidth: 330)) {
+                    policyPanel
+                }
             }
         } else {
             VStack(alignment: .leading, spacing: 14) { auditLedger; policyPanel }
