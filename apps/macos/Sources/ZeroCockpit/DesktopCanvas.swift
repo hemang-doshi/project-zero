@@ -3,7 +3,7 @@ import SwiftUI
 /// One app tile on the in-window desktop canvas.
 ///
 /// Local layout state only: nothing here writes to the daemon. Card widths
-/// persist via `ResizablePaneState` (`zero.desktop.<id>`, local
+/// persist via `ResizablePaneState` (`zero.pane.<id>`, local
 /// `UserDefaults` only); drag offsets, fullscreen flags, and panel picks are
 /// in-memory `@State`.
 public struct DesktopApp: Identifiable, Equatable, Sendable {
@@ -69,6 +69,14 @@ public struct DesktopCanvas<Content: View>: View {
     }
 }
 
+/// Pure drag math: committed base plus live gesture translation.
+///
+/// Each new drag's `translation` restarts at zero, so the gesture accumulates
+/// onto the committed base on end instead of replacing it.
+func accumulatedOffset(_ base: CGSize, _ translation: CGSize) -> CGSize {
+    CGSize(width: base.width + translation.width, height: base.height + translation.height)
+}
+
 extension InspectorPopoutKind {
     /// Native pop-out target for routes that own one; other apps live
     /// in-canvas (and fullscreen) only.
@@ -86,7 +94,7 @@ extension InspectorPopoutKind {
 ///
 /// - Drag the header to move (in-memory offset, no daemon write).
 /// - Drag the trailing handle to resize (`ResizablePane`, persists locally
-///   under `zero.desktop.<id>`).
+///   under `zero.pane.<id>`).
 /// - Fullscreen expands the card to fill the canvas in place
 ///   (`.fullScreenCover` is iOS-only and unavailable on macOS); native
 ///   window pop-out stays on the existing `InspectorPopoutButton` scenes
@@ -101,6 +109,7 @@ struct DesktopCard<Content: View, Panel: View>: View {
     let panel: (PanelSelection) -> Panel
 
     @State private var offset = CGSize.zero
+    @State private var dragTranslation = CGSize.zero
     @State private var isFullscreen = false
     @State private var panelSelection: PanelSelection = .primary
 
@@ -120,7 +129,7 @@ struct DesktopCard<Content: View, Panel: View>: View {
 
     private var paneState: ResizablePaneState {
         ResizablePaneState(
-            key: "zero.desktop.\(app.id)",
+            key: app.id,
             defaultWidth: 560,
             minWidth: 320,
             maxWidth: 1100
@@ -128,6 +137,8 @@ struct DesktopCard<Content: View, Panel: View>: View {
     }
 
     private var isActive: Bool { selection.route == app.route }
+
+    private var displayOffset: CGSize { accumulatedOffset(offset, dragTranslation) }
 
     var body: some View {
         Group {
@@ -147,13 +158,13 @@ struct DesktopCard<Content: View, Panel: View>: View {
                             RoundedRectangle(cornerRadius: 12)
                                 .strokeBorder(isActive ? ZeroTheme.orange : ZeroTheme.ink.opacity(0.2), lineWidth: isActive ? 2 : 1)
                         )
-                        .offset(offset)
                     }
                     if Panel.self != EmptyView.self {
                         PanelHost(selected: $panelSelection, options: panelOptions, panel: panel)
                             .frame(width: 280)
                     }
                 }
+                .offset(displayOffset)
             }
         }
     }
@@ -183,7 +194,11 @@ struct DesktopCard<Content: View, Panel: View>: View {
         .background(ZeroTheme.frameBand)
         .gesture(
             DragGesture(minimumDistance: 4)
-                .onChanged { value in offset = value.translation }
+                .onChanged { value in dragTranslation = value.translation }
+                .onEnded { value in
+                    offset = accumulatedOffset(offset, value.translation)
+                    dragTranslation = .zero
+                }
         )
         .accessibilityElement(children: .contain)
         .accessibilityLabel("\(app.title) card. Drag header to move.")
