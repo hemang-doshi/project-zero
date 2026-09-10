@@ -107,16 +107,28 @@ struct DesktopCard<Content: View, Panel: View>: View {
     let panelOptions: [PanelSelection]
     let content: () -> Content
     let panel: (PanelSelection) -> Panel
+    var onClose: (() -> Void)? = nil
+    var onFocus: (() -> Void)? = nil
+    var onMove: ((CGPoint) -> Void)? = nil
+    var onResize: ((CGSize) -> Void)? = nil
 
-    @State private var offset = CGSize.zero
+    @State private var origin: CGPoint
     @State private var dragTranslation = CGSize.zero
+    @State private var windowSize: CGSize
     @State private var isFullscreen = false
     @State private var panelSelection: PanelSelection = .primary
+    @State private var hoveringHandle: String? = nil
 
     init(
         app: DesktopApp,
         selection: CockpitSelection,
         panelOptions: [PanelSelection] = [.primary],
+        initialOrigin: CGPoint = .zero,
+        initialSize: CGSize = CGSize(width: 560, height: 480),
+        onClose: (() -> Void)? = nil,
+        onFocus: (() -> Void)? = nil,
+        onMove: ((CGPoint) -> Void)? = nil,
+        onResize: ((CGSize) -> Void)? = nil,
         @ViewBuilder content: @escaping () -> Content,
         @ViewBuilder panel: @escaping (PanelSelection) -> Panel
     ) {
@@ -125,20 +137,50 @@ struct DesktopCard<Content: View, Panel: View>: View {
         self.panelOptions = panelOptions
         self.content = content
         self.panel = panel
+        self.onClose = onClose
+        self.onFocus = onFocus
+        self.onMove = onMove
+        self.onResize = onResize
+        _origin = State(initialValue: initialOrigin)
+        _windowSize = State(initialValue: desktopClampSize(initialSize))
     }
 
-    private var paneState: ResizablePaneState {
-        ResizablePaneState(
-            key: app.id,
-            defaultWidth: 560,
-            minWidth: 320,
-            maxWidth: 1100
-        )
+    @State private var resizeBase: (origin: CGPoint, size: CGSize)? = nil
+
+    private func resize(trailingBy dx: CGFloat) {
+        let base = resizeBase ?? (origin, windowSize)
+        windowSize.width = desktopClampSize(CGSize(width: base.size.width + dx, height: base.size.height)).width
+    }
+
+    private func resize(leadingBy dx: CGFloat) {
+        let base = resizeBase ?? (origin, windowSize)
+        let newWidth = min(max(base.size.width - dx, 320), 1100)
+        origin.x = base.origin.x + (base.size.width - newWidth)
+        windowSize.width = newWidth
+    }
+
+    private func resize(bottomBy dy: CGFloat) {
+        let base = resizeBase ?? (origin, windowSize)
+        windowSize.height = desktopClampSize(CGSize(width: base.size.width, height: base.size.height + dy)).height
+    }
+
+    private func resize(topBy dy: CGFloat) {
+        let base = resizeBase ?? (origin, windowSize)
+        let newHeight = min(max(base.size.height - dy, 240), 900)
+        origin.y = base.origin.y + (base.size.height - newHeight)
+        windowSize.height = newHeight
+    }
+
+    private func adjustSize(by delta: CGSize) {
+        windowSize = desktopClampSize(CGSize(width: windowSize.width + delta.width, height: windowSize.height + delta.height))
+        onResize?(windowSize)
     }
 
     private var isActive: Bool { selection.route == app.route }
 
-    private var displayOffset: CGSize { accumulatedOffset(offset, dragTranslation) }
+    private var displayOrigin: CGPoint {
+        CGPoint(x: origin.x + dragTranslation.width, y: origin.y + dragTranslation.height)
+    }
 
     var body: some View {
         Group {
@@ -147,26 +189,109 @@ struct DesktopCard<Content: View, Panel: View>: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 HStack(alignment: .top, spacing: 12) {
-                    ResizablePane(paneState, handleEdge: .trailing) {
-                        VStack(spacing: 0) {
-                            header
-                            content()
-                                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                    VStack(spacing: 0) {
+                        header
+                        content()
+                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                    }
+                    .frame(width: windowSize.width, height: windowSize.height)
+                    .background(ZeroTheme.workstation, in: RoundedRectangle(cornerRadius: 12))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12)
+                            .strokeBorder(isActive ? ZeroTheme.orange : ZeroTheme.ink.opacity(0.2), lineWidth: isActive ? 2 : 1)
+                    )
+                    .overlay(resizeHandles)
+                    .accessibilityElement(children: .contain)
+                    .accessibilityLabel("\(app.title) window")
+                    .accessibilityValue("\(Int(windowSize.width)) by \(Int(windowSize.height)) points")
+                    .accessibilityAdjustableAction { direction in
+                        adjustSize(by: CGSize(width: 0, height: direction == .increment ? 10 : -10))
+                    }
+                    .onKeyPress(phases: .down) { press in
+                        guard press.modifiers.contains(.option) else { return .ignored }
+                        switch press.key {
+                        case .leftArrow: adjustSize(by: CGSize(width: -10, height: 0)); return .handled
+                        case .rightArrow: adjustSize(by: CGSize(width: 10, height: 0)); return .handled
+                        case .upArrow: adjustSize(by: CGSize(width: 0, height: -10)); return .handled
+                        case .downArrow: adjustSize(by: CGSize(width: 0, height: 10)); return .handled
+                        default: return .ignored
                         }
-                        .background(ZeroTheme.workstation, in: RoundedRectangle(cornerRadius: 12))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 12)
-                                .strokeBorder(isActive ? ZeroTheme.orange : ZeroTheme.ink.opacity(0.2), lineWidth: isActive ? 2 : 1)
-                        )
                     }
                     if Panel.self != EmptyView.self {
                         PanelHost(selected: $panelSelection, options: panelOptions, panel: panel)
                             .frame(width: 280)
                     }
                 }
-                .offset(displayOffset)
+                .offset(x: displayOrigin.x, y: displayOrigin.y)
             }
         }
+        .onTapGesture { onFocus?() }
+    }
+
+    /// 4 edges + 4 corners. Edge drag resizes one axis with anchor math
+    /// (leading/top edges move the origin); corners resize both axes.
+    private var resizeHandles: some View {
+        ZStack {
+            edgeHandle(id: "trailing", cursor: .resizeLeftRight, alignment: .trailing, size: CGSize(width: 8, height: 60)) { t in
+                resize(trailingBy: t.width)
+            }
+            edgeHandle(id: "leading", cursor: .resizeLeftRight, alignment: .leading, size: CGSize(width: 8, height: 60)) { t in
+                resize(leadingBy: t.width)
+            }
+            edgeHandle(id: "bottom", cursor: .resizeUpDown, alignment: .bottom, size: CGSize(width: 60, height: 8)) { t in
+                resize(bottomBy: t.height)
+            }
+            edgeHandle(id: "top", cursor: .resizeUpDown, alignment: .top, size: CGSize(width: 60, height: 8)) { t in
+                resize(topBy: t.height)
+            }
+            ForEach(cornerSpecs, id: \.id) { spec in
+                edgeHandle(id: spec.id, cursor: spec.cursor, alignment: spec.alignment, size: CGSize(width: 14, height: 14)) { t in
+                    switch spec.id {
+                    case "topLeading": resize(leadingBy: t.width); resize(topBy: t.height)
+                    case "topTrailing": resize(trailingBy: t.width); resize(topBy: t.height)
+                    case "bottomLeading": resize(leadingBy: t.width); resize(bottomBy: t.height)
+                    default: resize(trailingBy: t.width); resize(bottomBy: t.height)
+                    }
+                }
+            }
+        }
+    }
+
+    private struct CornerSpec { let id: String; let cursor: NSCursor; let alignment: Alignment }
+
+    private var cornerSpecs: [CornerSpec] {
+        [
+            CornerSpec(id: "topLeading", cursor: .init(image: NSCursor.crosshair.image, hotSpot: .zero), alignment: .topLeading),
+            CornerSpec(id: "topTrailing", cursor: .init(image: NSCursor.crosshair.image, hotSpot: .zero), alignment: .topTrailing),
+            CornerSpec(id: "bottomLeading", cursor: .init(image: NSCursor.crosshair.image, hotSpot: .zero), alignment: .bottomLeading),
+            CornerSpec(id: "bottomTrailing", cursor: .init(image: NSCursor.crosshair.image, hotSpot: .zero), alignment: .bottomTrailing),
+        ]
+    }
+
+    private func edgeHandle(id: String, cursor: NSCursor, alignment: Alignment, size: CGSize, onDrag: @escaping (CGSize) -> Void) -> some View {
+        Rectangle()
+            .fill(hoveringHandle == id ? ZeroTheme.orange.opacity(0.35) : Color.clear)
+            .frame(width: size.width, height: size.height)
+            .contentShape(Rectangle())
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: alignment)
+            .onHover { hovering in
+                hoveringHandle = hovering ? id : nil
+                if hovering { cursor.push() } else { NSCursor.pop() }
+            }
+            .gesture(
+                DragGesture(minimumDistance: 1)
+                    .onChanged {
+                        if resizeBase == nil { resizeBase = (origin, windowSize) }
+                        onDrag($0.translation)
+                    }
+                    .onEnded { _ in
+                        resizeBase = nil
+                        onResize?(windowSize)
+                        onMove?(origin)
+                    }
+            )
+            .focusable()
+            .accessibilityLabel("Resize \(app.title) \(id)")
     }
 
     private var header: some View {
@@ -188,16 +313,32 @@ struct DesktopCard<Content: View, Panel: View>: View {
             .focusEffectDisabled()
             .help("Show \(app.title) fullscreen")
             .accessibilityLabel("Show \(app.title) fullscreen")
+            if onClose != nil {
+                Button {
+                    onClose?()
+                } label: {
+                    Label("Close", systemImage: "xmark")
+                }
+                .buttonStyle(ZeroButtonStyle(.quiet))
+                .focusEffectDisabled()
+                .help("Close \(app.title)")
+                .accessibilityLabel("Close \(app.title)")
+            }
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
         .background(ZeroTheme.frameBand)
         .gesture(
             DragGesture(minimumDistance: 4)
-                .onChanged { value in dragTranslation = value.translation }
+                .onChanged { value in
+                    onFocus?()
+                    dragTranslation = value.translation
+                }
                 .onEnded { value in
-                    offset = accumulatedOffset(offset, value.translation)
+                    let end = CGPoint(x: origin.x + value.translation.width, y: origin.y + value.translation.height)
+                    origin = CGPoint(x: max(end.x, 0), y: max(end.y, 0))
                     dragTranslation = .zero
+                    onMove?(origin)
                 }
         )
         .accessibilityElement(children: .contain)

@@ -126,4 +126,54 @@ final class ShellLayoutTests: XCTestCase {
         XCTAssertEqual(options.count, 2)
         XCTAssertNotEqual(PanelSelection.primary, PanelSelection.secondary)
     }
+
+    // MARK: - Desktop window manager
+
+    func testDesktopManagerDefaultsOpenDeskAndRuntime() {
+        let defaults = trackSuite("ShellLayoutTests.desktopDefaults")
+        let manager = DesktopWindowManager(defaults: defaults)
+        XCTAssertEqual(manager.openRoutes, [.desk, .runtime])
+    }
+
+    func testDesktopManagerOpenCloseToggle() {
+        let defaults = trackSuite("ShellLayoutTests.desktopOpen")
+        let manager = DesktopWindowManager(defaults: defaults)
+        manager.open(.network)
+        XCTAssertTrue(manager.openRoutes.contains(.network))
+        manager.close(.network)
+        XCTAssertFalse(manager.openRoutes.contains(.network))
+        manager.toggle(.airlock)
+        XCTAssertTrue(manager.openRoutes.contains(.airlock))
+        manager.toggle(.airlock)
+        XCTAssertFalse(manager.openRoutes.contains(.airlock))
+    }
+
+    func testDesktopManagerBringToFront() {
+        let defaults = trackSuite("ShellLayoutTests.desktopFront")
+        let manager = DesktopWindowManager(defaults: defaults)
+        manager.open(.network)
+        manager.bringToFront(.desk)
+        XCTAssertEqual(manager.zOrder.last, .desk)
+        manager.bringToFront(.network)
+        XCTAssertEqual(manager.zOrder.last, .network)
+    }
+
+    func testDesktopManagerSanitizesUnknownIDs() {
+        let defaults = trackSuite("ShellLayoutTests.desktopSanitize")
+        defaults.set(["desk", "bogus-route", "runtime"], forKey: "zero.desktop.open")
+        defaults.set(["bogus-route", "desk"], forKey: "zero.desktop.zorder")
+        let manager = DesktopWindowManager(defaults: defaults)
+        XCTAssertFalse(manager.openRoutes.contains(where: { $0.rawValue == "bogus-route" }))
+        XCTAssertTrue(manager.openRoutes.contains(.desk))
+        XCTAssertFalse(manager.zOrder.contains(where: { $0.rawValue == "bogus-route" }))
+    }
+
+    func testDesktopManagerOriginClampsNegative() {
+        let defaults = trackSuite("ShellLayoutTests.desktopOrigin")
+        defaults.set(["x": -40.0, "y": -5.0], forKey: "zero.desktop.origin.desk")
+        let manager = DesktopWindowManager(defaults: defaults)
+        let origin = manager.origin(for: .desk)
+        XCTAssertGreaterThanOrEqual(origin.x, 0)
+        XCTAssertGreaterThanOrEqual(origin.y, 0)
+    }
 }
