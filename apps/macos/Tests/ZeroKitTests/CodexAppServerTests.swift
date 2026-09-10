@@ -339,6 +339,16 @@ final class CodexAppServerTests: XCTestCase {
         client.disconnect()
     }
 
+    func testApprovalsAreBoundedDroppingOldest() {
+        var store = CodexEventStore()
+        for n in 0..<70 {
+            store.reduce(.request(id: .integer(Int64(n)), method: "item/commandExecution/requestApproval",
+                                  params: .object(["threadId": .string("t")])))
+        }
+        XCTAssertEqual(store.approvals.count, 64)
+        XCTAssertEqual(store.approvals.first?.id, .integer(6))
+    }
+
     private func params(delta: String) -> CodexJSON {
         .object(["threadId": .string("t"), "turnId": .string("u"), "itemId": .string("i"), "delta": .string(delta)])
     }

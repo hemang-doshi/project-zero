@@ -111,12 +111,26 @@ private struct TopologySCNView: NSViewRepresentable {
         view.allowsCameraControl = false
         view.autoenablesDefaultLighting = true
         view.backgroundColor = .clear
+        // Static topology: no animation loop. Continuous rendering would
+        // repaint every frame on the main thread for an unchanged scene.
+        view.rendersContinuously = false
+        context.coordinator.lastBuilt = nodes
         return view
     }
 
     func updateNSView(_ view: SCNView, context: Context) {
+        // Rebuilding the full SCNScene per pass costs a full scene-graph
+        // layout; the node set only changes on topology updates.
+        guard context.coordinator.lastBuilt != nodes else { return }
+        context.coordinator.lastBuilt = nodes
         view.scene = TopologySceneBuilder.scene(nodes: nodes)
         view.allowsCameraControl = false
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    final class Coordinator {
+        var lastBuilt: [TopologyNode]?
     }
 }
 

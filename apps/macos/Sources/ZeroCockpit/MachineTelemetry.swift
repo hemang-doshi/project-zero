@@ -26,7 +26,13 @@ struct MockTelemetrySampler: MachineTelemetrySampler {
     func start() {
         timer?.invalidate()
         timer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.current = LiveMachineTelemetry.readHostCounters() }
+            Task { @MainActor in
+                guard let self else { return }
+                let next = LiveMachineTelemetry.readHostCounters()
+                // 1Hz republishing identical values invalidates every
+                // subscriber per pass; only publish on actual change.
+                if next != self.current { self.current = next }
+            }
         }
     }
     func stop() { timer?.invalidate(); timer = nil }

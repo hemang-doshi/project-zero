@@ -1019,8 +1019,14 @@ public struct AirlockView: View {
                 ScrollView(.horizontal, showsIndicators: true) {
                     LazyVStack(spacing: 0) {
                         auditRow(time: "TIME", action: "ACTION", target: "TARGET", actor: "ACTOR", decision: "OUTCOME", evidence: "EVIDENCE", header: true)
-                        ForEach(projection.audit) {
+                        ForEach(projection.audit.prefix(100)) {
                             auditRow(time: $0.time, action: $0.action, target: $0.target, actor: $0.actor, decision: $0.decision, evidence: $0.evidence)
+                        }
+                        if projection.audit.count > 100 {
+                            Text("+\(projection.audit.count - 100) more audit rows in the bounded snapshot")
+                                .font(.system(size: 9, weight: .medium, design: .monospaced))
+                                .foregroundStyle(ZeroTheme.secondaryInk)
+                                .padding(.vertical, 6)
                         }
                     }
                     .frame(minWidth: 800)

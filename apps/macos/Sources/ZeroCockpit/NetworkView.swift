@@ -215,7 +215,7 @@ public struct NetworkView: View {
                 Text("This Mac:")
                 Text(facts.isLive ? "Authoritative Ring-0 Runtime" : "Authority Snapshot Retained")
                     .padding(.horizontal, 5)
-                    .background(Color(red: 0.96, green: 0.75, blue: 0.28).opacity(0.78))
+                    .background(ZeroTheme.markerYellow.opacity(0.78))
                     .rotationEffect(.degrees(-0.7))
             }
             .font(.system(size: 12, weight: .bold))
@@ -418,7 +418,13 @@ public struct NetworkView: View {
                     ScrollView(.horizontal, showsIndicators: true) {
                         LazyVStack(spacing: 0) {
                             networkEvidenceHeader
-                            ForEach(facts.evidenceRows) { row in networkEvidenceRow(row) }
+                            ForEach(facts.evidenceRows.prefix(100)) { row in networkEvidenceRow(row) }
+                            if facts.evidenceRows.count > 100 {
+                                Text("+\(facts.evidenceRows.count - 100) more rows in the bounded snapshot")
+                                    .font(.system(size: 9, weight: .medium, design: .monospaced))
+                                    .foregroundStyle(ZeroTheme.secondaryInk)
+                                    .padding(.vertical, 6)
+                            }
                         }
                         .frame(minWidth: 1_030)
                     }
@@ -567,8 +573,8 @@ struct NetworkFlightEvidenceRows: View {
     let rows: [(String, String)]
 
     var body: some View {
-        VStack(spacing: 0) {
-            ForEach(Array(rows.enumerated()), id: \.offset) { index, row in
+        LazyVStack(spacing: 0) {
+            ForEach(Array(rows.prefix(100).enumerated()), id: \.offset) { index, row in
                 HStack(alignment: .top, spacing: 10) {
                     Text(row.0.uppercased())
                         .font(.system(size: 8, weight: .bold, design: .monospaced))

@@ -2440,9 +2440,9 @@ public struct ZeroBotView: View {
         switch category {
         case .operatorMessage: ZeroTheme.navigation.opacity(0.48)
         case .agentMessage: Color.white
-        case .reasoning: Color(red: 0.95, green: 0.94, blue: 0.88)
+        case .reasoning: ZeroTheme.cardCream
         case .plan: ZeroTheme.frameBand.opacity(0.42)
-        case .command, .tool: Color(red: 0.94, green: 0.94, blue: 0.96)
+        case .command, .tool: ZeroTheme.navCream
         case .fileChange: ZeroTone.healthy.color.opacity(0.06)
         case .other: ZeroTheme.workstation
         }
@@ -2541,7 +2541,7 @@ private struct ZeroBotCodeWell: View {
             }
         }
         .padding(8)
-        .background(Color(red: 0.93, green: 0.93, blue: 0.95), in: RoundedRectangle(cornerRadius: 5))
+        .background(ZeroTheme.cardCream, in: RoundedRectangle(cornerRadius: 5))
         .overlay(RoundedRectangle(cornerRadius: 5).strokeBorder(tone.color.opacity(0.22)))
     }
 }
