@@ -12,7 +12,7 @@ final class ThemeStateTests: XCTestCase {
     }
 
     func testNavigationOrderAndSelectionPreserveInspectedProject() {
-        XCTAssertEqual(CockpitRoute.allCases.map(\.title), ["Desk", "Runtime", "Network", "Flight Recorder", "Airlock", "Zero Bot"])
+        XCTAssertEqual(CockpitRoute.allCases.map(\.title), ["Desk", "Runtime", "Network", "Flight Recorder", "Airlock", "Zero Bot", "Skill Lab"])
         var selection = CockpitSelection(projectID: "project-zero")
         selection.route = .airlock
         XCTAssertEqual(selection.projectID, "project-zero")
