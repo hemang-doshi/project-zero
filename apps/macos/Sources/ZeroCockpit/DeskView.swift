@@ -222,11 +222,17 @@ struct DeskCodexFacts: Equatable {
     }
 }
 
+enum DeskTypeScale {
+    static let bodyPointSize: CGFloat = 15
+    static let headerPointSize: CGFloat = 24
+    static let bodyFontName = ZeroType.bodyFontName
+}
+
 enum DeskRuntimeType {
     static let hero = Font.system(.largeTitle, design: .default).weight(.black)
-    static let title = Font.system(.title2, design: .default).weight(.black)
+    static let title = Font.system(size: 24, weight: .black, design: .default)
     static let heading = Font.system(.headline, design: .default).weight(.black)
-    static let body = Font.system(.body, design: .default).weight(.medium)
+    static let body = Font.system(size: 15, weight: .medium, design: .default)
     static let callout = Font.system(.callout, design: .default).weight(.medium)
     static let caption = Font.system(.caption, design: .default).weight(.medium)
     static let micro = Font.system(.caption2, design: .monospaced).weight(.bold)
@@ -434,7 +440,8 @@ public struct DeskView: View {
             .padding(layout == .compact ? 16 : 20)
             .frame(maxWidth: .infinity, minHeight: 250, alignment: .topLeading)
             .background(Color.white)
-            .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(ZeroTheme.orange, lineWidth: 1.5))
+            .overlay(alignment: .top) { ZeroTheme.brandOrange.frame(height: 2).clipShape(UnevenRoundedRectangle(topLeadingRadius: 10, topTrailingRadius: 10)) }
+            .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(ZeroTheme.line))
             .clipShape(RoundedRectangle(cornerRadius: 10))
         }
     }
