@@ -80,12 +80,16 @@ private struct CockpitWindow: View {
     @State private var lifecycleRegistered = false
 
     var body: some View {
-        CockpitShell(
-            selection: $model.selection,
-            status: model.runtimeStatusLabel,
-            version: "v\(ZeroRelease.version) · \(ZeroRelease.build)"
-        ) {
-            CockpitRouteContent(model: model)
+        // In-window desktop: owner wallpaper asset when supplied, grass/
+        // dot-grid fallback otherwise. Local layout state only, no daemon writes.
+        DesktopCanvas {
+            CockpitShell(
+                selection: $model.selection,
+                status: model.runtimeStatusLabel,
+                version: "v\(ZeroRelease.version) · \(ZeroRelease.build)"
+            ) {
+                CockpitRouteContent(model: model)
+            }
         }
         .frame(minWidth: 900, minHeight: 640)
         .onAppear {

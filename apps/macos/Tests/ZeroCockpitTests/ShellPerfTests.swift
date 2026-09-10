@@ -186,4 +186,10 @@ final class ShellPerfTests: XCTestCase {
         let offline = cache.networkFacts(snapshot: v99, connection: .offline)
         XCTAssertFalse(offline.isLive)
     }
+
+    func testDesktopCanvasTracksApps() {
+        let apps = [DesktopApp(id: "desk", title: "Desk", route: .desk)]
+        XCTAssertEqual(apps.count, 1)
+        XCTAssertEqual(apps.first?.route, .desk)
+    }
 }
