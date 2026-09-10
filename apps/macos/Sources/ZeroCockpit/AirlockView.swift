@@ -691,7 +691,7 @@ public struct AirlockView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
                     header(wide: wide)
-                    statsRow
+                    statsRow(columns: proxy.size.width >= 900 ? 4 : (proxy.size.width >= 620 ? 2 : 1))
                     approvalWorkspace(wide: wide)
                     lowerEvidence(wide: wide)
                 }
@@ -746,15 +746,14 @@ public struct AirlockView: View {
         }
     }
 
-    private var statsRow: some View {
-        let firingIDs = projection.snapshot?.firings.compactMap {
-            networkRuntimeText($0, keys: ["id", "seq"])
-        } ?? []
+    private func statsRow(columns: Int) -> some View {
+        // Count directly from the projection arrays: every bounded approval and
+        // firing row is pending evidence, whether or not it carries display IDs.
         let pending = airlockPendingCount(
             approvals: projection.approvals.map(\.id),
-            firings: firingIDs
+            firings: projection.snapshot?.firings.indices.map { "firing-\($0)" } ?? []
         )
-        return HStack(alignment: .firstTextBaseline, spacing: 18) {
+        return LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: columns), spacing: 10) {
             statCell(value: "\(pending)", label: "PENDING")
             statCell(value: String(projection.runtimeApprovalCount), label: "PROJECT ZERO")
             statCell(value: String(projection.codexApprovalCount), label: "CODEX")
@@ -1026,6 +1025,12 @@ public struct AirlockView: View {
                     }
                     .frame(minWidth: 800)
                 }
+            }
+            if projection.snapshot?.truncated["audit"] == true {
+                disclosureNotice(
+                    "The daemon reports additional audit decisions beyond this bounded projection. The visible count is a lower bound.",
+                    tone: .attention
+                )
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
