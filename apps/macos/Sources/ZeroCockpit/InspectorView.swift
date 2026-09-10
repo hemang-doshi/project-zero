@@ -11,49 +11,50 @@ public struct InspectorView: View {
     }
 
     public var body: some View {
-        NetworkFlightPanel {
-            VStack(alignment: .leading, spacing: 12) {
-                header
-                if let selectedItem {
-                    selectedApproval(selectedItem)
-                } else if let inspectionID = model.selection.inspectionID {
-                    staleSelection(inspectionID)
-                } else {
-                    emptySelection
-                }
+        VStack(alignment: .leading, spacing: 12) {
+            header
+            if let selectedItem {
+                selectedApproval(selectedItem)
+            } else if let inspectionID = model.selection.inspectionID {
+                staleSelection(inspectionID)
+            } else {
+                emptySelection
             }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Evidence inspector")
     }
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 7) {
-            HStack {
+            HStack(alignment: .firstTextBaseline) {
                 Label("Evidence Inspector", systemImage: "sidebar.right")
                     .font(.headline.weight(.black))
+                    .lineSpacing(2)
                 Spacer()
                 ZeroStatusBadge(model.selection.route.title.uppercased(), tone: .neutral)
             }
             Text("Selection is exact and origin-qualified. No nearest match or prefix fallback is used.")
                 .font(.caption)
                 .foregroundStyle(ZeroTheme.secondaryInk)
+                .lineSpacing(2)
                 .fixedSize(horizontal: false, vertical: true)
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
-        .background(ZeroTheme.navigation.opacity(0.72), in: RoundedRectangle(cornerRadius: 7))
+        .padding(.vertical, 4)
     }
 
     private func selectedApproval(_ item: AirlockApprovalItem) -> some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .top, spacing: 8) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
                 VStack(alignment: .leading, spacing: 3) {
                     Text(item.origin.rawValue)
                         .font(.caption2.weight(.bold).monospaced())
                         .foregroundStyle(ZeroTheme.orangePressed)
+                        .lineSpacing(2)
                     Text(item.action)
                         .font(.headline.monospaced())
+                        .lineSpacing(2)
                         .textSelection(.enabled)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -64,13 +65,14 @@ public struct InspectorView: View {
                 }
             }
 
-            HStack(spacing: 7) {
+            HStack(alignment: .firstTextBaseline, spacing: 7) {
                 Image(systemName: "scope")
                     .foregroundStyle(ZeroTheme.orangePressed)
                     .accessibilityHidden(true)
                 ScrollView(.horizontal, showsIndicators: true) {
                     Text(item.requestID)
                         .font(.caption.monospaced())
+                        .lineSpacing(2)
                         .textSelection(.enabled)
                         .fixedSize()
                 }
@@ -135,27 +137,28 @@ public struct InspectorView: View {
 
     private func inspectorDatum(_ label: String, _ value: String, authoritative: Bool) -> some View {
         VStack(alignment: .leading, spacing: 3) {
-            HStack(spacing: 5) {
+            HStack(alignment: .firstTextBaseline, spacing: 5) {
                 Text(label.uppercased())
                     .font(.caption2.weight(.bold).monospaced())
                     .foregroundStyle(ZeroTheme.secondaryInk)
+                    .lineSpacing(2)
                 if authoritative {
                     Text("ROUTING")
                         .font(.caption2.weight(.black).monospaced())
                         .foregroundStyle(ZeroTheme.orangePressed)
+                        .lineSpacing(2)
                 }
             }
             ScrollView(.horizontal, showsIndicators: true) {
                 Text(value)
                     .font(.caption.monospaced())
+                    .lineSpacing(2)
                     .textSelection(.enabled)
                     .fixedSize(horizontal: true, vertical: false)
             }
         }
-        .padding(8)
+        .padding(.vertical, 4)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(authoritative ? ZeroTheme.navigation.opacity(0.52) : Color.white, in: RoundedRectangle(cornerRadius: 5))
-        .overlay(RoundedRectangle(cornerRadius: 5).strokeBorder(ZeroTheme.line.opacity(0.8)))
         .accessibilityElement(children: .combine)
         .accessibilityLabel(label)
         .accessibilityValue(value)
