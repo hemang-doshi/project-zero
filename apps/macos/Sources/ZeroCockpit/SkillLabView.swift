@@ -56,7 +56,7 @@ public struct SkillLabView: View {
     private var header: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Skill Lab: Shared Provider Skills")
-                .font(.zero(size: 27, weight: .black))
+                .font(.system(size: 27, weight: .black))
                 .tracking(-0.8)
                 .minimumScaleFactor(0.7)
                 .lineLimit(2)
@@ -69,7 +69,7 @@ public struct SkillLabView: View {
                 )
             }
             Text("Zero-owned skills from the owner-controlled skills directory. Skills enabled once apply to both providers' future sessions; threads and projects stay namespaced per provider. Nothing here executes skill code.")
-                .font(.zero(size: 12, weight: .medium))
+                .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(ZeroTheme.secondaryInk)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -79,7 +79,7 @@ public struct SkillLabView: View {
         VStack(alignment: .leading, spacing: 8) {
             ZeroStatusBadge("NO SKILLS FOUND", symbol: "tray", tone: .attention)
             Text("No skills in \(SkillStore.defaultDirectory.path). Add a skill folder with a SKILL.md to make it appear here; this view never creates the directory.")
-                .font(.zeroMono(size: 11, weight: .medium))
+                .font(.system(size: 11, weight: .medium, design: .monospaced))
                 .foregroundStyle(ZeroTheme.secondaryInk)
                 .fixedSize(horizontal: false, vertical: true)
                 .textSelection(.enabled)
@@ -93,7 +93,7 @@ public struct SkillLabView: View {
     private var listPanel: some View {
         VStack(alignment: .leading, spacing: 10) {
             Label("ZERO-OWNED SKILLS", systemImage: "square.stack.3d.up")
-                .font(.zeroMono(size: 10, weight: .bold))
+                .font(.system(size: 10, weight: .bold, design: .monospaced))
             ForEach(store.skills) { skill in
                 skillRow(skill)
             }
@@ -112,7 +112,7 @@ public struct SkillLabView: View {
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(spacing: 6) {
                         Text(skill.name)
-                            .font(.zero(size: 13, weight: .semibold))
+                            .font(.system(size: 13, weight: .semibold))
                         ZeroStatusBadge(
                             skill.isUsable ? skill.source.displayName.uppercased() : "UNUSABLE",
                             symbol: skill.isUsable ? "checkmark.circle" : "exclamationmark.triangle",
@@ -120,7 +120,7 @@ public struct SkillLabView: View {
                         )
                     }
                     Text(skill.isUsable ? skill.summary : (skill.rejectionReason ?? "Unusable skill."))
-                        .font(.zero(size: 11, weight: .medium))
+                        .font(.system(size: 11, weight: .medium))
                         .foregroundStyle(ZeroTheme.secondaryInk)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -135,7 +135,7 @@ public struct SkillLabView: View {
                 store.setEnabled(skill.id, !skill.enabled)
             } label: {
                 Text(skill.enabled ? "Enabled ✓" : "Disabled")
-                    .font(.zeroMono(size: 11, weight: .semibold))
+                    .font(.system(size: 11, weight: .semibold, design: .monospaced))
             }
             .buttonStyle(ZeroButtonStyle(.quiet, selected: skill.enabled))
             .focusEffectDisabled()
@@ -150,11 +150,11 @@ public struct SkillLabView: View {
     private var detailPanel: some View {
         VStack(alignment: .leading, spacing: 12) {
             Label("SKILL DETAIL + INJECTION PREVIEW", systemImage: "doc.text.magnifyingglass")
-                .font(.zeroMono(size: 10, weight: .bold))
+                .font(.system(size: 10, weight: .bold, design: .monospaced))
             if let skill = selectedSkill {
                 VStack(alignment: .leading, spacing: 6) {
                     Text(skill.name)
-                        .font(.zero(size: 16, weight: .bold))
+                        .font(.system(size: 16, weight: .bold))
                     HStack(spacing: 6) {
                         ZeroStatusBadge(skill.source.displayName.uppercased(), tone: .neutral)
                         ZeroStatusBadge(
@@ -165,42 +165,42 @@ public struct SkillLabView: View {
                     }
                     if let reason = skill.rejectionReason, !skill.isUsable {
                         Text(reason)
-                            .font(.zeroMono(size: 11, weight: .medium))
+                            .font(.system(size: 11, weight: .medium, design: .monospaced))
                             .foregroundStyle(ZeroTone.error.color)
                             .fixedSize(horizontal: false, vertical: true)
                             .textSelection(.enabled)
                     } else if !skill.summary.isEmpty {
                         Text(skill.summary)
-                            .font(.zero(size: 12, weight: .medium))
+                            .font(.system(size: 12, weight: .medium))
                             .foregroundStyle(ZeroTheme.secondaryInk)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
                 ZeroSegmentedChoice("Preview provider", values: ProviderID.allCases, selection: $previewProvider) { provider in
                     Text(provider.displayName)
-                        .font(.zero(size: 11, weight: .semibold))
+                        .font(.system(size: 11, weight: .semibold))
                 }
                 VStack(alignment: .leading, spacing: 6) {
                     Text("INJECTION CONTRACT — SHOWN BEFORE USE")
-                        .font(.zeroMono(size: 10, weight: .bold))
+                        .font(.system(size: 10, weight: .bold, design: .monospaced))
                     Text(SkillStore.injectionContract(for: previewProvider))
-                        .font(.zeroMono(size: 11, weight: .medium))
+                        .font(.system(size: 11, weight: .medium, design: .monospaced))
                         .foregroundStyle(ZeroTheme.secondaryInk)
                         .fixedSize(horizontal: false, vertical: true)
                         .textSelection(.enabled)
                 }
                 VStack(alignment: .leading, spacing: 6) {
                     Text("SESSION CONTEXT PREVIEW (\(previewProvider.displayName))")
-                        .font(.zeroMono(size: 10, weight: .bold))
+                        .font(.system(size: 10, weight: .bold, design: .monospaced))
                     let preview = store.injectionContext(for: previewProvider)
                     Text(preview.isEmpty ? "Nothing would be injected: no enabled, usable skill exists." : preview)
-                        .font(.zeroMono(size: 11, weight: .medium))
+                        .font(.system(size: 11, weight: .medium, design: .monospaced))
                         .fixedSize(horizontal: false, vertical: true)
                         .textSelection(.enabled)
                 }
             } else {
                 Text("Select a skill to inspect its injection contract.")
-                    .font(.zeroMono(size: 11, weight: .medium))
+                    .font(.system(size: 11, weight: .medium, design: .monospaced))
                     .foregroundStyle(ZeroTheme.secondaryInk)
             }
         }
