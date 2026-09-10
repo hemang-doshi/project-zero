@@ -349,6 +349,7 @@ struct DesktopCard<Content: View, Panel: View>: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
         .background(ZeroTheme.frameBand)
+        .onTapGesture { onFocus?() }
         .gesture(
             DragGesture(minimumDistance: 4)
                 .onChanged { value in
