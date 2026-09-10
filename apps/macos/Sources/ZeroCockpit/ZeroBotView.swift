@@ -120,6 +120,14 @@ struct ThreadRowPresentation: Equatable, Sendable {
     var tooltip: String { accessibilityPath }
 }
 
+/// Sidebar row mapping for an OpenCode ACP session: the row's title is the
+/// head of the bounded retained transcript, never a guess.
+struct OpenCodeSessionRow: Equatable, Sendable {
+    let id: String
+    let title: String
+    let subtitle: String
+}
+
 /// Composer labels with honest per-provider capability wording.
 ///
 /// The Codex app-server exposes interrupt-then-new-turn, not mid-turn steer,
@@ -171,6 +179,15 @@ enum ZeroBotComposer {
 /// warning row and records a mirror file under `zero-meta/{harness}/` instead.
 enum Harness: String, CaseIterable, Sendable {
     case codex, opencode
+
+    /// Total mapping: the harness is derived from the provider selection, so
+    /// the two selectors can never visibly disagree.
+    init(provider: ProviderID) {
+        switch provider {
+        case .codex: self = .codex
+        case .opencode: self = .opencode
+        }
+    }
 
     var provider: ProviderID {
         switch self {
@@ -332,6 +349,8 @@ struct ZeroBotProjection {
     let runtimeConnection: RuntimeConnectionState
     let connection: CodexConnectionState
     let store: CodexEventStore
+    let openCodeConnection: CodexConnectionState
+    let openCodeStore: OpenCodeEventStore
     let threadSettings: [String: CodexSettings]
     let threadProjects: [String: ZeroBotProjectBinding]
     let models: [CodexJSON]
@@ -343,6 +362,8 @@ struct ZeroBotProjection {
             runtimeConnection: model.runtimeConnection,
             connection: model.codexConnection,
             store: model.codex.store,
+            openCodeConnection: model.openCodeConnection,
+            openCodeStore: model.openCode.store,
             threadSettings: model.codex.threadSettings,
             threadProjects: threadProjects,
             models: model.codex.models
@@ -354,6 +375,8 @@ struct ZeroBotProjection {
         runtimeConnection: RuntimeConnectionState = .live,
         connection: CodexConnectionState,
         store: CodexEventStore,
+        openCodeConnection: CodexConnectionState = .disconnected,
+        openCodeStore: OpenCodeEventStore = OpenCodeEventStore(),
         threadSettings: [String: CodexSettings],
         threadProjects: [String: ZeroBotProjectBinding] = [:],
         models: [CodexJSON]
@@ -362,6 +385,8 @@ struct ZeroBotProjection {
         self.runtimeConnection = runtimeConnection
         self.connection = connection
         self.store = store
+        self.openCodeConnection = openCodeConnection
+        self.openCodeStore = openCodeStore
         self.threadSettings = threadSettings
         self.threadProjects = threadProjects
         self.models = models
@@ -379,6 +404,60 @@ struct ZeroBotProjection {
             let right = $1.title.isEmpty ? $1.id : $1.title
             return left.localizedCaseInsensitiveCompare(right) == .orderedAscending
         }
+    }
+
+    /// OpenCode sessions from the Project Zero-owned ACP bridge store, sorted
+    /// by ID for a deterministic sidebar. Never reads any other session
+    /// database; empty while OpenCode is offline.
+    var openCodeSessions: [OpenCodeSession] {
+        openCodeStore.sessions.values.sorted { $0.id < $1.id }
+    }
+
+    func openCodeSession(id: String?) -> OpenCodeSession? {
+        guard let id else { return nil }
+        return openCodeStore.session(id: id)
+    }
+
+    var openCodeSessionRows: [OpenCodeSessionRow] {
+        openCodeSessions.map { session in
+            OpenCodeSessionRow(id: session.id, title: Self.openCodeSessionTitle(session), subtitle: session.id)
+        }
+    }
+
+    static func openCodeSessionTitle(_ session: OpenCodeSession) -> String {
+        let line = session.transcript
+            .split(separator: "\n", omittingEmptySubsequences: true)
+            .first.map(String.init) ?? ""
+        guard !line.isEmpty else { return "Untitled session" }
+        return line.count > 48 ? String(line.prefix(48)) + "…" : line
+    }
+
+    var openCodeConnectionPresentation: (label: String, detail: String, tone: ZeroTone) {
+        switch openCodeConnection {
+        case .disconnected:
+            return ("Disconnected", "Connect manually to the local OpenCode ACP bridge.", .neutral)
+        case .connecting:
+            return ("Connecting", "Negotiating the local OpenCode ACP protocol.", .attention)
+        case .connected:
+            return ("Connected", "Project Zero owns this OpenCode ACP session.", .healthy)
+        case .exited(let code):
+            return ("Exited \(code)", "The local OpenCode process ended. Reconnect explicitly.", .error)
+        case .failed(let message):
+            return ("Failed", message.isEmpty ? "The local OpenCode transport failed." : message, .error)
+        }
+    }
+
+    /// Retained-vs-live truth for OpenCode, mirroring the Codex evidence rule:
+    /// offline sessions are retained evidence, never actionable runs.
+    var openCodeRetainedNotice: String? {
+        guard openCodeConnection != .connected, !openCodeSessions.isEmpty || !openCodeStore.unknownEvents.isEmpty else {
+            return nil
+        }
+        return "Visible OpenCode state is retained evidence, not a live or actionable run."
+    }
+
+    func openCodeEvents(sessionID: String) -> [OpenCodeEvent] {
+        openCodeStore.unknownEvents.filter { $0.sessionID == sessionID }
     }
 
     var connectionPresentation: (label: String, detail: String, tone: ZeroTone) {
@@ -733,11 +812,23 @@ public struct ZeroBotView: View {
     @State private var paletteOpen = false
     @State private var paletteQuery = ""
     @State private var providerSelection = ProviderSelection()
-    @State private var harness: Harness = .codex
     @State private var harnessWarnings: [String] = []
+    @State private var selectedOpenCodeSessionID: String?
     @FocusState private var composerFocused: Bool
 
     public init(model: CockpitModel) { self.model = model }
+
+    /// Single source of truth for the harness: derived from the unified
+    /// provider selection, so the harness segmented control, the provider
+    /// picker, the composer lock, and the voice reason can never disagree.
+    private var harness: Harness { Harness(provider: providerSelection.provider) }
+
+    private var harnessSelection: Binding<Harness> {
+        Binding(
+            get: { Harness(provider: providerSelection.provider) },
+            set: { providerSelection.provider = $0.provider }
+        )
+    }
 
     private var threadProjects: [String: ZeroBotProjectBinding] {
         ZeroBotProjectBindingCodec.decode(encodedThreadProjects)
@@ -786,9 +877,6 @@ public struct ZeroBotView: View {
             if selection.provider == .codex, projection.isAdvertisedModel(selection.modelID) {
                 selectedModelID = selection.modelID
             }
-        }
-        .onChange(of: harness) { _, newHarness in
-            providerSelection.provider = newHarness.provider
         }
         .onChange(of: Set(model.codex.store.threads.keys)) { _, retainedThreadIDs in
             storeThreadProjects(threadProjects.filter { retainedThreadIDs.contains($0.key) })
@@ -965,11 +1053,49 @@ public struct ZeroBotView: View {
                 Divider().overlay(ZeroTheme.line)
                 sidebarSectionToggle(title: "OPENCODE SESSIONS", key: "threads.opencode")
                 if !collapsedSidebarSections.contains("threads.opencode") {
-                    ZeroBotEmpty(
-                        symbol: "sparkles",
-                        title: "No OpenCode sessions",
-                        detail: "This build holds no OpenCode session store, so there is nothing to list. Sessions appear here once an OpenCode ACP connection contributes one; nothing is ever read from another session database."
-                    )
+                    let openCodeState = projection.openCodeConnectionPresentation
+                    HStack(spacing: 8) {
+                        ZeroStatusBadge(openCodeState.label, tone: openCodeState.tone)
+                        Spacer(minLength: 4)
+                        if model.openCodeConnection == .connected {
+                            Button("Disconnect") {
+                                model.disconnectOpenCode()
+                                selectedOpenCodeSessionID = nil
+                                localNotice = "OpenCode disconnected. No session or prompt was started."
+                            }
+                            .buttonStyle(ZeroButtonStyle(.standard))
+                            .focusEffectDisabled()
+                            .disabled(actionInFlight)
+                        } else {
+                            Button(actionInFlight ? "Connecting…" : "Connect OpenCode") { connectOpenCode() }
+                                .buttonStyle(ZeroButtonStyle(.authority))
+                                .focusEffectDisabled()
+                                .disabled(actionInFlight || model.openCodeConnection == .connecting)
+                        }
+                    }
+                    .accessibilityElement(children: .contain)
+                    if let error = model.openCodeActionError, !error.isEmpty {
+                        Label(error, systemImage: "exclamationmark.triangle")
+                            .font(ZeroBotTypography.font(.callout, weight: .semibold))
+                            .foregroundStyle(ZeroTone.error.color)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .textSelection(.enabled)
+                    }
+                    if projection.openCodeSessionRows.isEmpty {
+                        ZeroBotEmpty(
+                            symbol: "sparkles",
+                            title: model.openCodeConnection == .connected ? "No OpenCode sessions" : "OpenCode is not connected",
+                            detail: model.openCodeConnection == .connected
+                                ? "No ACP sessions have streamed into this build's OpenCode store yet."
+                                : "Connect OpenCode manually to list this build's ACP sessions. Nothing is ever read from another session database."
+                        )
+                    } else {
+                        VStack(spacing: 6) {
+                            ForEach(projection.openCodeSessionRows, id: \.id) { row in
+                                openCodeSessionButton(row)
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -1094,20 +1220,58 @@ public struct ZeroBotView: View {
         .accessibilityValue(selectedThreadID == thread.id ? "Selected" : "Not selected")
     }
 
+    private func openCodeSessionButton(_ row: OpenCodeSessionRow) -> some View {
+        Button {
+            selectedOpenCodeSessionID = row.id
+            harnessSelection.wrappedValue = .opencode
+        } label: {
+            VStack(alignment: .leading, spacing: 5) {
+                HStack(spacing: 6) {
+                    Image(systemName: "sparkles")
+                        .foregroundStyle(ZeroTone.attention.color)
+                    Text(row.title)
+                        .font(ZeroBotTypography.font(.callout, weight: .bold))
+                        .lineLimit(2)
+                    Spacer(minLength: 3)
+                }
+                HStack(spacing: 5) {
+                    ZeroStatusBadge(
+                        projection.openCodeConnection == .connected ? "OWNED SESSION" : "RETAINED EVIDENCE",
+                        tone: projection.openCodeConnection == .connected ? .healthy : .neutral
+                    )
+                    Text(row.subtitle)
+                        .font(ZeroBotTypography.font(.caption2, design: .monospaced))
+                        .foregroundStyle(ZeroTheme.secondaryInk)
+                        .lineLimit(1)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .buttonStyle(ZeroButtonStyle(.quiet, selected: selectedOpenCodeSessionID == row.id))
+        .focusEffectDisabled()
+        .accessibilityLabel("OpenCode session \(row.title), \(row.subtitle)")
+        .accessibilityValue(selectedOpenCodeSessionID == row.id ? "Selected" : "Not selected")
+    }
+
     private var conversation: some View {
         ZeroBotCard {
             VStack(alignment: .leading, spacing: 12) {
                 HStack(alignment: .top, spacing: 10) {
                     VStack(alignment: .leading, spacing: 3) {
-                        Text(selectedThread.map(threadTitle) ?? "No thread selected")
+                        Text(conversationTitle)
                             .font(ZeroBotTypography.font(.title3, weight: .black))
                             .textSelection(.enabled)
-                        Text(conversationSubtitle)
+                        Text(conversationSubtitleText)
                             .font(ZeroBotTypography.font(.caption, weight: .medium, design: .monospaced))
                             .foregroundStyle(ZeroTheme.secondaryInk)
                     }
                     Spacer()
-                    if let selectedThreadID {
+                    if harness == .opencode {
+                        if selectedOpenCodeSessionID != nil {
+                            let state = projection.openCodeConnectionPresentation
+                            ZeroStatusBadge(state.label, tone: state.tone)
+                        }
+                    } else if let selectedThreadID {
                         let presentation = projection.threadPresentation(threadID: selectedThreadID)
                         ZeroStatusBadge(
                             presentation.label,
@@ -1128,7 +1292,9 @@ public struct ZeroBotView: View {
                         .accessibilityLabel("Retained Codex connection failure. \(retainedConnectionEvidence)")
                 }
 
-                if let thread = selectedThread {
+                if harness == .opencode {
+                    openCodeConversationBody
+                } else if let thread = selectedThread {
                     if thread.items.isEmpty && thread.turns.isEmpty {
                         ZeroBotEmpty(
                             symbol: "ellipsis.message",
@@ -1152,12 +1318,29 @@ public struct ZeroBotView: View {
                     )
                 }
 
-                approvalCards
+                if harness == .codex {
+                    approvalCards
+                }
                 harnessWarningRows
                 statusStrip
                 composer
             }
         }
+    }
+
+    private var conversationTitle: String {
+        if harness == .opencode {
+            return projection.openCodeSession(id: selectedOpenCodeSessionID)
+                .map(ZeroBotProjection.openCodeSessionTitle) ?? "No session selected"
+        }
+        return selectedThread.map(threadTitle) ?? "No thread selected"
+    }
+
+    private var conversationSubtitleText: String {
+        if harness == .opencode {
+            return projection.openCodeConnectionPresentation.detail
+        }
+        return conversationSubtitle
     }
 
     @ViewBuilder
@@ -1212,29 +1395,48 @@ public struct ZeroBotView: View {
 
     /// Conversational bubble: aligned, borderless, no box chrome. Execution
     /// evidence (commands, tools, diffs) keeps the bordered card below.
+    /// OpenCode transcripts render through this same path via the text-based
+    /// core; only the item wrapper is Codex-specific.
     private func messageBubble(_ item: CodexItem, category: ZeroBotItemCategory) -> some View {
-        let isOperator = category == .operatorMessage
-        return HStack {
+        messageBubble(
+            title: category == .operatorMessage ? "YOU" : "ZERO BOT",
+            text: item.text,
+            output: item.output,
+            isOperator: category == .operatorMessage,
+            truncated: item.textTruncated || item.outputTruncated || item.metadataTruncated,
+            accessibilityLabel: category == .operatorMessage ? "Your message" : "Zero Bot reply"
+        )
+    }
+
+    private func messageBubble(
+        title: String,
+        text: String,
+        output: String,
+        isOperator: Bool,
+        truncated: Bool,
+        accessibilityLabel: String
+    ) -> some View {
+        HStack {
             if isOperator { Spacer(minLength: 36) }
             VStack(alignment: .leading, spacing: 4) {
-                Text(isOperator ? "YOU" : "ZERO BOT")
+                Text(title)
                     .font(ZeroBotTypography.font(.caption2, weight: .bold, design: .monospaced))
                     .foregroundStyle(isOperator ? Color.white.opacity(0.75) : ZeroTheme.secondaryInk)
-                if !item.text.isEmpty {
-                    Text(item.text)
+                if !text.isEmpty {
+                    Text(text)
                         .font(ZeroBotTypography.font(.body, weight: .medium))
                         .foregroundStyle(isOperator ? Color.white : ZeroTheme.ink)
                         .fixedSize(horizontal: false, vertical: true)
                         .textSelection(.enabled)
                 }
-                if !item.output.isEmpty {
-                    Text(item.output)
+                if !output.isEmpty {
+                    Text(output)
                         .font(ZeroBotTypography.font(.callout, design: .monospaced))
                         .foregroundStyle(isOperator ? Color.white : ZeroTheme.ink)
                         .fixedSize(horizontal: false, vertical: true)
                         .textSelection(.enabled)
                 }
-                if item.textTruncated || item.outputTruncated || item.metadataTruncated {
+                if truncated {
                     Label("Clipped by the retention boundary", systemImage: "scissors")
                         .font(ZeroBotTypography.font(.caption2, weight: .semibold, design: .monospaced))
                         .foregroundStyle(isOperator ? Color.white.opacity(0.85) : ZeroTone.attention.color)
@@ -1248,7 +1450,83 @@ public struct ZeroBotView: View {
             if !isOperator { Spacer(minLength: 36) }
         }
         .accessibilityElement(children: .contain)
-        .accessibilityLabel(isOperator ? "Your message" : "Zero Bot reply")
+        .accessibilityLabel(accessibilityLabel)
+    }
+
+    /// OpenCode conversation: the retained transcript renders through the same
+    /// bubble path as Codex messages; retained ACP events render as evidence
+    /// cards. Offline content is labelled retained, never actionable.
+    @ViewBuilder
+    private var openCodeConversationBody: some View {
+        if let retained = projection.openCodeRetainedNotice {
+            Label(retained, systemImage: "archivebox.fill")
+                .font(ZeroBotTypography.font(.callout, weight: .semibold))
+                .foregroundStyle(ZeroTheme.secondaryInk)
+                .fixedSize(horizontal: false, vertical: true)
+                .textSelection(.enabled)
+                .padding(9)
+                .background(ZeroTheme.navigation.opacity(0.55), in: RoundedRectangle(cornerRadius: 6))
+                .accessibilityLabel("Retained OpenCode evidence. \(retained)")
+        }
+        if let session = projection.openCodeSession(id: selectedOpenCodeSessionID) {
+            let events = projection.openCodeEvents(sessionID: session.id)
+            if session.transcript.isEmpty && events.isEmpty {
+                ZeroBotEmpty(
+                    symbol: "ellipsis.message",
+                    title: "No streamed content yet",
+                    detail: "This OpenCode session has no retained transcript or events in the current connection."
+                )
+            } else {
+                VStack(spacing: 9) {
+                    if !session.transcript.isEmpty {
+                        messageBubble(
+                            title: "ZERO BOT · OPENCODE",
+                            text: session.transcript,
+                            output: "",
+                            isOperator: false,
+                            truncated: session.contentTruncated,
+                            accessibilityLabel: "OpenCode session transcript"
+                        )
+                    }
+                    ForEach(Array(events.enumerated()), id: \.offset) { _, event in
+                        openCodeEventCard(event)
+                    }
+                }
+            }
+        } else {
+            ZeroBotEmpty(
+                symbol: "sparkles",
+                title: projection.openCodeSessions.isEmpty
+                    ? (model.openCodeConnection == .connected
+                        ? "No OpenCode sessions yet"
+                        : "OpenCode is not connected")
+                    : "Select an OpenCode session",
+                detail: projection.openCodeSessions.isEmpty
+                    ? (model.openCodeConnection == .connected
+                        ? "No ACP sessions have streamed into this build's OpenCode store yet."
+                        : "Connect OpenCode manually to list this build's ACP sessions.")
+                    : "Retained sessions are read-only evidence."
+            )
+        }
+    }
+
+    private func openCodeEventCard(_ event: OpenCodeEvent) -> some View {
+        let payload = ZeroBotProjection.jsonText(event.params)
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                ZeroStatusBadge("PROTOCOL ITEM", symbol: "waveform.path.ecg", tone: .neutral)
+                Spacer()
+                Text(event.method)
+                    .font(ZeroBotTypography.font(.caption2, design: .monospaced))
+                    .foregroundStyle(ZeroTheme.secondaryInk)
+                    .lineLimit(1)
+            }
+            ZeroBotCodeWell(title: "RETAINED ACP PARAMS", content: payload.text, tone: .neutral)
+        }
+        .padding(11)
+        .background(ZeroTheme.workstation, in: RoundedRectangle(cornerRadius: 8))
+        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(ZeroTheme.line))
+        .accessibilityElement(children: .contain)
     }
 
     private func evidenceCard(_ item: CodexItem, category: ZeroBotItemCategory) -> some View {
@@ -1432,7 +1710,7 @@ public struct ZeroBotView: View {
                 )
             }
             HStack(spacing: 8) {
-                ZeroSegmentedChoice("Harness", values: Harness.allCases, selection: $harness) { value in
+                ZeroSegmentedChoice("Harness", values: Harness.allCases, selection: harnessSelection) { value in
                     Text(value.title)
                         .frame(maxWidth: .infinity)
                 }
@@ -1485,8 +1763,8 @@ public struct ZeroBotView: View {
                 .buttonStyle(ZeroButtonStyle(.standard))
                 .focusEffectDisabled()
                 .disabled(true)
-                .help(ZeroBotComposer.voiceUnavailableReason(for: providerSelection.provider))
-                .accessibilityHint(ZeroBotComposer.voiceUnavailableReason(for: providerSelection.provider))
+                .help(ZeroBotComposer.voiceUnavailableReason(for: harness.provider))
+                .accessibilityHint(ZeroBotComposer.voiceUnavailableReason(for: harness.provider))
                 Button("Attach") {}
                     .buttonStyle(ZeroButtonStyle(.standard))
                     .focusEffectDisabled()
@@ -1875,6 +2153,9 @@ public struct ZeroBotView: View {
         if model.runtimeConnection != .live || model.snapshot == nil {
             return "Project Zero runtime evidence is not live; sending is disabled."
         }
+        if harness == .opencode {
+            return "OpenCode sending is not wired in this build; switch to the Codex harness to send."
+        }
         if model.codexConnection != .connected { return "Connect Codex before sending." }
         if let mismatch = composerHarnessMismatch { return mismatch }
         guard let selectedThreadID else { return "Select a thread before sending." }
@@ -2032,6 +2313,18 @@ public struct ZeroBotView: View {
         }
     }
 
+    private func connectOpenCode() {
+        guard !actionInFlight else { return }
+        selectedOpenCodeSessionID = nil
+        actionInFlight = true
+        localNotice = nil
+        Task {
+            let connected = await model.connectOpenCode()
+            actionInFlight = false
+            if connected { localNotice = "Connected. No session or prompt was started." }
+        }
+    }
+
     private func startThread() {
         guard !actionInFlight,
               let selectedProjectID,
@@ -2052,6 +2345,10 @@ public struct ZeroBotView: View {
     }
 
     private func sendIntent() {
+        if harness == .opencode {
+            localNotice = "OpenCode sending is not wired in this build; switch to the Codex harness to send."
+            return
+        }
         if let mismatch = composerHarnessMismatch {
             let entry = "\(mismatch) Mirrored, not sent."
             harnessWarnings.append(entry)
