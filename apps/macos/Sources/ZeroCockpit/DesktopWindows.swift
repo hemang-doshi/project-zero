@@ -129,11 +129,10 @@ final class DesktopWindowManager: ObservableObject {
         // Launch stagger: stored-open routes lacking stored origins get
         // distinct cascade origins by index in desktopApps() order.
         let ordered = CockpitRoute.allCases.filter { resolvedOpen.contains($0) }
+        let stagger = desktopLaunchOrigins(count: ordered.count)
         for (index, route) in ordered.enumerated() {
             if defaults.object(forKey: "zero.desktop.origin.\(route.rawValue)") == nil {
-                let cascade = desktopCascadeOffset(for: index)
-                DesktopWindowGeometry(route: route, defaults: defaults).origin =
-                    CGPoint(x: cascade.width, y: cascade.height)
+                DesktopWindowGeometry(route: route, defaults: defaults).origin = stagger[index]
             }
         }
     }
@@ -144,8 +143,7 @@ final class DesktopWindowManager: ObservableObject {
 
     func open(_ route: CockpitRoute) {
         if !openRoutes.contains(route) && !hasStoredOrigin(for: route) {
-            let cascade = desktopCascadeOffset(for: openRoutes.count)
-            setOrigin(CGPoint(x: cascade.width, y: cascade.height), for: route)
+            setOrigin(desktopInitialOrigin(for: openRoutes.count, stored: nil), for: route)
         }
         openRoutes.insert(route)
         minimized.remove(route)
@@ -185,7 +183,18 @@ final class DesktopWindowManager: ObservableObject {
     }
 
     func origin(for route: CockpitRoute) -> CGPoint {
-        DesktopWindowGeometry(route: route, defaults: defaults).origin
+        desktopInitialOrigin(for: 0, stored: rawStoredOrigin(for: route))
+    }
+
+    /// Raw stored origin (nil when never persisted); `origin(for:)` routes
+    /// it through `desktopInitialOrigin` for the ≥ 0 clamp. A nil stored
+    /// origin resolves to the index-0 cascade, which is `.zero` — identical
+    /// to the previous unclamped read for missing keys.
+    private func rawStoredOrigin(for route: CockpitRoute) -> CGPoint? {
+        guard let dict = defaults.dictionary(forKey: "zero.desktop.origin.\(route.rawValue)") else { return nil }
+        let x = (dict["x"] as? Double) ?? 0
+        let y = (dict["y"] as? Double) ?? 0
+        return CGPoint(x: x, y: y)
     }
 
     func hasStoredOrigin(for route: CockpitRoute) -> Bool {
