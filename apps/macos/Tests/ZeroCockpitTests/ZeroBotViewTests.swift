@@ -356,6 +356,43 @@ final class ZeroBotViewTests: XCTestCase {
         XCTAssertTrue(mirrorPath(for: .opencode, threadID: "t1").path.contains("zero-meta/opencode"))
     }
 
+    func testHarnessDerivesFromProviderSelection() {
+        XCTAssertEqual(Harness(provider: .codex), .codex)
+        XCTAssertEqual(Harness(provider: .opencode), .opencode)
+        XCTAssertEqual(Harness(provider: .codex).provider, .codex)
+        XCTAssertEqual(Harness(provider: .opencode).provider, .opencode)
+    }
+
+    func testOpenCodeSessionsRenderFromStore() throws {
+        var openCodeStore = OpenCodeEventStore()
+        XCTAssertTrue(ZeroBotProjection(
+            snapshot: try snapshot(), connection: .connected, store: CodexEventStore(),
+            openCodeStore: openCodeStore, threadSettings: [:], models: []
+        ).openCodeSessionRows.isEmpty)
+        openCodeStore.reduce(OpenCodeEvent(method: "session/update", params: .object([
+            "sessionId": .string("s1"),
+            "update": .object([
+                "sessionUpdate": .string("agent_message_chunk"),
+                "content": .object(["type": .string("text"), "text": .string("hello opencode")])
+            ])
+        ])))
+        let projection = ZeroBotProjection(
+            snapshot: try snapshot(), connection: .connected, store: CodexEventStore(),
+            openCodeStore: openCodeStore, threadSettings: [:], models: []
+        )
+
+        XCTAssertEqual(projection.openCodeSessions.map(\.id), ["s1"])
+        XCTAssertEqual(projection.openCodeSession(id: "s1")?.transcript, "hello opencode")
+        XCTAssertEqual(projection.openCodeSessionRows, [
+            OpenCodeSessionRow(id: "s1", title: "hello opencode", subtitle: "s1")
+        ])
+        XCTAssertEqual(projection.openCodeConnectionPresentation.label, "Disconnected")
+        XCTAssertEqual(
+            projection.openCodeRetainedNotice,
+            "Visible OpenCode state is retained evidence, not a live or actionable run."
+        )
+    }
+
     @MainActor
     func testConstructingViewDoesNotConnectCodexOrStartWork() {
         let model = CockpitModel.preview()

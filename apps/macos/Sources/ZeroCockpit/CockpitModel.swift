@@ -110,10 +110,15 @@ public final class CockpitModel: ObservableObject {
     @Published public private(set) var isWindowActive = false
     @Published public private(set) var clock = Date()
     @Published public private(set) var codexActionError: String?
+    @Published public private(set) var openCodeActionError: String?
 
     public let socketPath: String
     public let runtime: CockpitClient
     public let codex: CodexAppServer
+    /// Project Zero-owned OpenCode ACP bridge. Manual connect only — like
+    /// `codex`, constructing the model starts no process, session, or prompt.
+    /// Session IDs are never valid across the two bridges.
+    public let openCode: OpenCodeBridge
 
     /// Flight Recorder noise filter: render/clock/SSE chatter
     /// (display.*, clock.tick, sse.keepalive, ready) is hidden by default.
@@ -170,6 +175,7 @@ public final class CockpitModel: ObservableObject {
         socketPath: String? = nil,
         client: CockpitClient? = nil,
         codex: CodexAppServer? = nil,
+        openCode: OpenCodeBridge? = nil,
         sendCommand: (@Sendable (RuntimeCommandRequest) async throws -> RuntimeCommandResponse)? = nil,
         resolveProject: (@Sendable (String) async throws -> RuntimeProjectResponse)? = nil,
         userDefaults: UserDefaults? = .standard
@@ -178,6 +184,7 @@ public final class CockpitModel: ObservableObject {
         self.socketPath = resolvedSocket
         self.runtime = client ?? CockpitClient(socketPath: resolvedSocket)
         self.codex = codex ?? CodexAppServer()
+        self.openCode = openCode ?? OpenCodeBridge()
         self.sendCommand = sendCommand ?? { request in
             let encoded = try JSONEncoder().encode(request)
             guard let body = try JSONSerialization.jsonObject(with: encoded) as? [String: Any] else {
@@ -226,6 +233,7 @@ public final class CockpitModel: ObservableObject {
     public var snapshot: CockpitSnapshot? { runtime.snapshot }
     public var runtimeConnection: RuntimeConnectionState { previewConnection ?? runtime.state }
     public var codexConnection: CodexConnectionState { codex.state }
+    public var openCodeConnection: CodexConnectionState { openCode.connectionState }
 
     public var runtimeStatusLabel: String {
         switch runtimeConnection {
@@ -495,6 +503,26 @@ public final class CockpitModel: ObservableObject {
         codexActionError = nil
     }
 
+    /// Manual OpenCode ACP connect only: sends `initialize` plus one
+    /// model-discovery `session/new` probe, never a prompt. Mirrors
+    /// `connectCodex` — failure surfaces as a visible error, not a hang.
+    @discardableResult
+    public func connectOpenCode() async -> Bool {
+        openCodeActionError = nil
+        do {
+            try await openCode.connect()
+            return true
+        } catch {
+            openCodeActionError = error.localizedDescription
+            return false
+        }
+    }
+
+    public func disconnectOpenCode() {
+        openCode.disconnect()
+        openCodeActionError = nil
+    }
+
     public func startCodexThread(projectID: String, model: String? = nil, mode: CodexMode) async -> String? {
         guard runtimeConnection == .live,
               snapshot?.projects.contains(where: { $0.id == projectID }) == true else {
@@ -637,6 +665,9 @@ public final class CockpitModel: ObservableObject {
             }
             .store(in: &subscriptions)
         codex.objectWillChange
+            .sink { [weak self] _ in self?.objectWillChange.send() }
+            .store(in: &subscriptions)
+        openCode.objectWillChange
             .sink { [weak self] _ in self?.objectWillChange.send() }
             .store(in: &subscriptions)
     }
