@@ -181,6 +181,18 @@ final class NetworkFlightViewTests: XCTestCase {
         ])
     }
 
+    func testRenderClockNoiseHiddenByDefault() throws {
+        func record(kind: String) throws -> RuntimeRecord {
+            try JSONDecoder().decode(RuntimeRecord.self, from: Data(#"{"kind":"\#(kind)"}"#.utf8))
+        }
+        XCTAssertTrue(isNoiseRecord(try record(kind: "display.telemetry")))
+        XCTAssertTrue(isNoiseRecord(try record(kind: "display.render")))
+        XCTAssertTrue(isNoiseRecord(try record(kind: "clock.tick")))
+        XCTAssertTrue(isNoiseRecord(try record(kind: "sse.keepalive")))
+        XCTAssertTrue(isNoiseRecord(try record(kind: "ready")))
+        XCTAssertFalse(isNoiseRecord(try record(kind: "approval.requested")))
+    }
+
     private func unknownCodexEvent(_ itemID: String) -> CodexEvent {
         .notification(method: "future/itemState", params: .object([
             "threadId": .string("thread-7"),

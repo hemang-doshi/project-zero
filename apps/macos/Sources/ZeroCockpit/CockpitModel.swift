@@ -115,6 +115,10 @@ public final class CockpitModel: ObservableObject {
     public let runtime: CockpitClient
     public let codex: CodexAppServer
 
+    /// Flight Recorder noise filter: render/clock/SSE chatter
+    /// (display.*, clock.tick, sse.keepalive, ready) is hidden by default.
+    /// The subscription is application-lifetime; tab switches never resubscribe.
+    @Published public var showAllRecords = false
     /// Unified provider choice driving the single provider → model → policy
     /// dropdown. Defaults to Codex; existing Codex paths keep working.
     @Published public var activeProvider: ProviderID = .codex
