@@ -291,6 +291,7 @@ public struct NetworkView: View {
                 Text(facts.topologyNotice)
                     .font(.system(size: 10, weight: .medium, design: .monospaced))
                     .foregroundStyle(ZeroTheme.secondaryInk)
+                TopologySceneView(nodes: buildTopologyNodes(snapshotNodes: facts.nodes))
                 if layout == .wide {
                     HStack(alignment: .top, spacing: 12) {
                         authorityCard
