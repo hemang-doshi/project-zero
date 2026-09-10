@@ -60,13 +60,14 @@ public struct ZeroRailItem: View {
     }
 
     public var body: some View {
-        Button(action: action) {
+        let presentation = ZeroRailPresentation(selected: selected)
+        return Button(action: action) {
             VStack(spacing: 6) {
                 Image(systemName: route.symbol)
                     .font(.system(size: 22, weight: .medium))
                     .frame(width: 44, height: 44)
-                    .background(selected ? ZeroTheme.navigation : ZeroTheme.workstation.opacity(0.85), in: RoundedRectangle(cornerRadius: 10))
-                    .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(selected ? ZeroTheme.orangePressed : Color.white.opacity(0.6)))
+                    .background(presentation.background, in: RoundedRectangle(cornerRadius: 10))
+                    .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(presentation.border))
                 Text(route.title)
                     .font(.system(size: 10, weight: .semibold))
                     .multilineTextAlignment(.center)
