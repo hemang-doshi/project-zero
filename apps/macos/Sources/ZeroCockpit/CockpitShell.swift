@@ -122,13 +122,19 @@ public struct CockpitShell<Content: View, Instruments: View>: View {
     private let version: String
     private let content: () -> Content
     private let instruments: () -> Instruments
+    /// When true, skips the opaque dot-wallpaper backing so an outer
+    /// `DesktopCanvas` wallpaper shows through the shell padding. Defaults to
+    /// false: every existing call site renders exactly as before.
+    private let transparentBackground: Bool
 
     public init(selection: Binding<CockpitSelection>, status: String, version: String,
+                transparentBackground: Bool = false,
                 @ViewBuilder content: @escaping () -> Content,
                 @ViewBuilder instruments: @escaping () -> Instruments) {
         _selection = selection
         self.status = status
         self.version = version
+        self.transparentBackground = transparentBackground
         self.content = content
         self.instruments = instruments
     }
@@ -151,7 +157,9 @@ public struct CockpitShell<Content: View, Instruments: View>: View {
                 footer
             }
         }
-        .background { DotWallpaper() }
+        .background {
+            if !transparentBackground { DotWallpaper() }
+        }
         .foregroundStyle(ZeroTheme.ink)
         .tint(ZeroTheme.orange)
         .preferredColorScheme(.light)
@@ -231,8 +239,9 @@ public struct CockpitShell<Content: View, Instruments: View>: View {
 
 public extension CockpitShell where Instruments == EmptyView {
     init(selection: Binding<CockpitSelection>, status: String, version: String,
+         transparentBackground: Bool = false,
          @ViewBuilder content: @escaping () -> Content) {
-        self.init(selection: selection, status: status, version: version, content: content, instruments: { EmptyView() })
+        self.init(selection: selection, status: status, version: version, transparentBackground: transparentBackground, content: content, instruments: { EmptyView() })
     }
 }
 

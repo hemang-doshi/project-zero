@@ -192,4 +192,20 @@ final class ShellPerfTests: XCTestCase {
         XCTAssertEqual(apps.count, 1)
         XCTAssertEqual(apps.first?.route, .desk)
     }
+
+    func testDesktopAppsBindsAllSevenRoutes() {
+        let apps = desktopApps()
+        XCTAssertEqual(apps.count, 7)
+        XCTAssertEqual(apps.map(\.route), CockpitRoute.allCases)
+        XCTAssertEqual(apps.map(\.id), CockpitRoute.allCases.map(\.rawValue))
+        XCTAssertEqual(apps.map(\.title), CockpitRoute.allCases.map(\.title))
+    }
+
+    func testAccumulatedOffsetAddsTranslation() {
+        XCTAssertEqual(
+            accumulatedOffset(CGSize(width: 10, height: -4), CGSize(width: 3, height: 7)),
+            CGSize(width: 13, height: 3)
+        )
+        XCTAssertEqual(accumulatedOffset(.zero, .zero), .zero)
+    }
 }

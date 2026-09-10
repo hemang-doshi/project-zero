@@ -79,16 +79,25 @@ private struct CockpitWindow: View {
     @ObservedObject var model: CockpitModel
     @State private var lifecycleRegistered = false
 
+    private var activeDesktopApp: DesktopApp {
+        desktopApps().first { $0.route == model.selection.route }
+            ?? DesktopApp(id: CockpitRoute.desk.rawValue, title: CockpitRoute.desk.title, route: .desk)
+    }
+
     var body: some View {
         // In-window desktop: owner wallpaper asset when supplied, grass/
-        // dot-grid fallback otherwise. Local layout state only, no daemon writes.
+        // dot-grid fallback otherwise. Single active-route card; shell chrome
+        // stays as-is inside it. Local layout state only, no daemon writes.
         DesktopCanvas {
-            CockpitShell(
-                selection: $model.selection,
-                status: model.runtimeStatusLabel,
-                version: "v\(ZeroRelease.version) · \(ZeroRelease.build)"
-            ) {
-                CockpitRouteContent(model: model)
+            DesktopCard(app: activeDesktopApp, selection: model.selection) {
+                CockpitShell(
+                    selection: $model.selection,
+                    status: model.runtimeStatusLabel,
+                    version: "v\(ZeroRelease.version) · \(ZeroRelease.build)",
+                    transparentBackground: true
+                ) {
+                    CockpitRouteContent(model: model)
+                }
             }
         }
         .frame(minWidth: 900, minHeight: 640)
@@ -103,6 +112,12 @@ private struct CockpitWindow: View {
             model.windowDidDisappear()
         }
     }
+}
+
+/// All seven desktop apps in rail order (desk/runtime/network/flightRecorder/
+/// airlock/zeroBot/skillLab). Pure: no model, daemon, or layout state.
+func desktopApps() -> [DesktopApp] {
+    CockpitRoute.allCases.map { DesktopApp(id: $0.rawValue, title: $0.title, route: $0) }
 }
 
 private struct CockpitRouteContent: View {
