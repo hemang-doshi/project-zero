@@ -154,6 +154,81 @@ enum ZeroBotComposer {
         case .opencode: "This OpenCode connection advertises no attachment input."
         }
     }
+
+    static func voiceUnavailableReason(for provider: ProviderID) -> String {
+        switch provider {
+        case .codex: "Voice input is not wired to the Codex app-server in this build; use system dictation."
+        case .opencode: "Voice input is not wired to OpenCode ACP in this build; use system dictation."
+        }
+    }
+}
+
+/// Harness split for the conversational UI: GPT models ride Codex only,
+/// Muse Spark rides OpenCode only. The lock lives on `ProviderID.allowsModel`;
+/// these wrappers keep the view and its tests on the same predicate. A
+/// mismatch never reroutes and never reads the other harness's session store
+/// (including the desktop-owned Codex DB) — the composer shows an inline
+/// warning row and records a mirror file under `zero-meta/{harness}/` instead.
+enum Harness: String, CaseIterable, Sendable {
+    case codex, opencode
+
+    var provider: ProviderID {
+        switch self {
+        case .codex: .codex
+        case .opencode: .opencode
+        }
+    }
+
+    var title: String { provider.displayName }
+}
+
+func isModelAllowed(_ model: String, in harness: Harness) -> Bool {
+    harness.provider.allowsModel(model)
+}
+
+func mirrorPath(for harness: Harness, threadID: String) -> URL {
+    let base = FileManager.default.homeDirectoryForCurrentUser
+        .appendingPathComponent("Library/Application Support/ProjectZero/zero-meta")
+    return base.appendingPathComponent(harness.rawValue).appendingPathComponent("\(threadID).json")
+}
+
+func models(for harness: Harness) -> [String] {
+    switch harness {
+    case .codex: return ["gpt-5.6-luna", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-6-astra"]
+    case .opencode: return ["muse-spark-1.3"]
+    }
+}
+
+func harnessMismatchWarning(model: String, harness: Harness) -> String? {
+    guard !isModelAllowed(model, in: harness) else { return nil }
+    let home: String =
+        harness == .codex ? "Codex (GPT only)" : "OpenCode (Muse Spark only)"
+    return "Model \(model) is not allowed in the \(harness.title) harness. "
+        + "It stays locked to its home harness (\(home)); this mismatch was mirrored, not sent."
+}
+
+/// Records a harness mismatch as an explicit mirror file. Best-effort: never
+/// throws on the send path, and never touches either provider's session store.
+@discardableResult
+func writeMirrorFile(for harness: Harness, threadID: String, model: String, note: String) -> URL? {
+    let url = mirrorPath(for: harness, threadID: threadID)
+    let payload: [String: String] = [
+        "harness": harness.rawValue,
+        "threadID": threadID,
+        "model": model,
+        "note": note,
+        "recordedAt": ISO8601DateFormatter().string(from: Date()),
+    ]
+    guard let data = try? JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted, .sortedKeys]) else {
+        return nil
+    }
+    do {
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try data.write(to: url, options: .atomic)
+        return url
+    } catch {
+        return nil
+    }
 }
 
 /// Right-dock inspector tabs mirroring the Codex panel grammar
@@ -658,6 +733,8 @@ public struct ZeroBotView: View {
     @State private var paletteOpen = false
     @State private var paletteQuery = ""
     @State private var providerSelection = ProviderSelection()
+    @State private var harness: Harness = .codex
+    @State private var harnessWarnings: [String] = []
     @FocusState private var composerFocused: Bool
 
     public init(model: CockpitModel) { self.model = model }
@@ -709,6 +786,9 @@ public struct ZeroBotView: View {
             if selection.provider == .codex, projection.isAdvertisedModel(selection.modelID) {
                 selectedModelID = selection.modelID
             }
+        }
+        .onChange(of: harness) { _, newHarness in
+            providerSelection.provider = newHarness.provider
         }
         .onChange(of: Set(model.codex.store.threads.keys)) { _, retainedThreadIDs in
             storeThreadProjects(threadProjects.filter { retainedThreadIDs.contains($0.key) })
@@ -853,8 +933,8 @@ public struct ZeroBotView: View {
                     .accessibilityHint(startThreadUnavailableReason ?? "Starts one thread with the displayed project and policy")
 
                 Divider().overlay(ZeroTheme.line)
-                sidebarSectionToggle(title: "THREADS", key: "threads")
-                if !collapsedSidebarSections.contains("threads") {
+                sidebarSectionToggle(title: "CODEX CHATS", key: "threads.codex")
+                if !collapsedSidebarSections.contains("threads.codex") {
                 if projection.threads.isEmpty {
                     ZeroBotEmpty(
                         symbol: "bubble.left.and.exclamationmark.bubble.right",
@@ -881,6 +961,15 @@ public struct ZeroBotView: View {
                         }
                     }
                 }
+                }
+                Divider().overlay(ZeroTheme.line)
+                sidebarSectionToggle(title: "OPENCODE SESSIONS", key: "threads.opencode")
+                if !collapsedSidebarSections.contains("threads.opencode") {
+                    ZeroBotEmpty(
+                        symbol: "sparkles",
+                        title: "No OpenCode sessions",
+                        detail: "This build holds no OpenCode session store, so there is nothing to list. Sessions appear here once an OpenCode ACP connection contributes one; nothing is ever read from another session database."
+                    )
                 }
             }
         }
@@ -1064,9 +1153,29 @@ public struct ZeroBotView: View {
                 }
 
                 approvalCards
+                harnessWarningRows
                 statusStrip
                 composer
             }
+        }
+    }
+
+    @ViewBuilder
+    private var harnessWarningRows: some View {
+        if !harnessWarnings.isEmpty {
+            VStack(alignment: .leading, spacing: 6) {
+                ForEach(Array(harnessWarnings.enumerated()), id: \.offset) { _, warning in
+                    Label(warning, systemImage: "exclamationmark.triangle.fill")
+                        .font(ZeroBotTypography.font(.caption, weight: .semibold))
+                        .foregroundStyle(ZeroTone.error.color)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .textSelection(.enabled)
+                        .padding(8)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(ZeroTone.error.color.opacity(0.07), in: RoundedRectangle(cornerRadius: 6))
+                }
+            }
+            .accessibilityLabel("Harness mismatch warnings")
         }
     }
 
@@ -1091,8 +1200,58 @@ public struct ZeroBotView: View {
         .accessibilityLabel("Session status")
     }
 
+    @ViewBuilder
     private func itemCard(_ item: CodexItem) -> some View {
         let category = ZeroBotItemCategory(kind: item.kind)
+        if category == .operatorMessage || category == .agentMessage {
+            messageBubble(item, category: category)
+        } else {
+            evidenceCard(item, category: category)
+        }
+    }
+
+    /// Conversational bubble: aligned, borderless, no box chrome. Execution
+    /// evidence (commands, tools, diffs) keeps the bordered card below.
+    private func messageBubble(_ item: CodexItem, category: ZeroBotItemCategory) -> some View {
+        let isOperator = category == .operatorMessage
+        return HStack {
+            if isOperator { Spacer(minLength: 36) }
+            VStack(alignment: .leading, spacing: 4) {
+                Text(isOperator ? "YOU" : "ZERO BOT")
+                    .font(ZeroBotTypography.font(.caption2, weight: .bold, design: .monospaced))
+                    .foregroundStyle(isOperator ? Color.white.opacity(0.75) : ZeroTheme.secondaryInk)
+                if !item.text.isEmpty {
+                    Text(item.text)
+                        .font(ZeroBotTypography.font(.body, weight: .medium))
+                        .foregroundStyle(isOperator ? Color.white : ZeroTheme.ink)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .textSelection(.enabled)
+                }
+                if !item.output.isEmpty {
+                    Text(item.output)
+                        .font(ZeroBotTypography.font(.callout, design: .monospaced))
+                        .foregroundStyle(isOperator ? Color.white : ZeroTheme.ink)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .textSelection(.enabled)
+                }
+                if item.textTruncated || item.outputTruncated || item.metadataTruncated {
+                    Label("Clipped by the retention boundary", systemImage: "scissors")
+                        .font(ZeroBotTypography.font(.caption2, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(isOperator ? Color.white.opacity(0.85) : ZeroTone.attention.color)
+                }
+            }
+            .padding(10)
+            .background(
+                isOperator ? ZeroTheme.authority : Color.white,
+                in: RoundedRectangle(cornerRadius: 14)
+            )
+            if !isOperator { Spacer(minLength: 36) }
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(isOperator ? "Your message" : "Zero Bot reply")
+    }
+
+    private func evidenceCard(_ item: CodexItem, category: ZeroBotItemCategory) -> some View {
         return VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
                 ZeroStatusBadge(
@@ -1272,11 +1431,43 @@ public struct ZeroBotView: View {
                     openCodeUnavailableReason: "OpenCode is not connected"
                 )
             }
+            HStack(spacing: 8) {
+                ZeroSegmentedChoice("Harness", values: Harness.allCases, selection: $harness) { value in
+                    Text(value.title)
+                        .frame(maxWidth: .infinity)
+                }
+                .frame(maxWidth: 230)
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 5) {
+                        ForEach(models(for: harness), id: \.self) { modelID in
+                            Button {
+                                selectedModelID = modelID
+                            } label: {
+                                Text(modelID).lineLimit(1)
+                            }
+                            .buttonStyle(ZeroButtonStyle(.quiet, selected: selectedModelID == modelID))
+                            .focusEffectDisabled()
+                            .accessibilityValue(selectedModelID == modelID ? "Selected" : "Not selected")
+                        }
+                    }
+                }
+                .accessibilityLabel("Harness-scoped models")
+            }
+            if let mismatch = composerHarnessMismatch {
+                Label(mismatch, systemImage: "exclamationmark.shield.fill")
+                    .font(ZeroBotTypography.font(.caption, weight: .semibold))
+                    .foregroundStyle(ZeroTone.error.color)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .textSelection(.enabled)
+                    .padding(8)
+                    .background(ZeroTone.error.color.opacity(0.07), in: RoundedRectangle(cornerRadius: 6))
+                    .accessibilityLabel("Harness mismatch. \(mismatch)")
+            }
             TextEditor(text: $intent)
                 .font(ZeroBotTypography.font(.body, design: .monospaced))
                 .scrollContentBackground(.hidden)
                 .padding(8)
-                .frame(minHeight: 82, maxHeight: 150)
+                .frame(minHeight: 36, maxHeight: 68)
                 .background(Color.white, in: RoundedRectangle(cornerRadius: 6))
                 .overlay {
                     RoundedRectangle(cornerRadius: 6)
@@ -1288,13 +1479,21 @@ public struct ZeroBotView: View {
             HStack(alignment: .center, spacing: 8) {
                 composerPolicy
                 Spacer()
+                Button {} label: {
+                    Label("Voice", systemImage: "mic.fill")
+                }
+                .buttonStyle(ZeroButtonStyle(.standard))
+                .focusEffectDisabled()
+                .disabled(true)
+                .help(ZeroBotComposer.voiceUnavailableReason(for: providerSelection.provider))
+                .accessibilityHint(ZeroBotComposer.voiceUnavailableReason(for: providerSelection.provider))
                 Button("Attach") {}
                     .buttonStyle(ZeroButtonStyle(.standard))
                     .focusEffectDisabled()
                     .disabled(true)
                     .help(ZeroBotComposer.attachUnavailableReason(for: providerSelection.provider) ?? "Attachments unavailable.")
                     .accessibilityHint(ZeroBotComposer.attachUnavailableReason(for: providerSelection.provider) ?? "Attachments unavailable.")
-                Button(actionInFlight ? "Sending…" : "Send Intent") { sendIntent() }
+                Button(actionInFlight ? "Sending…" : "Send") { sendIntent() }
                     .buttonStyle(ZeroButtonStyle(.authority))
                     .focusEffectDisabled()
                     .keyboardShortcut(.return, modifiers: [.command])
@@ -1312,6 +1511,12 @@ public struct ZeroBotView: View {
         }
         .padding(10)
         .background(ZeroTheme.navigation.opacity(0.55), in: RoundedRectangle(cornerRadius: 8))
+    }
+
+    /// Harness lock for the composer: GPT models stay Codex-only, Muse Spark
+    /// stays OpenCode-only. Non-nil means send is blocked with a warning.
+    private var composerHarnessMismatch: String? {
+        harnessMismatchWarning(model: selectedModelID, harness: harness)
     }
 
     private var composerPolicy: some View {
@@ -1671,6 +1876,7 @@ public struct ZeroBotView: View {
             return "Project Zero runtime evidence is not live; sending is disabled."
         }
         if model.codexConnection != .connected { return "Connect Codex before sending." }
+        if let mismatch = composerHarnessMismatch { return mismatch }
         guard let selectedThreadID else { return "Select a thread before sending." }
         if !projection.isOwned(threadID: selectedThreadID) { return "This discovered thread is read-only; start a Project Zero-owned session." }
         guard let binding = projection.projectBinding(threadID: selectedThreadID) else {
@@ -1846,6 +2052,18 @@ public struct ZeroBotView: View {
     }
 
     private func sendIntent() {
+        if let mismatch = composerHarnessMismatch {
+            let entry = "\(mismatch) Mirrored, not sent."
+            harnessWarnings.append(entry)
+            writeMirrorFile(
+                for: harness,
+                threadID: selectedThreadID ?? "unbound",
+                model: selectedModelID,
+                note: entry
+            )
+            localNotice = "Harness mismatch mirrored; nothing was sent."
+            return
+        }
         guard !actionInFlight,
               let selectedThreadID,
               projection.canSend(

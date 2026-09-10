@@ -18,6 +18,20 @@ public enum ProviderID: String, CaseIterable, Codable, Sendable, Identifiable {
         case .opencode: return "OpenCode"
         }
     }
+
+    /// Strict harness lock: GPT models ride Codex only, Muse/Spark models
+    /// ride OpenCode only. A mismatch never reroutes — the composer shows an
+    /// inline warning and records a mirror file instead. Neither bridge ever
+    /// opens the other provider's session store (including the desktop-owned
+    /// Codex DB); cross-harness evidence flows only through explicit mirror
+    /// files under `zero-meta/{codex,opencode}/`.
+    public func allowsModel(_ id: String) -> Bool {
+        let lower = id.lowercased()
+        switch self {
+        case .codex: return lower.hasPrefix("gpt-")
+        case .opencode: return lower.contains("muse") || lower.contains("spark")
+        }
+    }
 }
 
 /// One model as advertised live by its own provider. The picker never offers
