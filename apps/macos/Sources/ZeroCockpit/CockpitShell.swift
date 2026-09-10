@@ -1,7 +1,7 @@
 import SwiftUI
 
 public enum CockpitRoute: String, CaseIterable, Identifiable, Sendable {
-    case desk, runtime, network, flightRecorder, airlock, zeroBot
+    case desk, runtime, network, flightRecorder, airlock, zeroBot, skillLab
 
     public var id: Self { self }
     public var title: String {
@@ -12,6 +12,7 @@ public enum CockpitRoute: String, CaseIterable, Identifiable, Sendable {
         case .flightRecorder: "Flight Recorder"
         case .airlock: "Airlock"
         case .zeroBot: "Zero Bot"
+        case .skillLab: "Skill Lab"
         }
     }
     public var symbol: String {
@@ -22,6 +23,7 @@ public enum CockpitRoute: String, CaseIterable, Identifiable, Sendable {
         case .flightRecorder: "list.bullet.rectangle"
         case .airlock: "lock.shield"
         case .zeroBot: "terminal"
+        case .skillLab: "square.stack.3d.up"
         }
     }
     public var shortcut: KeyEquivalent {
@@ -32,6 +34,7 @@ public enum CockpitRoute: String, CaseIterable, Identifiable, Sendable {
         case .flightRecorder: "4"
         case .airlock: "5"
         case .zeroBot: "6"
+        case .skillLab: "7"
         }
     }
 }

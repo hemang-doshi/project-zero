@@ -49,12 +49,13 @@ public struct CockpitAppRoot: Scene {
             CockpitSettings()
         }
         .commands {
-            CockpitCommands()
+            CockpitCommands(model: model)
         }
     }
 }
 
 private struct CockpitCommands: Commands {
+    @ObservedObject var model: CockpitModel
     @Environment(\.openWindow) private var openWindow
 
     var body: some Commands {
@@ -63,6 +64,13 @@ private struct CockpitCommands: Commands {
                 openWindow(id: CockpitSceneID.main)
             }
             .keyboardShortcut("n", modifiers: .command)
+            Divider()
+            ForEach(CockpitRoute.allCases) { route in
+                Button("Open \(route.title)") {
+                    model.selection.route = route
+                }
+                .keyboardShortcut(route.shortcut, modifiers: .command)
+            }
         }
     }
 }
@@ -111,6 +119,8 @@ private struct CockpitRouteContent: View {
             AirlockView(model: model)
         case .zeroBot:
             ZeroBotView(model: model)
+        case .skillLab:
+            SkillLabView(model: model)
         }
     }
 }
