@@ -11,6 +11,7 @@ import {
 } from '../shared/ipc'
 import { applyPrefsPatch, type Prefs } from './prefs'
 import { createBridgePair, type BridgeDeps, type HarnessId, type RpcEvent } from './bridges'
+import { defaultOpenCodeDbPath, readOpenCodeSessionStore } from './opencode-sessions'
 import { artworkDataUrl } from './artwork-image'
 import type { CockpitModel, ModelUpdate } from './cockpit-model'
 
@@ -26,6 +27,7 @@ export type SocketDeps = {
   store: PrefsStoreLike
   pickImage: () => Promise<string | null>
   sampleTelemetry: () => Promise<TelemetrySample>
+  openCodeDbPath?: string
 }
 
 const prefsDir = join(process.env.HOME ?? '', 'Library', 'Application Support', 'ProjectZero')
@@ -85,9 +87,6 @@ function listOf(result: unknown): unknown[] {
   return Array.isArray(data) ? data : []
 }
 
-const OPENCODE_DISCOVERY_NOTE =
-  'OpenCode ACP advertises no read-only discovery method in this build; sessions surface from streamed bridge events.'
-
 export function createDispatch(
   deps: SocketDeps,
   getBridgePair: () => BridgeDeps = getBridges
@@ -97,14 +96,24 @@ export function createDispatch(
     return { state: bridge.state, lastDiagnostic: bridge.lastDiagnostic }
   }
   const discover = async (harness: 'codex' | 'ocp'): Promise<unknown> => {
-    const bridge = getBridgePair()[harness]
-    if (bridge.state !== 'live') throw new Error('not connected')
     if (harness === 'codex') {
+      const bridge = getBridgePair().codex
+      if (bridge.state !== 'live') throw new Error('not connected')
       const models = await bridge.send('model/list', { limit: 100 })
       const threads = await bridge.send('thread/list', { limit: 100 })
       return { harness: 'codex', models: listOf(models), threads: listOf(threads) }
     }
-    return { harness: 'opencode', models: [], threads: [], note: OPENCODE_DISCOVERY_NOTE }
+    // OpenCode sessions come from the on-disk session store, not the ACP wire
+    // (which advertises no read-only list method): a local read-only scan, so
+    // no bridge connection is required and nothing is ever sent or spawned.
+    const store = readOpenCodeSessionStore(deps.openCodeDbPath ?? defaultOpenCodeDbPath())
+    return {
+      harness: 'opencode',
+      models: [],
+      threads: [],
+      folders: store.groups,
+      note: store.note
+    }
   }
   const threads = async (): Promise<unknown> => {
     const bridge = getBridgePair().codex

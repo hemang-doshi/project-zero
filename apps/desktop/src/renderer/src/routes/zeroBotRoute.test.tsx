@@ -60,6 +60,56 @@ const THREAD_GET_PAYLOAD = {
 
 let bridgeCb: ((u: unknown) => void) | null = null
 
+const OPENCODE_FOLDERS_PAYLOAD = {
+  harness: 'opencode',
+  models: [],
+  threads: [],
+  folders: [
+    {
+      folder: 'beta',
+      path: '/repo/beta',
+      count: 1,
+      sessions: [
+        {
+          id: 'b1',
+          title: 'Beta chat',
+          directory: '/repo/beta',
+          agent: null,
+          model: null,
+          createdAt: 0,
+          updatedAt: 200
+        }
+      ]
+    },
+    {
+      folder: 'alpha',
+      path: '/repo/alpha',
+      count: 2,
+      sessions: [
+        {
+          id: 'a-old',
+          title: 'Old alpha',
+          directory: '/repo/alpha',
+          agent: null,
+          model: null,
+          createdAt: 0,
+          updatedAt: 10
+        },
+        {
+          id: 'a-new',
+          title: 'Alpha new',
+          directory: '/repo/alpha',
+          agent: 'build',
+          model: 'muse-spark-1.3',
+          createdAt: 0,
+          updatedAt: 300
+        }
+      ]
+    }
+  ],
+  note: null
+}
+
 function fakeZero(handlers: Record<string, (payload?: unknown) => Promise<unknown>>): FakeZero {
   return {
     invoke: (op, payload) =>
@@ -309,5 +359,63 @@ describe('ZeroBotRoute thread surface', () => {
     })
     expect(invoke).toHaveBeenCalledWith('ocp.connect')
     expect(invoke.mock.calls.some(([op]) => op === 'codex.threads')).toBe(false)
+  })
+
+  it('renders opencode sessions grouped by folder newest-first without connecting', async () => {
+    const invoke = vi.fn(async (op: string) => {
+      if (op === 'codex.state' || op === 'ocp.state') {
+        return { state: 'disconnected', lastDiagnostic: null }
+      }
+      if (op === 'ocp.discover') return OPENCODE_FOLDERS_PAYLOAD
+      throw new Error(`unexpected op ${op}`)
+    })
+    stubZero(fakeZero({}))
+    ;(globalThis as unknown as { window: { zero: FakeZero } }).window.zero.invoke = invoke
+    renderRoute()
+    const ocpBtn = Array.from(host?.querySelectorAll('button') ?? []).find(
+      (b) => b.textContent === 'OpenCode'
+    )
+    act(() => {
+      ocpBtn?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+    await vi.waitFor(() => expect(host?.innerHTML).toContain('Alpha new'))
+    const html = host?.innerHTML ?? ''
+    // Folder groups render newest-group-first even though the wire sent beta first.
+    expect(html).toContain('/repo/alpha')
+    expect(html).toContain('/repo/beta')
+    expect(html.indexOf('Alpha new')).toBeLessThan(html.indexOf('Beta chat'))
+    // Sessions render newest-first within the folder.
+    expect(html.indexOf('Alpha new')).toBeLessThan(html.indexOf('Old alpha'))
+    expect(html).toContain('muse-spark-1.3')
+    expect(invoke).toHaveBeenCalledWith('ocp.discover')
+    expect(invoke.mock.calls.some(([op]) => op === 'ocp.connect')).toBe(false)
+  })
+
+  it('renders the honest empty note when the opencode store has no sessions', async () => {
+    const invoke = vi.fn(async (op: string) => {
+      if (op === 'codex.state' || op === 'ocp.state') {
+        return { state: 'disconnected', lastDiagnostic: null }
+      }
+      if (op === 'ocp.discover') {
+        return {
+          harness: 'opencode',
+          models: [],
+          threads: [],
+          folders: [],
+          note: 'No OpenCode sessions found (session store unreadable at /nowhere).'
+        }
+      }
+      throw new Error(`unexpected op ${op}`)
+    })
+    stubZero(fakeZero({}))
+    ;(globalThis as unknown as { window: { zero: FakeZero } }).window.zero.invoke = invoke
+    renderRoute()
+    const ocpBtn = Array.from(host?.querySelectorAll('button') ?? []).find(
+      (b) => b.textContent === 'OpenCode'
+    )
+    act(() => {
+      ocpBtn?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+    await vi.waitFor(() => expect(host?.innerHTML).toContain('No OpenCode sessions found'))
   })
 })

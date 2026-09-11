@@ -804,7 +804,25 @@ export type DiscoveryResult = {
   harness: Harness
   models: Array<{ id: string; label: string; advertised: boolean }>
   threads: Array<{ id: string; name: string }>
+  folders: OpenCodeFolderGroup[]
   note: string | null
+}
+
+export type OpenCodeSessionRow = {
+  id: string
+  title: string
+  directory: string
+  agent: string | null
+  model: string | null
+  createdAt: number
+  updatedAt: number
+}
+
+export type OpenCodeFolderGroup = {
+  folder: string
+  path: string
+  count: number
+  sessions: OpenCodeSessionRow[]
 }
 
 const scalar = (v: unknown): string | null => {
@@ -852,8 +870,57 @@ export function parseDiscovery(value: unknown): DiscoveryResult | null {
     harness,
     models: modelOptions(Array.isArray(r['models']) ? r['models'] : []),
     threads: threadOptions(Array.isArray(r['threads']) ? r['threads'] : []),
+    folders: folderOptions(Array.isArray(r['folders']) ? r['folders'] : []),
     note: isStr(r['note']) && r['note'] !== '' ? r['note'] : null
   }
+}
+
+const folderNameOf = (dir: string): string => {
+  const parts = dir.split('/').filter((p) => p !== '')
+  return parts.length > 0 ? (parts[parts.length - 1] as string) : dir
+}
+
+const sessionOptions = (rows: unknown[], fallbackDir: string): OpenCodeSessionRow[] => {
+  const out: OpenCodeSessionRow[] = []
+  for (const row of rows) {
+    const r = asRecord(row)
+    if (r === null) continue
+    const id = scalar(r['id'])
+    if (id === null) continue
+    const directory =
+      typeof r['directory'] === 'string' && r['directory'] !== '' ? r['directory'] : fallbackDir
+    out.push({
+      id,
+      title: typeof r['title'] === 'string' ? r['title'] : '',
+      directory,
+      agent: typeof r['agent'] === 'string' && r['agent'] !== '' ? r['agent'] : null,
+      model: typeof r['model'] === 'string' && r['model'] !== '' ? r['model'] : null,
+      createdAt: isNum(r['createdAt']) ? r['createdAt'] : 0,
+      updatedAt: isNum(r['updatedAt']) ? r['updatedAt'] : 0
+    })
+  }
+  out.sort((a, b) => b.updatedAt - a.updatedAt)
+  return out
+}
+
+const folderOptions = (rows: unknown[]): OpenCodeFolderGroup[] => {
+  const out: OpenCodeFolderGroup[] = []
+  for (const row of rows) {
+    const r = asRecord(row)
+    if (r === null) continue
+    const dir = typeof r['path'] === 'string' && r['path'] !== '' ? r['path'] : null
+    if (dir === null) continue
+    const sessions = sessionOptions(Array.isArray(r['sessions']) ? r['sessions'] : [], dir)
+    out.push({
+      folder:
+        typeof r['folder'] === 'string' && r['folder'] !== '' ? r['folder'] : folderNameOf(dir),
+      path: dir,
+      count: sessions.length,
+      sessions
+    })
+  }
+  out.sort((a, b) => (b.sessions[0]?.updatedAt ?? 0) - (a.sessions[0]?.updatedAt ?? 0))
+  return out
 }
 
 export const SEND_BLOCKED_NOTICE =

@@ -109,19 +109,74 @@ describe('discovery ops', () => {
     expect(codex.sends).toEqual([])
   })
 
-  it('answers opencode discovery honestly empty without any session probe', async () => {
-    const ocp = fakeBridge('live')
-    const invoke = createDispatch(deps(), () => fakePair(fakeBridge('disconnected'), ocp))
+  it('answers opencode discovery from the local session store while disconnected', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'zero-ipc-ocp-'))
+    const dbPath = path.join(dir, 'opencode.db')
+    const { DatabaseSync } = await import('node:sqlite')
+    const setup = new DatabaseSync(dbPath)
+    setup.exec(
+      'CREATE TABLE session (id TEXT PRIMARY KEY, project_id TEXT NOT NULL, directory TEXT NOT NULL, title TEXT NOT NULL, agent TEXT, model TEXT, time_created INTEGER NOT NULL, time_updated INTEGER NOT NULL)'
+    )
+    const insert = setup.prepare(
+      'INSERT INTO session (id, project_id, directory, title, agent, model, time_created, time_updated) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+    )
+    insert.run(
+      's-new',
+      'p1',
+      '/repo/alpha',
+      'New session',
+      'build',
+      JSON.stringify({ id: 'muse-spark-1.3' }),
+      200,
+      300
+    )
+    insert.run('s-beta', 'p1', '/repo/beta', 'Beta session', null, null, 150, 200)
+    setup.close()
+    const d = deps()
+    d.openCodeDbPath = dbPath
+    const ocp = fakeBridge('disconnected')
+    const invoke = createDispatch(d, () => fakePair(fakeBridge('disconnected'), ocp))
     const result = (await invoke('ocp.discover')) as {
       harness: HarnessId
       models: unknown[]
       threads: unknown[]
-      note: string
+      folders: Array<{
+        folder: string
+        path: string
+        count: number
+        sessions: Array<{ id: string; title: string; model: string | null; updatedAt: number }>
+      }>
+      note: string | null
     }
     expect(result.harness).toBe('opencode')
     expect(result.models).toEqual([])
     expect(result.threads).toEqual([])
-    expect(result.note).toContain('read-only discovery')
+    expect(result.folders.map((f) => f.path)).toEqual(['/repo/alpha', '/repo/beta'])
+    expect(result.folders[0]).toMatchObject({
+      folder: 'alpha',
+      count: 1,
+      sessions: [{ id: 's-new', title: 'New session', model: 'muse-spark-1.3', updatedAt: 300 }]
+    })
+    expect(result.note).toBeNull()
+    expect(ocp.sends).toEqual([])
+  })
+
+  it('fails opencode discovery soft to honest empty when the store is missing', async () => {
+    const d = deps()
+    d.openCodeDbPath = path.join(
+      fs.mkdtempSync(path.join(os.tmpdir(), 'zero-ipc-ocp-miss-')),
+      'opencode.db'
+    )
+    const ocp = fakeBridge('disconnected')
+    const invoke = createDispatch(d, () => fakePair(fakeBridge('disconnected'), ocp))
+    const result = (await invoke('ocp.discover')) as {
+      harness: HarnessId
+      folders: unknown[]
+      note: string | null
+    }
+    expect(result.harness).toBe('opencode')
+    expect(result.folders).toEqual([])
+    expect(result.note).toContain('No OpenCode sessions found')
     expect(ocp.sends).toEqual([])
   })
 
