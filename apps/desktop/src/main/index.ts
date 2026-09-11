@@ -3,7 +3,7 @@ import { join } from 'path'
 import { is } from '@electron-toolkit/utils'
 import { CockpitModel } from './cockpit-model'
 import { fetchSnapshot, openStream, postCommand } from './socket'
-import { registerIpcHandlers, attachCockpitPush } from './ipc'
+import { registerIpcHandlers, attachCockpitPush, attachBridgePush, bridgePair } from './ipc'
 
 const socketPath = join(
   process.env.HOME ?? '',
@@ -34,6 +34,7 @@ function createWindow(): void {
     }
   })
   attachCockpitPush(model, mainWindow)
+  attachBridgePush(bridgePair(), mainWindow)
   model.start()
   mainWindow.on('closed', () => model.stop())
 

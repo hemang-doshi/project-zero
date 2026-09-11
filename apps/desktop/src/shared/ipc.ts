@@ -7,9 +7,13 @@ export const OPS = {
   'codex.connect': true,
   'codex.disconnect': true,
   'codex.send': true,
+  'codex.state': true,
+  'codex.discover': true,
   'ocp.connect': true,
   'ocp.disconnect': true,
   'ocp.send': true,
+  'ocp.state': true,
+  'ocp.discover': true,
   'wallpaper.pick': true
 } as const
 
