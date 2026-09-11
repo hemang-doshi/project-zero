@@ -1,6 +1,8 @@
 import type { FC } from 'react'
 import { ROUTE_TITLES, type RouteId } from '../desktop/canvas'
 import { DeskRoute } from './DeskRoute'
+import { FlightRecorderRoute } from './FlightRecorderRoute'
+import { NetworkRoute } from './NetworkRoute'
 import { RuntimeRoute } from './RuntimeRoute'
 
 const stub = (id: RouteId): FC => {
@@ -11,8 +13,8 @@ const stub = (id: RouteId): FC => {
 export const ROUTES: Record<RouteId, FC> = {
   desk: DeskRoute,
   runtime: RuntimeRoute,
-  network: stub('network'),
-  flightRecorder: stub('flightRecorder'),
+  network: NetworkRoute,
+  flightRecorder: FlightRecorderRoute,
   airlock: stub('airlock'),
   zeroBot: stub('zeroBot'),
   skillLab: stub('skillLab')
