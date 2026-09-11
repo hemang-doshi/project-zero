@@ -35,6 +35,7 @@ const base = (): DesktopCanvasProps => ({
   zOrder: ['desk'],
   minimized: [],
   maximized: [],
+  snapped: {},
   rects: { desk: { x: 8, y: 8, w: 400, h: 300 } },
   onSelect: vi.fn(),
   onClose: vi.fn(),
@@ -109,6 +110,7 @@ describe('DesktopCanvas wallpaper pick flow', () => {
       wallpaper: { kind: 'dotted-green', mode: 'cover' },
       icons: {},
       windows: {},
+      snaps: {},
       loaded: false
     })
   }
@@ -226,5 +228,182 @@ describe('DesktopCanvas wallpaper pick flow', () => {
     expect(invoke).toHaveBeenCalledWith('prefs.set', {
       wallpaper: { kind: 'dotted-green', mode: 'cover' }
     })
+  })
+})
+
+describe('DesktopCanvas window snap', () => {
+  let invoke: ReturnType<typeof vi.fn>
+
+  const canvasBounds = (): { w: number; h: number } => ({
+    w: window.innerWidth,
+    h: window.innerHeight - TASKBAR_H
+  })
+
+  beforeEach(() => {
+    useWindows.setState(initialWindows())
+    useDesktopPrefs.setState({
+      wallpaper: { kind: 'dotted-green', mode: 'cover' },
+      icons: {},
+      windows: {},
+      snaps: {},
+      loaded: false
+    })
+    invoke = vi.fn(() => Promise.resolve({}))
+    ;(window as unknown as { zero?: unknown }).zero = {
+      invoke,
+      subscribe: () => () => {}
+    }
+  })
+
+  afterEach(() => {
+    delete (window as unknown as { zero?: unknown }).zero
+  })
+
+  const headerOf = (el: HTMLElement): HTMLElement => el.querySelector('.zw-header') as HTMLElement
+
+  // Drives the real react-rnd drag path: mousedown on the header, mousemove
+  // on the document, mouseup on the document.
+  const dragHeaderBy = (el: HTMLElement, dx: number, dy: number): void => {
+    act(() => {
+      headerOf(el).dispatchEvent(
+        new MouseEvent('mousedown', { bubbles: true, button: 0, clientX: 100, clientY: 100 })
+      )
+    })
+    act(() => {
+      document.dispatchEvent(
+        new MouseEvent('mousemove', {
+          bubbles: true,
+          button: 0,
+          clientX: 100 + dx,
+          clientY: 100 + dy
+        })
+      )
+    })
+  }
+
+  const dropHeader = (dx: number, dy: number): void => {
+    // The release point IS the drop position (react-draggable reads it off
+    // the mouseup), so it must carry the pointer coordinates.
+    act(() => {
+      document.dispatchEvent(
+        new MouseEvent('mouseup', {
+          bubbles: true,
+          button: 0,
+          clientX: 100 + dx,
+          clientY: 100 + dy
+        })
+      )
+    })
+  }
+
+  const dragAndDrop = (el: HTMLElement, dx: number, dy: number): void => {
+    dragHeaderBy(el, dx, dy)
+    dropHeader(dx, dy)
+  }
+
+  const previewKind = (el: HTMLElement): string | null =>
+    el.querySelector('[data-snap-preview]')?.getAttribute('data-snap-preview') ?? null
+
+  it('dragging to the left edge shows the snap preview, release snaps the window', () => {
+    const props = base()
+    const el = mount(props)
+    // The pointer starts at the mousedown (100,100): dx=-80 puts it at x=20.
+    dragHeaderBy(el, -80, 100)
+    expect(previewKind(el)).toBe('left')
+    dropHeader(-80, 100)
+    expect(previewKind(el)).toBeNull()
+    const bounds = canvasBounds()
+    expect(useWindows.getState().snapped).toEqual({ desk: 'left' })
+    expect(useWindows.getState().rects.desk).toEqual({
+      x: 0,
+      y: 0,
+      w: bounds.w / 2,
+      h: bounds.h
+    })
+    expect(props.onCommit).not.toHaveBeenCalled()
+  })
+
+  it('a snap persists the snapped rect plus the kind and pre-snap rect', () => {
+    const el = mount(base())
+    dragAndDrop(el, -80, 100)
+    const bounds = canvasBounds()
+    expect(invoke).toHaveBeenCalledWith('prefs.set', {
+      windows: { desk: { x: 0, y: 0, w: bounds.w / 2, h: bounds.h } }
+    })
+    expect(invoke).toHaveBeenCalledWith('prefs.set', {
+      snaps: { desk: { kind: 'left', preSnap: { x: 0, y: 0, w: 560, h: 480 } } }
+    })
+    expect(useDesktopPrefs.getState().snaps.desk).toEqual({
+      kind: 'left',
+      preSnap: { x: 0, y: 0, w: 560, h: 480 }
+    })
+  })
+
+  it('a mid-canvas drop commits plain with no snap', () => {
+    const props = base()
+    const el = mount(props)
+    dragHeaderBy(el, 200, 100)
+    expect(previewKind(el)).toBeNull()
+    dropHeader(200, 100)
+    expect(useWindows.getState().snapped).toEqual({})
+    expect(props.onCommit).toHaveBeenCalledTimes(1)
+    expect(props.onCommit).toHaveBeenCalledWith('desk', { x: 208, y: 108, w: 400, h: 300 })
+  })
+
+  it('dragging a snapped window far away un-snaps back to the pre-snap rect', () => {
+    const el = mount(base())
+    dragAndDrop(el, -80, 100)
+    expect(useWindows.getState().snapped).toEqual({ desk: 'left' })
+    // A full-height half can still un-snap: zones read the pointer, so a
+    // mid-canvas release trips no zone and falls away from the anchor.
+    dragAndDrop(el, 300, 100)
+    expect(useWindows.getState().snapped).toEqual({})
+    expect(useWindows.getState().rects.desk).toEqual({ x: 0, y: 0, w: 560, h: 480 })
+    expect(invoke).toHaveBeenCalledWith('prefs.set', { snaps: { desk: null } })
+  })
+
+  it('dragging edge to edge moves the snap and keeps the original pre-snap', () => {
+    const el = mount(base())
+    dragAndDrop(el, -80, 100)
+    expect(useWindows.getState().snapped).toEqual({ desk: 'left' })
+    // Pointer to x=1000: the right edge at the jsdom 1024px viewport.
+    dragAndDrop(el, 900, 100)
+    const bounds = canvasBounds()
+    expect(useWindows.getState().snapped).toEqual({ desk: 'right' })
+    expect(useWindows.getState().rects.desk).toEqual({
+      x: bounds.w / 2,
+      y: 0,
+      w: bounds.w / 2,
+      h: bounds.h
+    })
+    expect(useDesktopPrefs.getState().snaps.desk).toEqual({
+      kind: 'right',
+      preSnap: { x: 0, y: 0, w: 560, h: 480 }
+    })
+  })
+
+  it('a top-edge drop maximizes through the existing maximize path', () => {
+    const el = mount(base())
+    // Pointer to y=20: the top edge (dy=-80 from the 100 mousedown).
+    dragAndDrop(el, 200, -80)
+    expect(useWindows.getState().maximized).toEqual(['desk'])
+    expect(useWindows.getState().snapped).toEqual({})
+    const bounds = canvasBounds()
+    expect(useWindows.getState().rects.desk).toEqual({ x: 0, y: 0, w: bounds.w, h: bounds.h })
+  })
+
+  it('viewport resize refits snapped windows against the new bounds', () => {
+    mount(base())
+    act(() => {
+      useWindows.getState().snap('desk', 'left', canvasBounds())
+      window.dispatchEvent(new Event('resize'))
+    })
+    expect(useWindows.getState().rects.desk).toEqual({
+      x: 0,
+      y: 0,
+      w: window.innerWidth / 2,
+      h: window.innerHeight - TASKBAR_H
+    })
+    expect(useWindows.getState().snapped).toEqual({ desk: 'left' })
   })
 })

@@ -4,9 +4,10 @@ import {
   setIconPosition,
   setWallpaper,
   setWindowRect,
+  setWindowSnap,
   useDesktopPrefs
 } from './prefs'
-import { initialWindows, useWindows } from './windows'
+import { getSnapEntry, initialWindows, useWindows } from './windows'
 
 type FakeZero = { invoke: ReturnType<typeof vi.fn> }
 
@@ -27,6 +28,7 @@ afterEach(() => {
     wallpaper: { kind: 'dotted-green', mode: 'cover' },
     icons: {},
     windows: {},
+    snaps: {},
     loaded: false
   })
 })
@@ -131,6 +133,89 @@ describe('persisting actions', () => {
     expect(useDesktopPrefs.getState().windows.desk).toEqual({ x: 1, y: 2, w: 560, h: 480 })
     expect(zero.invoke).toHaveBeenCalledWith('prefs.set', {
       windows: { desk: { x: 1, y: 2, w: 560, h: 480 } }
+    })
+  })
+  it('setWindowSnap remembers the entry and persists it per snap', () => {
+    const zero = stubZero(vi.fn(() => Promise.resolve({})))
+    setWindowSnap('desk', { kind: 'left', preSnap: { x: 1, y: 2, w: 560, h: 480 } })
+    expect(useDesktopPrefs.getState().snaps.desk).toEqual({
+      kind: 'left',
+      preSnap: { x: 1, y: 2, w: 560, h: 480 }
+    })
+    expect(zero.invoke).toHaveBeenCalledWith('prefs.set', {
+      snaps: { desk: { kind: 'left', preSnap: { x: 1, y: 2, w: 560, h: 480 } } }
+    })
+  })
+  it('setWindowSnap with null clears the entry and persists the deletion', () => {
+    const zero = stubZero(vi.fn(() => Promise.resolve({})))
+    setWindowSnap('desk', { kind: 'left', preSnap: { x: 1, y: 2, w: 560, h: 480 } })
+    setWindowSnap('desk', null)
+    expect(useDesktopPrefs.getState().snaps).toEqual({})
+    expect(zero.invoke).toHaveBeenCalledWith('prefs.set', { snaps: { desk: null } })
+  })
+})
+
+describe('snap persistence round-trip', () => {
+  it('re-snaps against the current canvas, not the stored pixels', async () => {
+    stubZero(
+      vi.fn(() =>
+        Promise.resolve({
+          wallpaper: { kind: 'dotted-green', mode: 'cover' },
+          icons: {},
+          // Stale pixels from a 900-wide canvas; the canvas is now 1000 wide.
+          windows: { desk: { x: 0, y: 0, w: 450, h: 638 } },
+          snaps: { desk: { kind: 'left', preSnap: { x: 40, y: 50, w: 600, h: 500 } } }
+        })
+      )
+    )
+    await hydrateDesktopPrefs({ w: 1000, h: 700 })
+    expect(useWindows.getState().rects.desk).toEqual({ x: 0, y: 0, w: 500, h: 700 })
+    expect(useWindows.getState().snapped).toEqual({ desk: 'left' })
+    expect(getSnapEntry('desk')).toEqual({
+      kind: 'left',
+      preSnap: { x: 40, y: 50, w: 600, h: 500 }
+    })
+    expect(useDesktopPrefs.getState().snaps.desk).toEqual({
+      kind: 'left',
+      preSnap: { x: 40, y: 50, w: 600, h: 500 }
+    })
+  })
+
+  it('records snaps without recomputing when no bounds are given', async () => {
+    stubZero(
+      vi.fn(() =>
+        Promise.resolve({
+          wallpaper: { kind: 'dotted-green', mode: 'cover' },
+          icons: {},
+          windows: { desk: { x: 0, y: 0, w: 450, h: 638 } },
+          snaps: { desk: { kind: 'left', preSnap: { x: 40, y: 50, w: 600, h: 500 } } }
+        })
+      )
+    )
+    await hydrateDesktopPrefs()
+    expect(useDesktopPrefs.getState().snaps.desk?.kind).toBe('left')
+    expect(useWindows.getState().snapped).toEqual({})
+    expect(useWindows.getState().rects.desk).toEqual({ x: 0, y: 0, w: 450, h: 638 })
+  })
+
+  it('drops malformed snap entries fail-soft on load', async () => {
+    stubZero(
+      vi.fn(() =>
+        Promise.resolve({
+          wallpaper: { kind: 'dotted-green', mode: 'cover' },
+          icons: {},
+          windows: {},
+          snaps: {
+            good: { kind: 'right', preSnap: { x: 1, y: 2, w: 560, h: 480 } },
+            bad: { kind: 'diagonal', preSnap: { x: 1, y: 2, w: 3, h: 4 } }
+          }
+        })
+      )
+    )
+    await hydrateDesktopPrefs({ w: 900, h: 638 })
+    expect(useWindows.getState().snapped).toEqual({ good: 'right' })
+    expect(useDesktopPrefs.getState().snaps).toEqual({
+      good: { kind: 'right', preSnap: { x: 1, y: 2, w: 560, h: 480 } }
     })
   })
 })

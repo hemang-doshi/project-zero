@@ -8,10 +8,12 @@ import {
   migrateStackedOrigins,
   type Rect
 } from '../shared/desktop-windows'
+import { isSnapEntry, type SnapEntry } from '../shared/desktop-snap'
 
 export type Prefs = {
   version: 1
   windows: Record<string, Rect>
+  snaps: Record<string, SnapEntry>
   icons: Record<string, { x: number; y: number }>
   wallpaper: {
     kind: 'dotted-green' | 'cream' | 'canvas-tan' | 'custom'
@@ -31,6 +33,7 @@ export function defaultPrefs(): Prefs {
       desk: { ...DEFAULT_SIZE, x: 28, y: 28 },
       runtime: { ...DEFAULT_SIZE, x: 56, y: 56 }
     },
+    snaps: {},
     icons: {},
     wallpaper: { kind: 'dotted-green', mode: 'cover' },
     open: ['desk', 'runtime'],
@@ -107,6 +110,17 @@ export function applyPrefsPatch(prefs: Prefs, patch: unknown): Prefs {
     }
     next.windows = windows
   }
+  if (typeof p.snaps === 'object' && p.snaps !== null && !Array.isArray(p.snaps)) {
+    // Snap records persist the kind + pre-snap rect (never pixels): null
+    // deletes a key so un-snap can erase it with a merge-only patch.
+    const snaps: Prefs['snaps'] = { ...(next.snaps ?? {}) }
+    for (const [route, entry] of Object.entries(p.snaps)) {
+      if (entry === null) delete snaps[route]
+      else if (isSnapEntry(entry))
+        snaps[route] = { kind: entry.kind, preSnap: { ...entry.preSnap } }
+    }
+    next.snaps = snaps
+  }
   return next
 }
 
@@ -132,7 +146,16 @@ export function startupMigrate(prefs: Prefs): Prefs {
   for (const [id, pos] of Object.entries(prefs.icons ?? {})) {
     icons[id] = snapIconToGrid(pos)
   }
-  return { ...prefs, windows, icons, layoutVersion: migrated.layoutVersion }
+  // Snaps ride along untouched: reload recomputes their rects from the kind
+  // against the current canvas, so migration must never rewrite them.
+  // Old prefs files predate the field — stamp the default.
+  return {
+    ...prefs,
+    windows,
+    icons,
+    snaps: prefs.snaps ?? {},
+    layoutVersion: migrated.layoutVersion
+  }
 }
 
 // Canonical desktop icon slot math (renderer items.ts is the source of truth;
