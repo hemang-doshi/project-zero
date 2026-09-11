@@ -55,6 +55,11 @@ describe('applyPrefsPatch', () => {
     expect(next.windows.good).toEqual({ x: 0, y: 0, w: 560, h: 480 })
     expect(Object.hasOwn(next, 'unknown')).toBe(false)
   })
+  it('drops array-valued icons and windows fields (fail-soft)', () => {
+    const next = applyPrefsPatch(defaultPrefs(), { icons: [1, 2], windows: [] })
+    expect(next.icons).toEqual({})
+    expect(next.windows).toEqual(defaultPrefs().windows)
+  })
   it('merges icon and window entries without losing untouched ones', () => {
     const base = defaultPrefs()
     base.icons['icon-desk'] = { x: 4, y: 4 }

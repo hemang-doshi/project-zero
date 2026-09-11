@@ -2,7 +2,16 @@ import { createElement } from 'react'
 import { renderToString } from 'react-dom/server'
 import { describe, it, expect } from 'vitest'
 import { IconLayer, type IconLayerProps } from './IconLayer'
-import { iconGridPos, monogram, type DesktopIcon } from './items'
+import {
+  DESKTOP_ITEMS,
+  ICON_H,
+  ICON_W,
+  SEED_BOTTOM_RESERVE,
+  SEED_VIEWPORT,
+  iconGridPos,
+  monogram,
+  type DesktopIcon
+} from './items'
 
 const icons: DesktopIcon[] = [
   { id: 'i-desk', label: 'Desk', kind: 'route', route: 'desk' },
@@ -18,10 +27,21 @@ const props = (openRoutes: string[]): IconLayerProps => ({
 })
 
 describe('icon geometry', () => {
-  it('seeds a single left column grid', () => {
+  it('seeds a two-column grid with the tighter step', () => {
     expect(iconGridPos(0)).toEqual({ x: 24, y: 28 })
-    expect(iconGridPos(3)).toEqual({ x: 24, y: 352 })
-    expect(iconGridPos(10)).toEqual({ x: 24, y: 1108 })
+    expect(iconGridPos(3)).toEqual({ x: 24, y: 316 })
+    expect(iconGridPos(6)).toEqual({ x: 112, y: 28 })
+    expect(iconGridPos(10)).toEqual({ x: 112, y: 412 })
+  })
+  it('seeds every desktop item inside the default viewport', () => {
+    expect(DESKTOP_ITEMS.icons).toHaveLength(11)
+    DESKTOP_ITEMS.icons.forEach((_icon, index) => {
+      const p = iconGridPos(index)
+      expect(p.x).toBeGreaterThanOrEqual(0)
+      expect(p.x + ICON_W).toBeLessThanOrEqual(SEED_VIEWPORT.width)
+      expect(p.y).toBeGreaterThanOrEqual(0)
+      expect(p.y + ICON_H).toBeLessThanOrEqual(SEED_VIEWPORT.height - SEED_BOTTOM_RESERVE)
+    })
   })
   it('builds the tile monogram from the label', () => {
     expect(monogram('Desk')).toBe('DE')

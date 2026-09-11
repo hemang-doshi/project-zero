@@ -34,11 +34,21 @@ export function viewerTitle(file: DesktopFile): string {
 export const ICON_W = 68
 export const ICON_H = 84
 export const GRID_ORIGIN = { x: 24, y: 28 }
-export const GRID_STEP = 108
+
+// The seed grid must fit the default main window (900x670, see main/index.ts)
+// with the bottom taskbar strip left free: two columns of at most 6 rows,
+// vertical step 96 keeps the tallest column at y=28..508 (bottom 592, which
+// leaves 78px clear of the 670px viewport). Persisted positions always win
+// over these seeds.
+export const SEED_VIEWPORT = { width: 900, height: 670 }
+export const SEED_BOTTOM_RESERVE = 72
+export const SEED_PER_COLUMN = 6
+export const GRID_STEP_Y = 96
+export const GRID_COLUMN_GAP = 20
 
 export const iconGridPos = (index: number): { x: number; y: number } => ({
-  x: GRID_ORIGIN.x,
-  y: GRID_ORIGIN.y + index * GRID_STEP
+  x: GRID_ORIGIN.x + Math.floor(index / SEED_PER_COLUMN) * (ICON_W + GRID_COLUMN_GAP),
+  y: GRID_ORIGIN.y + (index % SEED_PER_COLUMN) * GRID_STEP_Y
 })
 
 export const monogram = (label: string): string => {
