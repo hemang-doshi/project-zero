@@ -9,6 +9,14 @@ import type {
 
 export type Tone = 'neutral' | 'healthy' | 'attention' | 'error'
 
+// Canonical Tone → token-color map shared by the chips and the panels.
+export const TONE_COLOR: Record<Tone, string> = {
+  neutral: 'var(--z-secondary-ink)',
+  healthy: 'var(--z-status-green)',
+  attention: 'var(--z-marker-yellow)',
+  error: 'var(--z-error-red)'
+}
+
 export type CockpitSession = {
   id: string | null
   project_id: string | null

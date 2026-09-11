@@ -5,8 +5,10 @@ import { useCockpit } from '../store/cockpit'
 import { Chip } from './Chip'
 import {
   EMPTY_MACHINE_SAMPLE,
+  TONE_COLOR,
   activeProjectLabel,
   parseTelemetry,
+  pressureTone,
   selectSession,
   sessionChipTone,
   type MachineSample
@@ -159,11 +161,10 @@ const GRAPH_W = 240
 const GRAPH_H = 56
 
 // Activity-Monitor color coding from tokens: system red / user blue /
-// pressure green / plain ink.
+// pressure by kernel level / plain ink.
 const INK = 'var(--z-ink)'
 const SYSTEM_RED = 'var(--z-error-red)'
 const USER_BLUE = 'var(--z-highlight-blue)'
-const PRESSURE_GREEN = 'var(--z-status-green)'
 
 type RowSpec = { label: string; value: string; color?: string }
 
@@ -307,17 +308,21 @@ function MemoryPanel({
   const gb = (v: number | null | undefined): string =>
     typeof v === 'number' && Number.isFinite(v) ? formatGib(v) : '—'
   const level = m?.level ?? 'low'
+  // Color-by-level: the kernel pressure level picks the tone, and the tone
+  // picks the token color for the graph, its legend chip, and the caption word.
+  const pressureColor = TONE_COLOR[pressureTone(level)]
   return (
     <Panel
       title="MEMORY PRESSURE"
-      legend={[{ label: 'PRESSURE', color: PRESSURE_GREEN }]}
+      legend={[{ label: 'PRESSURE', color: pressureColor }]}
       left={
         <div style={graphBox}>
           <span style={graphTitle}>PRESSURE</span>
-          <Sparkline values={history.pressure} color={PRESSURE_GREEN} max={100} fill />
-          <span
-            style={graphCaption}
-          >{`${m?.pressure == null ? '—' : m.pressure.toFixed(1)} · ${level}`}</span>
+          <Sparkline values={history.pressure} color={pressureColor} max={100} fill />
+          <span style={graphCaption}>
+            {`${m?.pressure == null ? '—' : m.pressure.toFixed(1)} · `}
+            <span style={{ color: pressureColor }}>{level}</span>
+          </span>
         </div>
       }
       center={

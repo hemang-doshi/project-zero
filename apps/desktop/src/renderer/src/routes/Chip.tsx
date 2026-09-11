@@ -1,12 +1,5 @@
 import { ZERO_TYPE } from '../../../shared/tokens'
-import type { Tone } from './runtime.types'
-
-const TONE_COLOR: Record<Tone, string> = {
-  neutral: 'var(--z-secondary-ink)',
-  healthy: 'var(--z-status-green)',
-  attention: 'var(--z-marker-yellow)',
-  error: 'var(--z-error-red)'
-}
+import { TONE_COLOR, type Tone } from './runtime.types'
 
 const pillStyle: React.CSSProperties = {
   display: 'inline-flex',

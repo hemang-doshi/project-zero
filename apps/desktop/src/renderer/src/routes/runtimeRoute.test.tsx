@@ -205,6 +205,46 @@ describe('RuntimeRoute activity monitor panels', () => {
     expect(polylines[0].getAttribute('points')).toBe('2,51.8 238,49.6')
   })
 
+  it('colors the pressure graph and level word by the kernel pressure level', async () => {
+    const cases = [
+      ['low', 'var(--z-status-green)'],
+      ['medium', 'var(--z-marker-yellow)'],
+      ['high', 'var(--z-error-red)']
+    ] as const
+    for (const [level, toneColor] of cases) {
+      const levelContainer = document.createElement('div')
+      document.body.appendChild(levelContainer)
+      const levelRoot = createRoot(levelContainer)
+      fakeZero(() => Promise.resolve({ ...SAMPLE, memory: { ...SAMPLE.memory, level } }))
+      await act(async () => {
+        levelRoot.render(createElement(RuntimeRoute))
+      })
+      await flush()
+      window.dispatchEvent(new Event('focus'))
+      await flush()
+      const levelWord = [...levelContainer.querySelectorAll('span')].find(
+        (s) => s.textContent === level
+      )
+      expect(levelWord?.style.color).toBe(toneColor)
+      if (level === 'high') {
+        // The pressure graph is the only polygon (area fill), and 'high' maps
+        // to the error tone shared with disk-write/net-out lines — pin the
+        // unique polygon fill plus the caption word.
+        expect(levelContainer.querySelector('polygon')?.getAttribute('fill')).toBe(toneColor)
+      } else {
+        // low/medium tones are unique among the sparkline strokes.
+        const strokes = [...levelContainer.querySelectorAll('polyline')].map((p) =>
+          p.getAttribute('stroke')
+        )
+        expect(strokes.filter((s) => s === toneColor)).toHaveLength(1)
+      }
+      await act(async () => {
+        levelRoot.unmount()
+      })
+      levelContainer.remove()
+    }
+  })
+
   it('samples on focus and refreshes on a 2 s interval while visible', async () => {
     vi.useFakeTimers()
     const { invoke } = fakeZero(() => Promise.resolve(SAMPLE))
