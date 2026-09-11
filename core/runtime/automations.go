@@ -186,6 +186,18 @@ func (r *Runtime) recordGitFiring(ctx context.Context, result error) {
 		message = "Repository refresh unavailable"
 		state = "FAILED"
 	}
+	// The 15s poll is a heartbeat, not history: record only the first outcome
+	// and later transitions. A steady state re-records nothing, so idle polls
+	// stop bumping the revision and growing the firings table every 15s.
+	var raw []byte
+	if e := tx.QueryRowContext(ctx, "SELECT value FROM entities WHERE kind='firing' AND json_extract(value,'$.policy')='git-refresh' ORDER BY rowid DESC LIMIT 1").Scan(&raw); e == nil {
+		var last Firing
+		if json.Unmarshal(raw, &last) == nil && last.State == state {
+			return
+		}
+	} else if e != sql.ErrNoRows {
+		return
+	}
 	f := Firing{ID: id, Policy: "git-refresh", SessionID: s.ID, At: r.Now().UTC(), Message: message, Review: "unreviewed", State: state}
 	if saveEntity(ctx, tx, id, "firing", id, f, r.Now()) != nil {
 		return
