@@ -1,0 +1,25 @@
+:root {
+  --z-brand-orange: #F54E00;
+  --z-primary-authority: #A83300;
+  --z-card-cream: #FAF8F5;
+  --z-nav-cream: #F3ECDF;
+  --z-nav-border: #DED7CA;
+  --z-canvas-tan: #E9E3D7;
+  --z-window-canvas: #DBE3D3;
+  --z-hover-orange: #E04700;
+  --z-marker-yellow: #F7DF94;
+  --z-status-green: #10B981;
+  --z-highlight-blue: #3B82F6;
+  --z-error-red: #DC2626;
+  --z-wallpaper: #8C9E82;
+  --z-wallpaper-dot: #7A8C70;
+  --z-ink: #191C20;
+  --z-secondary-ink: #5C4038;
+  --z-line: #DED7CA;
+  --z-orange: #F54E00;
+  --z-orange-pressed: #A83300;
+}
+
+body {
+  font-family: Inter, system-ui, -apple-system, sans-serif;
+}
