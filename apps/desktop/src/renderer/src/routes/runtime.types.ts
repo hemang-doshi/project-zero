@@ -207,7 +207,22 @@ const parseIntegration = (v: unknown): CockpitIntegration | null => {
   return { id: r.id, enabled: r.enabled === true, status: r.status, data: strings }
 }
 
+// Parse-once cache keyed by snapshot reference: every selector/projection
+// helper that receives the same snapshot object shares one parse. The store
+// pushes a fresh snapshot reference per update, so each push parses at most
+// once regardless of how many routes/selectors read it (Task 10 Low-#2).
+const snapshotCache = new WeakMap<object, CockpitSnapshot | null>()
+
 export function parseSnapshot(value: unknown): CockpitSnapshot | null {
+  if (typeof value !== 'object' || value === null) return null
+  const cached = snapshotCache.get(value)
+  if (cached !== undefined) return cached
+  const parsed = parseSnapshotUncached(value)
+  snapshotCache.set(value, parsed)
+  return parsed
+}
+
+function parseSnapshotUncached(value: unknown): CockpitSnapshot | null {
   const root = asRecord(value)
   if (root === null || root.version !== '0.1') return null
   if (!isNum(root.revision) || !isStr(root.timestamp)) return null

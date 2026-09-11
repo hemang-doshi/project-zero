@@ -65,6 +65,23 @@ describe('parseSnapshot', () => {
     expect(parseSnapshot({ ...value, session: 4 })).toBeNull()
     expect(parseSnapshot(undefined)).toBeNull()
   })
+
+  it('parses once per snapshot reference and re-parses new references', () => {
+    const snap = { ...(fixture() as Record<string, unknown>), revision: 321 }
+    const first = parseSnapshot(snap)
+    const second = parseSnapshot(snap)
+    expect(second).toBe(first) // same reference → cached projection
+    const changed = { ...snap, revision: 322 }
+    const next = parseSnapshot(changed)
+    expect(next).not.toBe(first) // new reference → re-parse
+    expect(next?.revision).toBe(322)
+  })
+
+  it('caches malformed snapshots by reference too', () => {
+    const bad = { version: '9.9' }
+    expect(parseSnapshot(bad)).toBeNull()
+    expect(parseSnapshot(bad)).toBeNull()
+  })
 })
 
 describe('connectivity', () => {

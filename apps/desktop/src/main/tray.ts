@@ -170,7 +170,15 @@ export function createTray(model: CockpitModel, actions: TrayActions): Tray {
   const tray = new Tray(trayIcon())
   tray.setToolTip('Zero')
   let last: ModelUpdate = { snapshot: null, state: 'connecting', receivedAt: null, lastError: null }
+  let lastSignature: string | null = null
+  const signature = (): string =>
+    trayMenuItems(last, Date.now(), actions)
+      .map((i) => (typeof i.label === 'string' ? i.label : ''))
+      .join('\n')
   const rebuild = (): void => {
+    const sig = signature()
+    if (sig === lastSignature) return
+    lastSignature = sig
     tray.setContextMenu(Menu.buildFromTemplate(trayMenuItems(last, Date.now(), actions)))
   }
   model.subscribe((u) => {
@@ -178,7 +186,9 @@ export function createTray(model: CockpitModel, actions: TrayActions): Tray {
     rebuild()
   })
   // The focus timer ticks between model pushes (daemon events arrive in
-  // bursts); a cheap 1 s rebuild keeps the tray timer live.
+  // bursts); the label signature keeps this 1 s check cheap: while live and
+  // RUNNING the H:MM:SS line changes each tick and the menu rebuilds, while
+  // offline/IDLE pushes and ticks with unchanged labels skip setContextMenu.
   setInterval(rebuild, 1_000)
   return tray
 }
