@@ -88,6 +88,53 @@ describe('IPhone structure', () => {
     }
   })
 
+  it('renders the detail pass (antenna, bottom edge, SIM, rings, glass, screen)', async () => {
+    const el = await mount({ status: 'online' })
+    for (const name of [
+      'antenna-top-left',
+      'antenna-top-right',
+      'antenna-bottom-left',
+      'antenna-bottom-right',
+      'bottom-usbc',
+      'bottom-usbc-tongue',
+      'bottom-speaker-holes',
+      'bottom-mic-holes',
+      'sim-tray',
+      'sim-pinhole',
+      'lens-rings',
+      'lens-inners',
+      'camera-mic',
+      'island-speaker',
+      'back-glass',
+      'screen-time',
+      'screen-date',
+      'app-icons',
+      'app-icon-accent',
+      'action-knurls',
+      'button-gaps',
+      'button-gap-action',
+      'button-gap-volume-up',
+      'button-gap-volume-down',
+      'button-gap-power'
+    ]) {
+      expect(el.querySelector(`[name="${name}"]`), name).not.toBeNull()
+    }
+  })
+
+  it('instances repeated detail at the budgeted counts', async () => {
+    const el = await mount({ status: 'online' })
+    for (const [name, count] of [
+      ['bottom-speaker-holes', '6'],
+      ['bottom-mic-holes', '3'],
+      ['lens-rings', '3'],
+      ['lens-inners', '3'],
+      ['app-icons', '12'],
+      ['action-knurls', '3']
+    ] as Array<[string, string]>) {
+      expect(el.querySelector(`[name="${name}"]`)?.getAttribute('data-count'), name).toBe(count)
+    }
+  })
+
   it('stands on the y=0 plane (contact shadow at ground level)', async () => {
     const el = await mount({ status: 'online' })
     expect(el.querySelector('[name="base-shadow"]')).not.toBeNull()
@@ -124,8 +171,10 @@ describe('IPhone dimmed', () => {
     const lit = await mount({ status: 'online' })
     const litScreen = materialOf(lit, 'iphone-screen-material')
     const litBody = materialOf(lit, 'iphone-body-material')
+    const litTime = materialOf(lit, 'iphone-time-material')
     expect(litScreen?.getAttribute('emissiveintensity')).toBe('0.7')
     expect(litBody?.getAttribute('opacity')).toBe('1')
+    expect(litTime?.getAttribute('emissiveintensity')).toBe('0.9')
 
     await act(async () => {
       root?.unmount()
@@ -134,7 +183,9 @@ describe('IPhone dimmed', () => {
     const dim = await mount({ status: 'online', dimmed: true })
     const dimScreen = materialOf(dim, 'iphone-screen-material')
     const dimBody = materialOf(dim, 'iphone-body-material')
+    const dimTime = materialOf(dim, 'iphone-time-material')
     expect(dimScreen?.getAttribute('emissiveintensity')).toBe('0.05')
     expect(dimBody?.getAttribute('opacity')).toBe('0.35')
+    expect(dimTime?.getAttribute('emissiveintensity')).toBe('0.05')
   })
 })

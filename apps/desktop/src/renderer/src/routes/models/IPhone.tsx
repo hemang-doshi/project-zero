@@ -1,6 +1,7 @@
 /* eslint-disable react/no-unknown-property -- R3F three intrinsics (position, rotation, scale, args, geometry, material, color, emissive, …) that the DOM property allowlist cannot know. Scoped to this model file only. */
 /* eslint-disable react-refresh/only-export-components -- binding model-lane contract: MODEL_FOOTPRINT + STATUS_HEX must live beside the component. */
-import { memo, useMemo } from 'react'
+import { invalidate } from '@react-three/fiber'
+import { memo, useLayoutEffect, useMemo, useRef } from 'react'
 import * as THREE from 'three'
 
 export type IPhoneStatus = 'online' | 'suspect' | 'offline' | 'gated'
@@ -37,6 +38,9 @@ const SCREEN_GLOW = '#3B82F6'
 const WALLPAPER_BAND = '#FAF8F5'
 const WALLPAPER_ACCENT = '#F54E00'
 const LENS_GLASS = '#1B3A5C'
+// Antenna dielectric inlay + lock-screen time glyph: --z-line, --z-card-white.
+const ANTENNA = '#DED7CA'
+const TIME_GLOW = '#FFFFFF'
 
 const PHONE_W = 0.78
 const PHONE_H = 1.6
@@ -71,6 +75,25 @@ const LENS_POS: Array<[number, number]> = [
   [0.0, -0.1]
 ]
 
+// Detail-pass instancing budgets (all single-draw instancedMesh fills):
+// bottom-edge perforations, sapphire rings + pupils, icon dots, knurls.
+const ANTENNA_X = 0.22
+const SPEAKER_N = 6
+const SPEAKER_X0 = -0.33
+const SPEAKER_PITCH = 0.032
+const MIC_N = 3
+const MIC_X0 = 0.17
+const MIC_PITCH = 0.032
+const BOTTOM_HOLE_Y = 0.002
+const ICON_COLS = 4
+const ICON_ROWS = 3
+const ICON_COUNT = ICON_COLS * ICON_ROWS
+const ICON_X0 = -0.21
+const ICON_PITCH_X = 0.14
+const ICON_Y0 = 0.72
+const ICON_PITCH_Y = -0.15
+const KNURL_N = 3
+
 function IPhoneInner({
   status,
   dimmed
@@ -78,6 +101,82 @@ function IPhoneInner({
   status: IPhoneStatus
   dimmed: boolean
 }): React.JSX.Element {
+  // Instanced repeated parts (bottom-edge holes, sapphire rings + inner
+  // pupils, app-icon dots, action-button knurls). Same harness as the
+  // MacBook lane: the `typeof setMatrixAt` guard no-ops under the mock-DOM
+  // unit render, where refs are plain elements instead of THREE objects.
+  // useLayoutEffect + demand invalidate() (T29a follow-up): matrices fill
+  // before paint, and the global invalidate() no-ops when no Canvas is
+  // mounted, so the jsdom render stays side-effect free.
+  const speakerRef = useRef<THREE.InstancedMesh | null>(null)
+  const micRef = useRef<THREE.InstancedMesh | null>(null)
+  const ringRef = useRef<THREE.InstancedMesh | null>(null)
+  const innerRef = useRef<THREE.InstancedMesh | null>(null)
+  const iconsRef = useRef<THREE.InstancedMesh | null>(null)
+  const knurlRef = useRef<THREE.InstancedMesh | null>(null)
+
+  useLayoutEffect(() => {
+    const dummy = new THREE.Object3D()
+    const fill = (
+      mesh: THREE.InstancedMesh | null,
+      positions: Array<[number, number, number]>,
+      rotationY = 0
+    ): void => {
+      if (mesh === null || typeof mesh.setMatrixAt !== 'function') return
+      positions.forEach(([x, y, z], i) => {
+        dummy.position.set(x, y, z)
+        dummy.rotation.set(0, rotationY, 0)
+        dummy.updateMatrix()
+        mesh.setMatrixAt(i, dummy.matrix)
+      })
+      mesh.instanceMatrix.needsUpdate = true
+    }
+    fill(
+      speakerRef.current,
+      Array.from(
+        { length: SPEAKER_N },
+        (_, i) => [SPEAKER_X0 + i * SPEAKER_PITCH, BOTTOM_HOLE_Y, 0] as [number, number, number]
+      )
+    )
+    fill(
+      micRef.current,
+      Array.from(
+        { length: MIC_N },
+        (_, i) => [MIC_X0 + i * MIC_PITCH, BOTTOM_HOLE_Y, 0] as [number, number, number]
+      )
+    )
+    fill(
+      ringRef.current,
+      LENS_POS.map(([lx, ly]) => [lx, ly, PLATEAU_BACK_Z - 0.028] as [number, number, number])
+    )
+    fill(
+      innerRef.current,
+      LENS_POS.map(([lx, ly]) => [lx, ly, PLATEAU_BACK_Z - 0.029] as [number, number, number]),
+      Math.PI
+    )
+    const icons: Array<[number, number, number]> = []
+    for (let r = 0; r < ICON_ROWS; r++) {
+      for (let c = 0; c < ICON_COLS; c += 1) {
+        icons.push([ICON_X0 + c * ICON_PITCH_X, ICON_Y0 + r * ICON_PITCH_Y, FRONT_Z + 0.01])
+      }
+    }
+    fill(iconsRef.current, icons)
+    fill(
+      knurlRef.current,
+      [-0.02, 0, 0.02].map(
+        (dy) => [-PHONE_W / 2 - 0.0145, CENTER_Y + 0.5 + dy, 0] as [number, number, number]
+      )
+    )
+    // Demand-frameloop nudge: the one-shot fills above land before paint, so
+    // request the frame. Guarded — the mock-DOM unit render has no Canvas,
+    // and some test mocks of @react-three/fiber omit invalidate entirely.
+    try {
+      invalidate()
+    } catch {
+      // No live Canvas to nudge; the initial mount frame already covers it.
+    }
+  }, [])
+
   const bodyGeo = useMemo(() => {
     const shape = roundedRectShape(PHONE_W, PHONE_H, CORNER_R)
     const geo = new THREE.ExtrudeGeometry(shape, {
@@ -99,6 +198,11 @@ function IPhoneInner({
 
   const bezelGeo = useMemo(() => {
     const shape = roundedRectShape(PHONE_W - 0.02, PHONE_H - 0.02, CORNER_R - 0.01)
+    return new THREE.ShapeGeometry(shape, 24)
+  }, [])
+
+  const backGlassGeo = useMemo(() => {
+    const shape = roundedRectShape(PHONE_W - 0.03, PHONE_H - 0.03, CORNER_R - 0.015)
     return new THREE.ShapeGeometry(shape, 24)
   }, [])
 
@@ -179,16 +283,75 @@ function IPhoneInner({
         />
       </mesh>
 
-      {/* Dynamic Island pill cutout + front camera dot, floating above the glass */}
+      {/* lock-screen time + date hints over the wallpaper gradient */}
+      <mesh name="screen-time" position={[0, CENTER_Y + 0.32, FRONT_Z + 0.01]}>
+        <planeGeometry args={[0.24, 0.08]} />
+        <meshStandardMaterial
+          data-testid="iphone-time-material"
+          color={SCREEN_BASE}
+          emissive={TIME_GLOW}
+          emissiveIntensity={dimmed ? 0.05 : 0.9}
+          transparent
+          opacity={dimmed ? 0.3 : 0.9}
+        />
+      </mesh>
+      <mesh name="screen-date" position={[0, CENTER_Y + 0.23, FRONT_Z + 0.01]}>
+        <planeGeometry args={[0.16, 0.03]} />
+        <meshStandardMaterial
+          color={SCREEN_BASE}
+          emissive={WALLPAPER_BAND}
+          emissiveIntensity={dimmed ? 0.03 : 0.5}
+          transparent
+          opacity={dimmed ? 0.25 : 0.8}
+        />
+      </mesh>
+      {/* app-icon dot grid hint: 12 instanced cream glyphs + 1 orange accent */}
+      <instancedMesh
+        name="app-icons"
+        data-testid="iphone-app-icons"
+        data-count={ICON_COUNT}
+        ref={iconsRef}
+        args={[undefined, undefined, ICON_COUNT]}
+        frustumCulled={false}
+      >
+        <planeGeometry args={[0.075, 0.075]} />
+        <meshStandardMaterial
+          color={SCREEN_BASE}
+          emissive={WALLPAPER_BAND}
+          emissiveIntensity={dimmed ? 0.03 : 0.55}
+          transparent
+          opacity={dimmed ? 0.25 : 0.85}
+        />
+      </instancedMesh>
+      <mesh name="app-icon-accent" position={[ICON_X0, ICON_Y0 + 3 * ICON_PITCH_Y, FRONT_Z + 0.01]}>
+        <planeGeometry args={[0.075, 0.075]} />
+        <meshStandardMaterial
+          color={SCREEN_BASE}
+          emissive={WALLPAPER_ACCENT}
+          emissiveIntensity={dimmed ? 0.04 : 0.6}
+          transparent
+          opacity={dimmed ? 0.25 : 0.85}
+        />
+      </mesh>
+
+      {/* Dynamic Island: horizontal pill (rotation-z lays the capsule flat),
+          squashed in depth so it reads as a cutout, not a bar */}
       <mesh
         name="island"
         data-testid="iphone-island"
         position={[0, CENTER_Y + 0.62, FRONT_Z + 0.01]}
+        rotation-z={Math.PI / 2}
+        scale={[1, 1, 0.4]}
       >
         <capsuleGeometry args={[0.032, 0.15, 8, 16]} />
         <meshStandardMaterial color={NEAR_BLACK} roughness={0.4} metalness={0.4} />
       </mesh>
-      <mesh name="island-camera" position={[0.07, CENTER_Y + 0.62, FRONT_Z + 0.016]}>
+      {/* earpiece slit tucked inside the island, left of the camera */}
+      <mesh name="island-speaker" position={[-0.03, CENTER_Y + 0.62, FRONT_Z + 0.0235]}>
+        <boxGeometry args={[0.055, 0.008, 0.004]} />
+        <meshStandardMaterial color={TITANIUM_DARK} roughness={0.6} metalness={0.5} />
+      </mesh>
+      <mesh name="island-camera" position={[0.07, CENTER_Y + 0.62, FRONT_Z + 0.024]}>
         <circleGeometry args={[0.014, 20]} />
         <meshStandardMaterial
           color={NEAR_BLACK}
@@ -279,7 +442,66 @@ function IPhoneInner({
             emissiveIntensity={dimmed ? 0.02 : 0.25}
           />
         </mesh>
+        {/* sapphire trim rings around each lens (1 draw) + dark inner pupils
+            floating just proud of the glass so the depth reads (1 draw) */}
+        <instancedMesh
+          name="lens-rings"
+          data-testid="iphone-lens-rings"
+          data-count={LENS_POS.length}
+          ref={ringRef}
+          args={[undefined, undefined, LENS_POS.length]}
+          frustumCulled={false}
+        >
+          <torusGeometry args={[0.052, 0.009, 10, 32]} />
+          <meshStandardMaterial
+            color={TITANIUM}
+            metalness={1}
+            roughness={0.15}
+            transparent={dimmed}
+            opacity={bodyOpacity}
+          />
+        </instancedMesh>
+        <instancedMesh
+          name="lens-inners"
+          data-testid="iphone-lens-inners"
+          data-count={LENS_POS.length}
+          ref={innerRef}
+          args={[undefined, undefined, LENS_POS.length]}
+          frustumCulled={false}
+        >
+          <circleGeometry args={[0.02, 20]} />
+          <meshStandardMaterial
+            color={NEAR_BLACK}
+            emissive={LENS_GLASS}
+            emissiveIntensity={dimmed ? 0.1 : 0.9}
+          />
+        </instancedMesh>
+        {/* rear mic pinhole above the flash, completing the plateau cluster */}
+        <mesh
+          name="camera-mic"
+          position={[0.11, 0.12, PLATEAU_BACK_Z - 0.004]}
+          rotation-y={Math.PI}
+        >
+          <circleGeometry args={[0.008, 12]} />
+          <meshStandardMaterial color={NEAR_BLACK} roughness={0.7} metalness={0.2} />
+        </mesh>
       </group>
+
+      {/* frosted back-glass inset: the glass/titanium material split */}
+      <mesh
+        name="back-glass"
+        position={[0, CENTER_Y, BACK_Z - 0.001]}
+        rotation-y={Math.PI}
+        geometry={backGlassGeo}
+      >
+        <meshStandardMaterial
+          color={TITANIUM_DARK}
+          metalness={0.25}
+          roughness={0.55}
+          transparent={dimmed}
+          opacity={bodyOpacity}
+        />
+      </mesh>
 
       {/* neutral etched circle hint on the back — no trademark logos */}
       <mesh name="back-mark" position={[0, CENTER_Y - 0.05, BACK_Z - 0.002]} rotation-y={Math.PI}>
@@ -312,6 +534,90 @@ function IPhoneInner({
           <meshStandardMaterial color={TITANIUM_DARK} metalness={0.9} roughness={0.35} />
         </mesh>
       </group>
+      {/* button travel gaps: dark recesses outlining each key */}
+      <group name="button-gaps">
+        {(
+          [
+            ['button-gap-action', CENTER_Y + 0.5, 0.07, -1],
+            ['button-gap-volume-up', CENTER_Y + 0.32, 0.12, -1],
+            ['button-gap-volume-down', CENTER_Y + 0.17, 0.12, -1],
+            ['button-gap-power', CENTER_Y + 0.28, 0.16, 1]
+          ] as Array<[string, number, number, number]>
+        ).map(([name, y, len, side]) => (
+          <mesh key={name} name={name} position={[(PHONE_W / 2 + 0.0015) * side, y, 0]}>
+            <boxGeometry args={[0.006, len + 0.016, 0.044]} />
+            <meshStandardMaterial color={NEAR_BLACK} roughness={0.7} metalness={0.2} />
+          </mesh>
+        ))}
+      </group>
+      {/* action-button knurling: three grooves on the outer face (1 draw) */}
+      <instancedMesh
+        name="action-knurls"
+        data-count={KNURL_N}
+        ref={knurlRef}
+        args={[undefined, undefined, KNURL_N]}
+        frustumCulled={false}
+      >
+        <boxGeometry args={[0.004, 0.008, 0.032]} />
+        <meshStandardMaterial color={NEAR_BLACK} roughness={0.7} metalness={0.2} />
+      </instancedMesh>
+
+      {/* antenna dielectric bands breaking the titanium frame, top + bottom */}
+      {(
+        [
+          ['antenna-top-left', -ANTENNA_X, PHONE_H],
+          ['antenna-top-right', ANTENNA_X, PHONE_H],
+          ['antenna-bottom-left', -ANTENNA_X, 0.004],
+          ['antenna-bottom-right', ANTENNA_X, 0.004]
+        ] as Array<[string, number, number]>
+      ).map(([name, x, y]) => (
+        <mesh key={name} name={name} position={[x, y, 0]}>
+          <boxGeometry args={[0.025, 0.008, 0.1]} />
+          <meshStandardMaterial color={ANTENNA} roughness={0.6} metalness={0.1} />
+        </mesh>
+      ))}
+
+      {/* bottom edge: USB-C recess + tongue, speaker + mic perforations */}
+      <mesh name="bottom-usbc" position={[0, 0.008, 0]}>
+        <boxGeometry args={[0.14, 0.02, 0.045]} />
+        <meshStandardMaterial color={NEAR_BLACK} roughness={0.7} metalness={0.2} />
+      </mesh>
+      <mesh name="bottom-usbc-tongue" position={[0, 0.008, 0.004]}>
+        <boxGeometry args={[0.1, 0.008, 0.02]} />
+        <meshStandardMaterial color={TITANIUM_DARK} roughness={0.5} metalness={0.6} />
+      </mesh>
+      <instancedMesh
+        name="bottom-speaker-holes"
+        data-testid="iphone-speaker-holes"
+        data-count={SPEAKER_N}
+        ref={speakerRef}
+        args={[undefined, undefined, SPEAKER_N]}
+        frustumCulled={false}
+      >
+        <cylinderGeometry args={[0.008, 0.008, 0.004, 10]} />
+        <meshStandardMaterial color={NEAR_BLACK} roughness={0.7} metalness={0.2} />
+      </instancedMesh>
+      <instancedMesh
+        name="bottom-mic-holes"
+        data-testid="iphone-mic-holes"
+        data-count={MIC_N}
+        ref={micRef}
+        args={[undefined, undefined, MIC_N]}
+        frustumCulled={false}
+      >
+        <cylinderGeometry args={[0.008, 0.008, 0.004, 10]} />
+        <meshStandardMaterial color={NEAR_BLACK} roughness={0.7} metalness={0.2} />
+      </instancedMesh>
+
+      {/* SIM tray seam + eject pinhole on the lower-left edge */}
+      <mesh name="sim-tray" position={[-PHONE_W / 2 - 0.004, 0.45, 0]}>
+        <boxGeometry args={[0.01, 0.2, 0.05]} />
+        <meshStandardMaterial color={TITANIUM_DARK} metalness={0.9} roughness={0.35} />
+      </mesh>
+      <mesh name="sim-pinhole" position={[-PHONE_W / 2 - 0.012, 0.52, 0]} rotation-z={Math.PI / 2}>
+        <cylinderGeometry args={[0.005, 0.005, 0.012, 10]} />
+        <meshStandardMaterial color={NEAR_BLACK} roughness={0.7} metalness={0.2} />
+      </mesh>
     </group>
   )
 }
