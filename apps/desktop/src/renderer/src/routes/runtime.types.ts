@@ -46,6 +46,23 @@ export type CockpitAudit = {
 
 export type CockpitTruncated = Record<string, boolean>
 
+export type CockpitApproval = {
+  id: string
+  node: string
+  capability: string
+  hash: string | null
+  status: string
+  deadline: string
+  input: Record<string, string | number>
+  input_omitted: boolean
+}
+
+export type CockpitPolicy = {
+  id: string
+  status: string
+  enabled: boolean
+}
+
 export type CockpitSnapshot = {
   version: string
   revision: number
@@ -56,6 +73,9 @@ export type CockpitSnapshot = {
   events: CockpitEvent[]
   audit: CockpitAudit[]
   truncated: CockpitTruncated
+  approvals: CockpitApproval[]
+  policies: CockpitPolicy[]
+  firings: number
 }
 
 export type MachineSample = {
@@ -147,6 +167,35 @@ const parseTruncated = (v: unknown): CockpitTruncated => {
   return flags
 }
 
+const parseApproval = (v: unknown): CockpitApproval | null => {
+  const r = asRecord(v)
+  if (r === null || !isStr(r.id) || !isStr(r.node) || !isStr(r.capability)) return null
+  if (!isStr(r.status) || !isStr(r.deadline)) return null
+  const input = asRecord(r.input)
+  const summary: Record<string, string | number> = {}
+  if (input !== null) {
+    for (const [k, value] of Object.entries(input)) {
+      if (isStr(value) || isNum(value)) summary[k] = value
+    }
+  }
+  return {
+    id: r.id,
+    node: r.node,
+    capability: r.capability,
+    hash: isStr(r.hash) ? r.hash : null,
+    status: r.status,
+    deadline: r.deadline,
+    input: summary,
+    input_omitted: r.input_omitted === true
+  }
+}
+
+const parsePolicy = (v: unknown): CockpitPolicy | null => {
+  const r = asRecord(v)
+  if (r === null || !isStr(r.id) || !isStr(r.status)) return null
+  return { id: r.id, status: r.status, enabled: r.enabled === true }
+}
+
 const parseIntegration = (v: unknown): CockpitIntegration | null => {
   const r = asRecord(v)
   if (r === null || !isStr(r.id) || !isStr(r.status)) return null
@@ -187,7 +236,16 @@ export function parseSnapshot(value: unknown): CockpitSnapshot | null {
     nodes,
     events: parseEvents(root.events),
     audit: parseAudit(root.audit),
-    truncated: parseTruncated(root.truncated)
+    truncated: parseTruncated(root.truncated),
+    approvals: Array.isArray(root.approvals)
+      ? root.approvals
+          .map((item) => parseApproval(item))
+          .filter((a): a is CockpitApproval => a !== null)
+      : [],
+    policies: Array.isArray(root.policies)
+      ? root.policies.map((item) => parsePolicy(item)).filter((p): p is CockpitPolicy => p !== null)
+      : [],
+    firings: Array.isArray(root.firings) ? root.firings.length : 0
   }
 }
 
@@ -410,4 +468,320 @@ export function nodeTone(conn: RuntimeConnState, status: string): Tone {
     default:
       return 'neutral'
   }
+}
+
+// --- Airlock (single slate + stats + lower-bound notices) -------------------
+
+export type ApprovalFreshness = 'live' | 'retained' | 'expired'
+
+export type ApprovalActions = {
+  canApprove: boolean
+  canDeny: boolean
+  reason: string | null
+}
+
+export function approvalIdentityComplete(a: CockpitApproval): boolean {
+  return (
+    a.id !== '' &&
+    a.node !== '' &&
+    a.capability !== '' &&
+    a.deadline !== '' &&
+    a.status === 'WAITING_APPROVAL'
+  )
+}
+
+export function approvalExpired(a: CockpitApproval, now: number): boolean {
+  const deadline = Date.parse(a.deadline)
+  return Number.isFinite(deadline) && now >= deadline
+}
+
+export function approvalFreshness(
+  conn: RuntimeConnState,
+  a: CockpitApproval,
+  now: number
+): ApprovalFreshness {
+  if (conn !== 'live') return 'retained'
+  if (approvalExpired(a, now)) return 'expired'
+  return 'live'
+}
+
+export function approvalActions(
+  conn: RuntimeConnState,
+  a: CockpitApproval,
+  now: number
+): ApprovalActions {
+  const identity = approvalIdentityComplete(a)
+  if (!identity) {
+    return {
+      canApprove: false,
+      canDeny: false,
+      reason:
+        'Required runtime identity, state, or RFC3339 deadline fields are unavailable or have the wrong type.'
+    }
+  }
+  if (conn !== 'live') {
+    return {
+      canApprove: false,
+      canDeny: false,
+      reason:
+        'This is retained snapshot evidence while zerod is not live. Runtime actions are disabled until a fresh live snapshot arrives.'
+    }
+  }
+  if (approvalExpired(a, now)) {
+    return {
+      canApprove: false,
+      canDeny: true,
+      reason:
+        'The approval deadline has passed. Approval is disabled; the daemon’s exact deny operation remains available for this retained WAITING_APPROVAL row.'
+    }
+  }
+  return { canApprove: true, canDeny: true, reason: null }
+}
+
+export function approvalNotice(conn: RuntimeConnState, a: CockpitApproval, now: number): string {
+  const expired = approvalExpired(a, now)
+  if (a.input_omitted && !expired) {
+    return 'The live daemon retained the full invocation. This bounded display projection omits one or more input fields; actions route only the original invocation ID.'
+  }
+  if (expired) {
+    return conn !== 'live'
+      ? 'The approval deadline has passed while zerod is not live. This is retained snapshot evidence; runtime actions are disabled until a fresh live snapshot arrives.'
+      : 'The approval deadline has passed. Approval is disabled; the daemon’s exact deny operation remains available for this retained WAITING_APPROVAL row, which is not treated as a terminal denial.'
+  }
+  return conn !== 'live'
+    ? 'This is retained snapshot evidence while zerod is not live. Runtime actions are disabled until a fresh live snapshot arrives.'
+    : 'The live daemon is holding this exact invocation for an explicit owner decision.'
+}
+
+export type AirlockStats = {
+  pending: number
+  runtime: number
+  codex: number
+  audited: string
+}
+
+export function airlockStats(snapshot: unknown): AirlockStats {
+  const parsed = parseSnapshot(snapshot)
+  const runtime = parsed?.approvals.length ?? 0
+  const audited = approvalAuditRows(snapshot).length
+  return {
+    pending: runtime + (parsed?.firings ?? 0),
+    runtime,
+    codex: 0,
+    audited: `${audited}${parsed?.truncated.audit === true ? '+' : ''}`
+  }
+}
+
+export function approvalAuditRows(snapshot: unknown): CockpitAudit[] {
+  const parsed = parseSnapshot(snapshot)
+  if (parsed === null) return []
+  return parsed.audit.filter((row) => row.action.startsWith('approvals.'))
+}
+
+// --- Zero Bot (harness lock + discovery + bridge event surface) -------------
+
+export type Harness = 'codex' | 'opencode'
+
+export type BridgeConnState = 'unknown' | 'disconnected' | 'connecting' | 'live'
+
+export const HARNESS_MODELS: Record<Harness, string[]> = {
+  codex: ['gpt-5.6-luna', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-6-astra'],
+  opencode: ['muse-spark-1.3']
+}
+
+export const HARNESS_DEFAULT_MODEL: Record<Harness, string> = {
+  codex: 'gpt-5.6-luna',
+  opencode: 'muse-spark-1.3'
+}
+
+export const mirrorLabel = (harness: Harness): string => `zero-meta/${harness}/events.jsonl`
+
+export function harnessLockWarning(model: string, harness: Harness): string | null {
+  if (HARNESS_MODELS[harness].includes(model)) return null
+  const home = harness === 'codex' ? 'Codex (GPT only)' : 'OpenCode (Muse Spark only)'
+  return `Model ${model} is not allowed in the ${harness} harness. It stays locked to its home harness (${home}); this mismatch is mirrored, not sent.`
+}
+
+export type BridgeEvent = {
+  harness: Harness
+  method: string
+  params: unknown
+}
+
+export type EventCategory =
+  | 'OPERATOR'
+  | 'ZERO BOT'
+  | 'REASONING'
+  | 'PLAN'
+  | 'COMMAND'
+  | 'FILE CHANGE'
+  | 'TOOL'
+  | 'PROTOCOL ITEM'
+
+export function classifyBridgeEvent(method: string): EventCategory {
+  const value = method.toLowerCase()
+  if (value.includes('user') || value.includes('operator')) return 'OPERATOR'
+  if (value.includes('agentmessage') || value.includes('assistant')) return 'ZERO BOT'
+  if (value.includes('reasoning')) return 'REASONING'
+  if (value.includes('plan')) return 'PLAN'
+  if (value.includes('commandexecution') || value.includes('terminal')) return 'COMMAND'
+  if (value.includes('filechange') || value.includes('diff')) return 'FILE CHANGE'
+  if (value.includes('tool') || value.includes('search') || value.includes('image')) return 'TOOL'
+  return 'PROTOCOL ITEM'
+}
+
+export function bridgeEventSummary(ev: BridgeEvent, limit = 96): string {
+  const p =
+    typeof ev.params === 'object' && ev.params !== null
+      ? (ev.params as Record<string, unknown>)
+      : null
+  const raw =
+    (p !== null &&
+      [p.text, p.delta, p.command, p.name, p.title, p.threadId, p.sessionId, p.id].find(
+        (v) => typeof v === 'string' && v !== ''
+      )) ||
+    ''
+  const text = typeof raw === 'string' && raw !== '' ? raw : ev.method
+  return text.length > limit ? `…${text.slice(-limit)}` : text
+}
+
+export type DiscoveryResult = {
+  harness: Harness
+  models: Array<{ id: string; label: string; advertised: boolean }>
+  threads: Array<{ id: string; name: string }>
+  note: string | null
+}
+
+const scalar = (v: unknown): string | null => {
+  if (typeof v === 'string' && v !== '') return v
+  if (typeof v === 'number' && Number.isFinite(v)) return String(v)
+  return null
+}
+
+const modelOptions = (rows: unknown[]): DiscoveryResult['models'] => {
+  const out: DiscoveryResult['models'] = []
+  const seen = new Set<string>()
+  for (const row of rows) {
+    const r = asRecord(row)
+    if (r === null) continue
+    const id = scalar(r['id']) ?? scalar(r['model']) ?? scalar(r['slug'])
+    if (id === null || seen.has(id)) continue
+    seen.add(id)
+    out.push({
+      id,
+      label: scalar(r['displayName']) ?? scalar(r['name']) ?? id,
+      advertised: true
+    })
+  }
+  return out
+}
+
+const threadOptions = (rows: unknown[]): DiscoveryResult['threads'] => {
+  const out: DiscoveryResult['threads'] = []
+  for (const row of rows) {
+    const r = asRecord(row)
+    if (r === null) continue
+    const id = scalar(r['id']) ?? scalar(r['threadId'])
+    if (id === null) continue
+    out.push({ id, name: scalar(r['name']) ?? scalar(r['title']) ?? '' })
+  }
+  return out
+}
+
+export function parseDiscovery(value: unknown): DiscoveryResult | null {
+  const r = asRecord(value)
+  if (r === null) return null
+  const harness = r['harness']
+  if (harness !== 'codex' && harness !== 'opencode') return null
+  return {
+    harness,
+    models: modelOptions(Array.isArray(r['models']) ? r['models'] : []),
+    threads: threadOptions(Array.isArray(r['threads']) ? r['threads'] : []),
+    note: isStr(r['note']) && r['note'] !== '' ? r['note'] : null
+  }
+}
+
+export const SEND_BLOCKED_NOTICE =
+  'Send is honestly blocked in this build: the daemon command path has no conversational send yet.'
+
+export const VOICE_DISABLED_NOTICE =
+  'Voice input is disabled in this build; use system dictation instead.'
+
+export const MAX_BRIDGE_EVENTS = 100
+
+export function pushBridgeEvent(
+  events: BridgeEvent[],
+  push: BridgeEvent
+): { events: BridgeEvent[]; dropped: number } {
+  const next = [...events, push]
+  if (next.length <= MAX_BRIDGE_EVENTS) return { events: next, dropped: 0 }
+  return { events: next.slice(next.length - MAX_BRIDGE_EVENTS), dropped: 1 }
+}
+
+export function visibleBridgeEvents(events: BridgeEvent[], harness: Harness): BridgeEvent[] {
+  return events.filter((e) => e.harness === harness)
+}
+
+// --- Skill Lab (read-only fixture skills) -----------------------------------
+
+export type SkillSourceLabel = 'learned-in-codex' | 'learned-in-opencode' | 'authored'
+
+export type SkillFixture = {
+  id: string
+  name: string
+  summary: string
+  source: SkillSourceLabel
+  enabled: boolean
+  isUsable: boolean
+  rejectionReason: string | null
+}
+
+export const SKILL_INJECTION_CONTRACT =
+  'Skills enabled once apply to both providers’ future sessions (shared). Threads and projects stay namespaced per provider. A skill a provider rejects is shown as rejected — never silently dropped.'
+
+// Read-only fixtures shaped after the SkillStore skill record
+// (apps/macos/Sources/ZeroKit/SkillStore.swift). The daemon (core/) exposes
+// no skill store and the sandboxed renderer has no filesystem op, so this
+// lane renders fixtures only; enable toggles are not wired.
+export const SKILL_FIXTURES: SkillFixture[] = [
+  {
+    id: 'daily-standup',
+    name: 'Daily Standup Notes',
+    summary: 'Summarizes the focus session and git state into a short standup note.',
+    source: 'authored',
+    enabled: false,
+    isUsable: true,
+    rejectionReason: null
+  },
+  {
+    id: 'debug-ritual',
+    name: 'Zero Debug Ritual',
+    summary: 'Runs the root-cause-first debugging checklist against a reported defect.',
+    source: 'learned-in-codex',
+    enabled: false,
+    isUsable: true,
+    rejectionReason: null
+  },
+  {
+    id: 'desk-display-notes',
+    name: 'Desk Display Notes',
+    summary: 'Explains the desk display render pipeline and honest state model.',
+    source: 'learned-in-opencode',
+    enabled: false,
+    isUsable: true,
+    rejectionReason: null
+  },
+  {
+    id: 'broken-skill',
+    name: 'broken-skill',
+    summary: '',
+    source: 'authored',
+    enabled: false,
+    isUsable: false,
+    rejectionReason: 'Front-matter needs non-empty name and description.'
+  }
+]
+
+export function skillSummary(s: SkillFixture): string {
+  return s.isUsable ? s.summary : (s.rejectionReason ?? 'Unusable skill.')
 }
