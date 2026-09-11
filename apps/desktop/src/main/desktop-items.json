@@ -1,0 +1,51 @@
+{
+  "icons": [
+    { "id": "icon-desk", "label": "Desk", "kind": "route", "route": "desk" },
+    { "id": "icon-runtime", "label": "Runtime", "kind": "route", "route": "runtime" },
+    { "id": "icon-network", "label": "Network", "kind": "route", "route": "network" },
+    {
+      "id": "icon-flightRecorder",
+      "label": "Flight Recorder",
+      "kind": "route",
+      "route": "flightRecorder"
+    },
+    { "id": "icon-airlock", "label": "Airlock", "kind": "route", "route": "airlock" },
+    { "id": "icon-zeroBot", "label": "Zero Bot", "kind": "route", "route": "zeroBot" },
+    { "id": "icon-skillLab", "label": "Skill Lab", "kind": "route", "route": "skillLab" },
+    { "id": "icon-readme", "label": "README.txt", "kind": "file", "file": "readme" },
+    {
+      "id": "icon-architecture",
+      "label": "architecture.pdf",
+      "kind": "file",
+      "file": "architecture"
+    },
+    { "id": "icon-screenshot", "label": "screenshot.png", "kind": "file", "file": "screenshot" },
+    { "id": "icon-notes", "label": "notes", "kind": "file", "file": "notes" }
+  ],
+  "files": [
+    {
+      "id": "readme",
+      "name": "README.txt",
+      "ext": "txt",
+      "content": "PROJECT ZERO — DESKTOP README (DUMMY)\n\nThis desktop is the local recreation of the Zero cockpit: seven route windows over a token-driven wallpaper, with free-placed icons.\n\n- Icons drag freely; positions persist per drag.\n- Double-click an icon to open its route window or this viewer.\n- Viewer windows are read-only and labeled dummy.\n\nNo file system is read by this viewer; every dummy file ships inside the app bundle."
+    },
+    {
+      "id": "architecture",
+      "name": "architecture.pdf",
+      "ext": "pdf",
+      "content": "ARCHITECTURE — PDF MOCK (DUMMY)\n\nzerod owns committed state on this Mac and serves HTTP + SSE over the owner-only Unix socket.\nThe desktop connects through that socket: the cockpit snapshot refreshes on stream events, and commands post through /v0.1/commands with explicit approvals.\nRoutes render from the snapshot. Codex and OpenCode run as manually connected stdio bridges; send stays blocked until the runtime path ships.\nThis PDF is a mock — the real document store is not wired yet."
+    },
+    {
+      "id": "screenshot",
+      "name": "screenshot.png",
+      "ext": "png",
+      "content": "Placeholder card — no screenshot pipeline exists in this build."
+    },
+    {
+      "id": "notes",
+      "name": "notes",
+      "ext": "notes",
+      "content": "Desktop notes (dummy)\nIcons persist per drag.\nWallpaper kinds render from tokens.\nViewer windows are read-only.\nSettings lives in the taskbar strip."
+    }
+  ]
+}

@@ -48,4 +48,39 @@ describe('useWindows', () => {
     useWindows.getState().commit('desk', { x: 10, y: 12, w: 5000, h: 5000 })
     expect(useWindows.getState().rects.desk).toEqual({ x: 10, y: 12, w: 1100, h: 900 })
   })
+
+  it('openRoute opens a closed route front-most with the stored rect', () => {
+    useWindows.getState().close('desk')
+    useWindows.getState().openRoute('network', { x: 8, y: 9, w: 560, h: 480 })
+    expect(useWindows.getState().open).toEqual(['runtime', 'network'])
+    expect(useWindows.getState().zOrder).toEqual(['runtime', 'network'])
+    expect(useWindows.getState().rects.network).toEqual({ x: 8, y: 9, w: 560, h: 480 })
+  })
+
+  it('openRoute without a stored rect cascades past the open count', () => {
+    useWindows.getState().close('desk')
+    useWindows.getState().openRoute('network')
+    expect(useWindows.getState().rects.network).toEqual({ x: 56, y: 56, w: 560, h: 480 })
+  })
+
+  it('openRoute refocuses an already open route without duplicating it', () => {
+    useWindows.getState().openRoute('desk', { x: 1, y: 1, w: 560, h: 480 })
+    expect(useWindows.getState().open).toEqual(['desk', 'runtime'])
+    expect(useWindows.getState().zOrder.at(-1)).toBe('desk')
+  })
+
+  it('openFile opens a file viewer window keyed file:<id>', () => {
+    useWindows.getState().openFile('readme', { x: 4, y: 4, w: 560, h: 480 })
+    expect(useWindows.getState().open).toContain('file:readme')
+    expect(useWindows.getState().zOrder.at(-1)).toBe('file:readme')
+    expect(useWindows.getState().rects['file:readme']).toEqual({ x: 4, y: 4, w: 560, h: 480 })
+  })
+
+  it('openFile refocuses when the viewer is already open', () => {
+    useWindows.getState().openFile('readme', { x: 4, y: 4, w: 560, h: 480 })
+    useWindows.getState().focus('runtime')
+    useWindows.getState().openFile('readme')
+    expect(useWindows.getState().zOrder.at(-1)).toBe('file:readme')
+    expect(useWindows.getState().zOrder.filter((r) => r === 'file:readme')).toHaveLength(1)
+  })
 })

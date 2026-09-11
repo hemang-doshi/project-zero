@@ -1,5 +1,6 @@
-export type RouteId =
-  'desk' | 'runtime' | 'network' | 'flightRecorder' | 'airlock' | 'zeroBot' | 'skillLab'
+import type { CanonicalRouteId } from '../../../shared/desktop-windows'
+
+export type RouteId = CanonicalRouteId
 
 export const ROUTE_TITLES: Record<RouteId, string> = {
   desk: 'Desk',

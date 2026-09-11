@@ -1,0 +1,54 @@
+import { createElement } from 'react'
+import { renderToString } from 'react-dom/server'
+import { describe, it, expect } from 'vitest'
+import { IconLayer, type IconLayerProps } from './IconLayer'
+import { iconGridPos, monogram, type DesktopIcon } from './items'
+
+const icons: DesktopIcon[] = [
+  { id: 'i-desk', label: 'Desk', kind: 'route', route: 'desk' },
+  { id: 'i-readme', label: 'README.txt', kind: 'file', file: 'readme' }
+]
+
+const props = (openRoutes: string[]): IconLayerProps => ({
+  icons,
+  positions: {},
+  openRoutes,
+  onOpen: () => {},
+  onCommitPos: () => {}
+})
+
+describe('icon geometry', () => {
+  it('seeds a single left column grid', () => {
+    expect(iconGridPos(0)).toEqual({ x: 24, y: 28 })
+    expect(iconGridPos(3)).toEqual({ x: 24, y: 352 })
+    expect(iconGridPos(10)).toEqual({ x: 24, y: 1108 })
+  })
+  it('builds the tile monogram from the label', () => {
+    expect(monogram('Desk')).toBe('DE')
+    expect(monogram('Flight Recorder')).toBe('FR')
+    expect(monogram('Zero Bot')).toBe('ZB')
+  })
+})
+
+describe('IconLayer render', () => {
+  it('renders every icon label and tile glyph', () => {
+    const html = renderToString(createElement(IconLayer, props([])))
+    expect(html).toContain('Desk')
+    expect(html).toContain('DE')
+    expect(html).toContain('README.txt')
+    expect(html).toContain('TXT')
+  })
+  it('marks route icons of open routes with the running indicator', () => {
+    const open = renderToString(createElement(IconLayer, props(['desk'])))
+    expect(open).toContain('data-running="true"')
+    const closed = renderToString(createElement(IconLayer, props([])))
+    expect(closed).not.toContain('data-running')
+  })
+  it('honors a persisted position over the grid slot', () => {
+    const html = renderToString(
+      createElement(IconLayer, { ...props([]), positions: { 'i-desk': { x: 200, y: 90 } } })
+    )
+    expect(html).toContain('left:200px')
+    expect(html).toContain('top:90px')
+  })
+})

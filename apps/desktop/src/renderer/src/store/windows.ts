@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import {
   DEFAULT_SIZE,
+  cascadeOffset,
   clampSize,
   fallbackSelection,
   launchOrigins,
@@ -27,6 +28,8 @@ export type WindowsData = {
 
 export type WindowsState = WindowsData & {
   focus: (route: string) => void
+  openRoute: (route: string, rect?: Rect) => void
+  openFile: (id: string, rect?: Rect) => void
   close: (route: string) => void
   minimize: (route: string) => void
   maximize: (route: string) => void
@@ -45,6 +48,28 @@ export function initialWindows(): WindowsData {
 
 const resting: Record<string, Rect> = {}
 
+const openWindowId = (
+  id: string,
+  rect: Rect | undefined,
+  get: () => WindowsState,
+  set: (partial: Partial<WindowsState>) => void
+): void => {
+  const prev = get()
+  if (prev.open.includes(id)) {
+    get().focus(id)
+    return
+  }
+  // +1: slot 0/1 are the desk/runtime seed slots, so a fresh window never
+  // lands on a still-open seed position after a close.
+  const r = rect ?? { ...DEFAULT_SIZE, ...cascadeOffset(prev.open.length + 1) }
+  set({
+    open: [...prev.open, id],
+    zOrder: [...prev.zOrder, id],
+    rects: { ...prev.rects, [id]: r },
+    selected: id
+  })
+}
+
 export const useWindows = create<WindowsState>((set, get) => ({
   ...initialWindows(),
   focus: (route) =>
@@ -58,6 +83,8 @@ export const useWindows = create<WindowsState>((set, get) => ({
         : prev.minimized,
       selected: route
     })),
+  openRoute: (route, rect) => openWindowId(route, rect, get, set),
+  openFile: (id, rect) => openWindowId(`file:${id}`, rect, get, set),
   close: (route) =>
     set((prev) => {
       const open = prev.open.filter((r) => r !== route)
