@@ -37,6 +37,7 @@ const base = (over: Partial<DesktopWindowProps> = {}): DesktopWindowProps => ({
   rect: { x: 20, y: 20, w: 560, h: 480 },
   front: true,
   maximized: false,
+  snapped: false,
   onSelect: vi.fn(),
   onClose: vi.fn(),
   onMinimize: vi.fn(),
@@ -111,6 +112,24 @@ describe('DesktopWindow click-to-front', () => {
     const el = mount(base())
     const root = el.firstElementChild as HTMLElement
     expect(root.style.maxWidth).toBe('1100px')
+  })
+
+  it('a snapped window is not clamped by the user-resize ceiling', () => {
+    const el = mount(
+      base({
+        snapped: true,
+        rect: { x: 0, y: 0, w: 1200, h: 932 }
+      })
+    )
+    const root = el.firstElementChild as HTMLElement
+    expect(root.style.width).toBe('1200px')
+    expect(root.style.maxWidth).not.toBe('1100px')
+  })
+
+  it('a snapped window renders square like a maximized one', () => {
+    const el = mount(base({ snapped: true }))
+    const root = el.firstElementChild as HTMLElement
+    expect(root.style.borderRadius).toBe('0')
   })
 })
 

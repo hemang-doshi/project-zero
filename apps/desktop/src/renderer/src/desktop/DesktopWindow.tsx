@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Rnd } from 'react-rnd'
-import { clampSize, type Rect } from '../../../shared/desktop-windows'
+import { clampSize, type Point, type Rect } from '../../../shared/desktop-windows'
 import { ROUTE_TITLES, previewTransform, type RouteId } from './canvas'
 
 const ALL_EIGHT = {
@@ -75,12 +75,30 @@ export type DesktopWindowProps = {
   rect: Rect
   front: boolean
   maximized: boolean
+  snapped: boolean
   onSelect: () => void
   onClose: () => void
   onMinimize: () => void
   onMaximize: () => void
   onCommit: (rect: Rect) => void
+  onDragMove?: (pointer: Point) => void
+  onDragEnd?: (element: Rect, pointer: Point) => void
   children: React.ReactNode
+}
+
+// Snap zones read the pointer, not the window rect: like macOS, it is the
+// dragged header (cursor) meeting the canvas edge that arms a snap. This
+// also keeps full-height halves un-snappable by dragging mid-canvas, which
+// rect-based detection could never reach (their bottom edge always trips).
+const pointerOf = (e: unknown): Point => {
+  const m = e as Partial<MouseEvent> & {
+    touches?: Array<{ clientX: number; clientY: number }>
+  }
+  if (typeof m.clientX === 'number' && typeof m.clientY === 'number') {
+    return { x: m.clientX, y: m.clientY }
+  }
+  const t = m.touches?.[0]
+  return { x: t?.clientX ?? 0, y: t?.clientY ?? 0 }
 }
 
 export function DesktopWindow({
@@ -89,11 +107,14 @@ export function DesktopWindow({
   rect,
   front,
   maximized,
+  snapped,
   onSelect,
   onClose,
   onMinimize,
   onMaximize,
   onCommit,
+  onDragMove,
+  onDragEnd,
   children
 }: DesktopWindowProps): React.JSX.Element {
   const [previewDir, setPreviewDir] = useState<string | null>(null)
@@ -110,10 +131,10 @@ export function DesktopWindow({
       enableResizing={ALL_EIGHT}
       minWidth={320}
       minHeight={240}
-      // The 1100×900 ceiling is a USER-resize bound; a maximized window must
-      // render its full geometric span without being width/height-clamped.
-      maxWidth={maximized ? undefined : 1100}
-      maxHeight={maximized ? undefined : 900}
+      // The 1100×900 ceiling is a USER-resize bound; maximized and snapped
+      // windows render their full geometric span without width/height clamp.
+      maxWidth={maximized || snapped ? undefined : 1100}
+      maxHeight={maximized || snapped ? undefined : 900}
       onResizeStart={(_e, dir) => setPreviewDir(dir)}
       onResize={(_e, _dir, _ref, delta) =>
         setPreview({ w: rect.w + delta.width, h: rect.h + delta.height })
@@ -127,11 +148,16 @@ export function DesktopWindow({
         setPreview(null)
         onCommit({ x: position.x, y: position.y, w: clamped.w, h: clamped.h })
       }}
-      onDragStop={(_e, d) => onCommit({ x: d.x, y: d.y, w: rect.w, h: rect.h })}
+      onDragStop={(e, d) => {
+        const element = { x: d.x, y: d.y, w: rect.w, h: rect.h }
+        if (onDragEnd) onDragEnd(element, pointerOf(e))
+        else onCommit(element)
+      }}
+      onDrag={(e) => onDragMove?.(pointerOf(e))}
       style={{
         zIndex: front ? 10 : 1,
         background: 'var(--z-card-cream)',
-        borderRadius: maximized ? 0 : 14,
+        borderRadius: maximized || snapped ? 0 : 14,
         overflow: 'hidden',
         boxShadow: front ? '0 12px 32px rgba(0,0,0,.18)' : '0 6px 16px rgba(0,0,0,.10)'
       }}

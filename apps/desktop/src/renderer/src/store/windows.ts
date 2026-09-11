@@ -7,6 +7,12 @@ import {
   launchOrigins,
   type Rect
 } from '../../../shared/desktop-windows'
+import {
+  isSnapEntry,
+  snapRectFor,
+  type SnapEntry,
+  type SnapKind
+} from '../../../shared/desktop-snap'
 
 export type CanvasBounds = { w: number; h: number }
 
@@ -22,6 +28,7 @@ export type WindowsData = {
   zOrder: string[]
   minimized: string[]
   maximized: string[]
+  snapped: Record<string, SnapKind>
   selected: string
   rects: Record<string, Rect>
 }
@@ -33,6 +40,9 @@ export type WindowsState = WindowsData & {
   close: (route: string) => void
   minimize: (route: string) => void
   maximize: (route: string, bounds: CanvasBounds) => void
+  snap: (route: string, kind: SnapKind, bounds: CanvasBounds) => void
+  unsnap: (route: string) => void
+  hydrateSnaps: (entries: Record<string, SnapEntry>, bounds: CanvasBounds) => void
   refit: (bounds: CanvasBounds) => void
   commit: (route: string, rect: Rect) => void
 }
@@ -43,6 +53,7 @@ export function initialWindows(): WindowsData {
     zOrder: [...SEED_ROUTES],
     minimized: [],
     maximized: [],
+    snapped: {},
     selected: SEED_ROUTES[SEED_ROUTES.length - 1],
     rects: seedRects()
   }
@@ -51,6 +62,26 @@ export function initialWindows(): WindowsData {
 // Pre-maximize rects, one per route, module-level like the store itself:
 // maximized state is deliberately not persisted (Task 8 ruling).
 const resting: Record<string, Rect> = {}
+
+// Pre-snap rects, same discipline: the live snap kind lives in the store
+// (and in prefs for reload), the resting rect lives here beside it.
+const snapResting: Record<string, Rect> = {}
+
+export function getSnapEntry(route: string): SnapEntry | null {
+  const kind = useWindows.getState().snapped[route]
+  const preSnap = snapResting[route]
+  if (kind === undefined || preSnap === undefined) return null
+  return { kind, preSnap: { ...preSnap } }
+}
+
+export function getAllSnapEntries(): Record<string, SnapEntry> {
+  const out: Record<string, SnapEntry> = {}
+  for (const [route, kind] of Object.entries(useWindows.getState().snapped)) {
+    const preSnap = snapResting[route]
+    if (preSnap !== undefined) out[route] = { kind, preSnap: { ...preSnap } }
+  }
+  return out
+}
 
 const openWindowId = (
   id: string,
@@ -114,11 +145,16 @@ export const useWindows = create<WindowsState>((set, get) => ({
       const open = prev.open.filter((r) => r !== route)
       const zOrder = prev.zOrder.filter((r) => r !== route)
       const minimized = prev.minimized.filter((r) => r !== route)
+      const snapped = { ...prev.snapped }
+      delete snapped[route]
+      delete resting[route]
+      delete snapResting[route]
       return {
         open,
         zOrder,
         minimized,
         maximized: prev.maximized.filter((r) => r !== route),
+        snapped,
         selected:
           prev.selected === route ? fallbackSelection(route, zOrder, minimized) : prev.selected
       }
@@ -142,16 +178,72 @@ export const useWindows = create<WindowsState>((set, get) => ({
       set({ rects, maximized: prev.maximized.filter((r) => r !== route) })
       return
     }
+    // Maximizing a snapped window replaces the snap: the pre-snap rect
+    // becomes the pre-max rect, so un-maximize restores it exactly.
+    if (prev.snapped[route] !== undefined) {
+      const preSnap = snapResting[route]
+      if (preSnap) resting[route] = preSnap
+      delete snapResting[route]
+      const snapped = { ...prev.snapped }
+      delete snapped[route]
+      rects[route] = maximizedRect(bounds)
+      set({ rects, snapped, maximized: [...prev.maximized, route] })
+      return
+    }
     resting[route] = rects[route]
     rects[route] = maximizedRect(bounds)
     set({ rects, maximized: [...prev.maximized, route] })
   },
+  snap: (route, kind, bounds) => {
+    const prev = get()
+    const rects = { ...prev.rects }
+    const maximized = prev.maximized.filter((r) => r !== route)
+    // Snapping a maximized window replaces maximize: the pre-max rect
+    // becomes the pre-snap rect, so un-snap restores it exactly.
+    if (prev.maximized.includes(route)) {
+      const rest = resting[route]
+      snapResting[route] = rest ?? rects[route] ?? { ...DEFAULT_SIZE }
+      delete resting[route]
+    } else if (prev.snapped[route] === undefined) {
+      // Re-snapping keeps the ORIGINAL pre-snap rect, not the snap span.
+      snapResting[route] = rects[route] ?? { ...DEFAULT_SIZE }
+    }
+    rects[route] = snapRectFor(kind, bounds)
+    set({ rects, maximized, snapped: { ...prev.snapped, [route]: kind } })
+  },
+  unsnap: (route) => {
+    const prev = get()
+    if (prev.snapped[route] === undefined) return
+    const rects = { ...prev.rects }
+    const rest = snapResting[route]
+    if (rest) rects[route] = rest
+    delete snapResting[route]
+    const snapped = { ...prev.snapped }
+    delete snapped[route]
+    set({ rects, snapped })
+  },
+  hydrateSnaps: (entries, bounds) => {
+    const prev = get()
+    const rects = { ...prev.rects }
+    const snapped = { ...prev.snapped }
+    for (const [route, entry] of Object.entries(entries)) {
+      if (!isSnapEntry(entry)) continue
+      snapResting[route] = { ...entry.preSnap }
+      snapped[route] = entry.kind
+      rects[route] = snapRectFor(entry.kind, bounds)
+    }
+    set({ rects, snapped })
+  },
   refit: (bounds) => {
     const prev = get()
-    if (prev.maximized.length === 0) return
-    const rect = maximizedRect(bounds)
+    if (prev.maximized.length === 0 && Object.keys(prev.snapped).length === 0) return
     const rects = { ...prev.rects }
-    for (const route of prev.maximized) rects[route] = rect
+    // Snapped windows re-span from their kind, like maximized windows
+    // re-span geometrically — never from stored pixels.
+    for (const route of prev.maximized) rects[route] = maximizedRect(bounds)
+    for (const [route, kind] of Object.entries(prev.snapped)) {
+      if (!prev.maximized.includes(route)) rects[route] = snapRectFor(kind, bounds)
+    }
     set({ rects })
   },
   commit: (route, rect) => {
@@ -167,6 +259,15 @@ export const useWindows = create<WindowsState>((set, get) => ({
         rects: { ...prev.rects, [route]: committed },
         maximized: prev.maximized.filter((r) => r !== route)
       })
+      return
+    }
+    if (prev.snapped[route] !== undefined) {
+      // Resizing a snapped window is an explicit new normal: the snap and
+      // its resting rect go away, the clamped resize stays.
+      delete snapResting[route]
+      const snapped = { ...prev.snapped }
+      delete snapped[route]
+      set((cur) => ({ rects: { ...cur.rects, [route]: committed }, snapped }))
       return
     }
     set((cur) => ({ rects: { ...cur.rects, [route]: committed } }))

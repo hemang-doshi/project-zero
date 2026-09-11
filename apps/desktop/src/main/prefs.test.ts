@@ -75,6 +75,38 @@ describe('applyPrefsPatch', () => {
     expect(next.icons).toEqual({ 'icon-desk': { x: 4, y: 4 }, 'icon-runtime': { x: 9, y: 9 } })
     expect(next.windows.desk).toEqual(base.windows.desk)
   })
+  it('stores valid snap records (kind + pre-snap rect, never pixels)', () => {
+    const next = applyPrefsPatch(defaultPrefs(), {
+      snaps: { desk: { kind: 'left', preSnap: { x: 40, y: 50, w: 600, h: 500 } } }
+    })
+    expect(next.snaps.desk).toEqual({
+      kind: 'left',
+      preSnap: { x: 40, y: 50, w: 600, h: 500 }
+    })
+  })
+  it('drops malformed snap records fail-soft and keeps the good ones', () => {
+    const next = applyPrefsPatch(defaultPrefs(), {
+      snaps: {
+        good: { kind: 'right', preSnap: { x: 1, y: 2, w: 560, h: 480 } },
+        badKind: { kind: 'diagonal', preSnap: { x: 1, y: 2, w: 560, h: 480 } },
+        badRect: { kind: 'left', preSnap: { x: 1 } },
+        badShape: 5
+      }
+    })
+    expect(next.snaps).toEqual({
+      good: { kind: 'right', preSnap: { x: 1, y: 2, w: 560, h: 480 } }
+    })
+  })
+  it('a null snap entry deletes the key so un-snap erases with a merge patch', () => {
+    const base = defaultPrefs()
+    base.snaps = { desk: { kind: 'left', preSnap: { x: 1, y: 2, w: 560, h: 480 } } }
+    const next = applyPrefsPatch(base, { snaps: { desk: null } })
+    expect(next.snaps).toEqual({})
+  })
+  it('ignores a non-object snaps field', () => {
+    const next = applyPrefsPatch(defaultPrefs(), { snaps: [] })
+    expect(next.snaps).toEqual({})
+  })
 })
 
 describe('startupMigrate', () => {
@@ -129,5 +161,12 @@ describe('startupMigrate', () => {
     for (const s of samples) {
       expect(snapMain(s)).toEqual(snapRenderer(s))
     }
+  })
+  it('passes snap records through untouched and stamps the field when missing', () => {
+    const p = defaultPrefs()
+    p.snaps = { desk: { kind: 'left', preSnap: { x: 1, y: 2, w: 560, h: 480 } } }
+    expect(startupMigrate(p).snaps).toEqual(p.snaps)
+    const legacy = { ...defaultPrefs(), snaps: undefined as unknown as Prefs['snaps'] }
+    expect(startupMigrate(legacy).snaps).toEqual({})
   })
 })
