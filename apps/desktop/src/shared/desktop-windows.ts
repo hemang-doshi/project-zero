@@ -26,30 +26,6 @@ export const fallbackSelection = (
 export const DEFAULT_SIZE: Rect = { x: 0, y: 0, w: 560, h: 480 }
 export const LAYOUT_VERSION = 2
 
-export const CANONICAL_ROUTE_ORDER = [
-  'desk',
-  'runtime',
-  'network',
-  'flightRecorder',
-  'airlock',
-  'zeroBot',
-  'skillLab'
-] as const
-
-export type CanonicalRouteId = (typeof CANONICAL_ROUTE_ORDER)[number]
-
-export function canonicalOrderPositions<T>(
-  positions: Record<string, T>,
-  canonical: readonly string[]
-): Record<string, T> {
-  const out: Record<string, T> = {}
-  for (const key of canonical) if (key in positions) out[key] = positions[key]
-  for (const [key, value] of Object.entries(positions)) {
-    if (!canonical.includes(key)) out[key] = value
-  }
-  return out
-}
-
 export function migrateStackedOrigins(
   positions: Record<string, Point>,
   layoutVersion: number
@@ -61,21 +37,22 @@ export function migrateStackedOrigins(
   const collides = (a: Point, b: Point): boolean =>
     Math.abs(a.x - b.x) < tolerance && Math.abs(a.y - b.y) < tolerance
   const out: Record<string, Point> = {}
-  const occupied: Point[] = []
+  const kept: Point[] = []
+  const moved: Point[] = []
   let nextSlot = 0
   for (const [route, stored] of Object.entries(positions)) {
-    if (occupied.some((o) => collides(o, stored))) {
+    if (kept.some((k) => k.x === stored.x && k.y === stored.y)) {
       let candidate: Point = { x: inset + nextSlot * spacing, y: inset + nextSlot * spacing }
-      while (occupied.some((o) => collides(o, candidate))) {
+      while (moved.some((m) => collides(m, candidate))) {
         nextSlot++
         candidate = { x: inset + nextSlot * spacing, y: inset + nextSlot * spacing }
       }
       out[route] = candidate
-      occupied.push(candidate)
+      moved.push(candidate)
       nextSlot++
     } else {
       out[route] = stored
-      occupied.push(stored)
+      kept.push(stored)
     }
   }
   return { positions: out, layoutVersion: LAYOUT_VERSION }
