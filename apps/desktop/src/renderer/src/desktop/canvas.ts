@@ -1,6 +1,5 @@
-import type { CanonicalRouteId } from '../../../shared/desktop-windows'
-
-export type RouteId = CanonicalRouteId
+export type RouteId =
+  'desk' | 'runtime' | 'network' | 'flightRecorder' | 'airlock' | 'zeroBot' | 'skillLab'
 
 export const ROUTE_TITLES: Record<RouteId, string> = {
   desk: 'Desk',
@@ -35,32 +34,5 @@ export const previewTransform = (
   return {
     scale: { x: preview.w / committed.w, y: preview.h / committed.h },
     origin: transformOrigin(a)
-  }
-}
-export const networkInitialRect = (bounds: {
-  w: number
-  h: number
-}): { x: number; y: number; w: number; h: number } => {
-  const w = Math.max(320, Math.min(960, bounds.w - 48))
-  const h = Math.max(240, Math.min(760, bounds.h - 32))
-  return {
-    x: Math.max(0, Math.floor((bounds.w - w) / 2)),
-    y: Math.max(0, Math.floor((bounds.h - h) / 2)),
-    w,
-    h
-  }
-}
-
-export const workspaceInitialRect = (bounds: {
-  w: number
-  h: number
-}): { x: number; y: number; w: number; h: number } => {
-  const w = Math.max(320, Math.min(1100, bounds.w - 48))
-  const h = Math.max(240, Math.min(800, bounds.h - 32))
-  return {
-    x: Math.max(0, Math.floor((bounds.w - w) / 2)),
-    y: Math.max(0, Math.floor((bounds.h - h) / 2)),
-    w,
-    h
   }
 }
