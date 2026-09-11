@@ -12,7 +12,6 @@ import {
   harnessLockWarning,
   mirrorLabel,
   parseDiscovery,
-  pushBridgeEvent,
   visibleBridgeEvents,
   type BridgeEvent
 } from './runtime.types'
@@ -84,17 +83,15 @@ describe('bridge event surface', () => {
     )
   })
 
-  it('caps retained events at 100 and counts the honest drop', () => {
-    let events: BridgeEvent[] = []
-    let dropped = 0
-    for (let i = 0; i < 102; i++) {
-      const r = pushBridgeEvent(events, { harness: 'codex', method: `m${i}`, params: undefined })
-      events = r.events
-      dropped += r.dropped
-    }
-    expect(events).toHaveLength(100)
-    expect(events[0].method).toBe('m2')
-    expect(dropped).toBe(2)
+  it('caps retained events at 100 per harness with per-harness drop counters (chat.model)', async () => {
+    const { pushHarnessEvent, EMPTY_HARNESS_LOG, MAX_BRIDGE_EVENTS } = await import('./chat.model')
+    let log = EMPTY_HARNESS_LOG
+    for (let i = 0; i < 102; i++)
+      log = pushHarnessEvent(log, { harness: 'codex', method: `m${i}`, params: undefined })
+    expect(log.codex.events).toHaveLength(MAX_BRIDGE_EVENTS)
+    expect(log.codex.events[0].method).toBe('m2')
+    expect(log.codex.dropped).toBe(2)
+    expect(log.opencode.events).toHaveLength(0)
   })
 
   it('shows only the selected harness events under the strict harness lock', () => {

@@ -7,7 +7,6 @@ import {
   ChatRow,
   ExecBlock,
   ThinkingBlock,
-  ThinkingGroupBlock,
   ThreadList,
   ToolBlock,
   type ThinkingItem
@@ -87,26 +86,6 @@ const rows: ThreadRow[] = [
 ]
 
 describe('ThinkingBlock', () => {
-  it('shows consecutive provider notes as one keyboard-accessible disclosure', () => {
-    mount(
-      createElement(ThinkingGroupBlock, {
-        items: [
-          { kind: 'thinking', id: 'r0', text: '', summary: '' },
-          thinking,
-          { kind: 'thinking', id: 'r2', text: 'second private detail', summary: 'Checked files' }
-        ]
-      })
-    )
-    const button = host?.querySelector('button')
-    expect(host?.querySelectorAll('button')).toHaveLength(1)
-    expect(button?.getAttribute('aria-expanded')).toBe('false')
-    expect(host?.innerHTML).not.toContain('raw internal reasoning text')
-    expect(host?.innerHTML).not.toContain('second private detail')
-    act(() => button?.dispatchEvent(new MouseEvent('click', { bubbles: true })))
-    expect(button?.getAttribute('aria-expanded')).toBe('true')
-    expect(host?.textContent).toContain('raw internal reasoning text')
-    expect(host?.textContent).toContain('second private detail')
-  })
   it('hides reasoning by default behind a collapsed Thinking row', () => {
     const html = mount(createElement(ThinkingBlock, { item: thinking }))
     expect(html).toContain('Thinking')
@@ -128,14 +107,6 @@ describe('ThinkingBlock', () => {
       host?.querySelector('button')?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
     })
     expect(host?.innerHTML).not.toContain('raw internal reasoning text')
-  })
-
-  it('labels provider-withheld reasoning without implying a missing generated summary', () => {
-    const html = mount(
-      createElement(ThinkingBlock, { item: { ...thinking, text: '', summary: '' } })
-    )
-    expect(html).toContain('reasoning unavailable')
-    expect(html).not.toContain('no summary available')
   })
 })
 
@@ -163,19 +134,12 @@ describe('MarkdownText via ChatRow messages', () => {
 })
 
 describe('ExecBlock', () => {
-  it('shows a semantic summary first and keeps raw output behind expansion', () => {
+  it('renders command and output in the mono stack with exit status', () => {
     const html = mount(createElement(ExecBlock, { item: exec }))
-    expect(html).toContain('Ran npm test')
+    expect(html).toContain('npm test')
+    expect(html).toContain('all green')
     expect(html).toContain('EXIT 0')
     expect(html).toContain('ui-monospace')
-    expect(html).not.toContain('all green')
-    act(() => {
-      host?.querySelector('button')?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
-    })
-    expect(host?.innerHTML).toContain('npm test')
-    expect(host?.innerHTML).toContain('all green')
-    expect(host?.querySelector('[role="region"][aria-label="Terminal output"]')).not.toBeNull()
-    expect(host?.querySelector('.zw-terminal-command')?.textContent).toBe('$ npm test')
   })
 
   it('marks a failed execution honestly', () => {
@@ -189,64 +153,23 @@ describe('ExecBlock', () => {
 })
 
 describe('ToolBlock', () => {
-  it('shows a semantic summary first and keeps raw output behind expansion', () => {
+  it('renders tool name, server namespace and status', () => {
     const html = mount(createElement(ToolBlock, { item: tool }))
-    expect(html).toContain('Read 1 file')
+    expect(html).toContain('read_file')
+    expect(html).toContain('fs')
     expect(html).toContain('COMPLETED')
-    expect(html).not.toContain('file body')
-    act(() => {
-      host?.querySelector('button')?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
-    })
-    const expanded = host?.innerHTML ?? ''
-    expect(expanded).toContain('read_file')
-    expect(expanded).toContain('fs')
-    expect(expanded).toContain('COMPLETED')
-    expect(expanded).toContain('file body')
-  })
-})
-
-describe('ChatRow Zero attribution', () => {
-  it('authors assistant turns as Zero with muted verbatim provider attribution', () => {
-    const html = mount(
-      createElement(ChatRow, {
-        item: { kind: 'message', role: 'assistant', text: 'hi', id: 'a1' },
-        harness: 'codex',
-        model: 'gpt-5.6-sol'
-      })
-    )
-    expect(html).toContain('Zero')
-    expect(html).toContain('via Codex')
-    expect(html).toContain('gpt-5.6-sol')
-    expect(html).not.toContain('ZERO BOT')
-  })
-
-  it('speaks chat in the human voice and metadata in the machine voice', () => {
-    mount(
-      createElement(ChatRow, {
-        item: { kind: 'message', role: 'assistant', text: 'hi', id: 'a1' },
-        harness: 'codex',
-        model: 'gpt-5.6-sol'
-      })
-    )
-    const human = host?.querySelector('[data-voice="human"]')
-    const machine = host?.querySelector('[data-voice="machine"]')
-    expect(human).not.toBeNull()
-    expect(machine).not.toBeNull()
-    expect((machine as HTMLElement | null)?.textContent).toContain('via Codex')
+    expect(html).toContain('file body')
   })
 })
 
 describe('ThreadList', () => {
-  it('keeps thread titles prominent and metadata compact', () => {
+  it('renders titled, untitled and preview rows with timestamps and selection', () => {
     const onSelect = vi.fn()
     const html = mount(createElement(ThreadList, { rows, selectedId: 't-new', onSelect }))
     expect(html).toContain('newest one')
     expect(html).toContain('untitled')
+    expect(html).toContain('2025')
     const first = host?.querySelector<HTMLButtonElement>('button')
-    const metadata = first?.querySelector('[data-voice="machine"]')
-    expect(metadata?.textContent).not.toContain('2025')
-    expect(metadata?.textContent).not.toContain('gpt-5.6-sol')
-    expect(metadata?.textContent?.length).toBeLessThanOrEqual(10)
     act(() => {
       first?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
     })

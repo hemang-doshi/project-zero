@@ -135,6 +135,71 @@ describe('discovery ops', () => {
   })
 })
 
+describe('thread read ops', () => {
+  it('codex.threads lists threads via a bounded read-only thread/list probe', async () => {
+    const codex = fakeBridge('live')
+    const invoke = createDispatch(deps(), () => fakePair(codex, fakeBridge('disconnected')))
+    await expect(invoke('codex.threads')).resolves.toEqual({
+      harness: 'codex',
+      threads: [{ id: 't1', name: 'Thread one' }]
+    })
+    expect(codex.sends).toEqual([{ method: 'thread/list', params: { limit: 100 } }])
+  })
+
+  it('codex.threads rejects while not connected and sends nothing', async () => {
+    const codex = fakeBridge('disconnected')
+    const invoke = createDispatch(deps(), () => fakePair(codex, fakeBridge('disconnected')))
+    await expect(invoke('codex.threads')).rejects.toThrow('not connected')
+    expect(codex.sends).toEqual([])
+  })
+
+  it('codex.thread.get reads one transcript via thread/read with full turns', async () => {
+    const codex = fakeBridge('live')
+    const thread = {
+      id: 't1',
+      preview: 'hello',
+      createdAt: 42,
+      turns: [
+        {
+          id: 'turn1',
+          items: [{ id: 'i1', type: 'agentMessage', text: 'hi' }],
+          status: 'completed'
+        }
+      ]
+    }
+    const send = codex.send.bind(codex)
+    codex.send = (method, params) => {
+      codex.sends.push({ method, params: params ?? {} })
+      return method === 'thread/read' ? Promise.resolve({ thread }) : send(method, params)
+    }
+    const invoke = createDispatch(deps(), () => fakePair(codex, fakeBridge('disconnected')))
+    await expect(invoke('codex.thread.get', { threadId: 't1' })).resolves.toEqual({
+      harness: 'codex',
+      thread
+    })
+    expect(codex.sends).toEqual([
+      { method: 'thread/read', params: { threadId: 't1', includeTurns: true } }
+    ])
+  })
+
+  it('codex.thread.get rejects a malformed or empty threadId', async () => {
+    const codex = fakeBridge('live')
+    const invoke = createDispatch(deps(), () => fakePair(codex, fakeBridge('disconnected')))
+    await expect(invoke('codex.thread.get', undefined)).rejects.toThrow('Malformed thread payload')
+    await expect(invoke('codex.thread.get', { threadId: '' })).rejects.toThrow(
+      'Malformed thread payload'
+    )
+    expect(codex.sends).toEqual([])
+  })
+
+  it('codex.thread.get rejects while not connected and sends nothing', async () => {
+    const codex = fakeBridge('disconnected')
+    const invoke = createDispatch(deps(), () => fakePair(codex, fakeBridge('disconnected')))
+    await expect(invoke('codex.thread.get', { threadId: 't1' })).rejects.toThrow('not connected')
+    expect(codex.sends).toEqual([])
+  })
+})
+
 describe('send remains honestly blocked', () => {
   it.each(['codex.send', 'ocp.send'])('%s still throws the pinned block message', async (op) => {
     const invoke = createDispatch(deps(), () => fakePair(fakeBridge('live'), fakeBridge('live')))

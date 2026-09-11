@@ -5,7 +5,8 @@ import {
   validateOp,
   type CommandPayload,
   type ProjectPayload,
-  type TelemetrySample
+  type TelemetrySample,
+  type ThreadGetPayload
 } from '../shared/ipc'
 import { applyPrefsPatch, type Prefs } from './prefs'
 import { createBridgePair, type BridgeDeps, type HarnessId, type RpcEvent } from './bridges'
@@ -103,6 +104,24 @@ export function createDispatch(
     }
     return { harness: 'opencode', models: [], threads: [], note: OPENCODE_DISCOVERY_NOTE }
   }
+  const threads = async (): Promise<unknown> => {
+    const bridge = getBridgePair().codex
+    if (bridge.state !== 'live') throw new Error('not connected')
+    const result = await bridge.send('thread/list', { limit: 100 })
+    return { harness: 'codex', threads: listOf(result) }
+  }
+  const threadGet = async (payload: unknown): Promise<unknown> => {
+    const { threadId } = (payload ?? {}) as Partial<ThreadGetPayload>
+    if (typeof threadId !== 'string' || threadId === '') {
+      throw new Error('Malformed thread payload')
+    }
+    const bridge = getBridgePair().codex
+    if (bridge.state !== 'live') throw new Error('not connected')
+    const result = await bridge.send('thread/read', { threadId, includeTurns: true })
+    const root =
+      typeof result === 'object' && result !== null ? (result as Record<string, unknown>) : {}
+    return { harness: 'codex', thread: root['thread'] ?? null }
+  }
   return async (op: unknown, payload?: unknown): Promise<unknown> => {
     if (typeof op !== 'string' || !validateOp(op)) throw new Error('Unknown op')
     switch (op) {
@@ -125,6 +144,10 @@ export function createDispatch(
         return bridgeState('codex')
       case 'codex.discover':
         return discover('codex')
+      case 'codex.threads':
+        return threads()
+      case 'codex.thread.get':
+        return threadGet(payload)
       case 'ocp.connect':
         return getBridgePair().ocp.connect()
       case 'ocp.disconnect':

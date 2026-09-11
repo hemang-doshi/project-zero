@@ -1,5 +1,4 @@
 import type { Harness } from './runtime.types'
-import type { ProjectListItem } from '../../../shared/ipc'
 
 // Wire shapes are the Codex app-server ThreadItem variants (schema generated
 // from the pinned toolchain binary; see task-22-report.md for the schema
@@ -15,8 +14,6 @@ export type ThreadRow = {
   model: string | null
   provider: string
   status: string
-  projectId?: string | null
-  cwd?: string | null
 }
 
 export type ChatItem =
@@ -42,34 +39,6 @@ export type ChatItem =
     }
   | { kind: 'notice'; text: string; id: string }
 
-export type ThinkingGroup = {
-  kind: 'thinking-group'
-  id: string
-  items: Array<Extract<ChatItem, { kind: 'thinking' }>>
-}
-export type DisplayItem = Exclude<ChatItem, { kind: 'thinking' }> | ThinkingGroup
-
-export function groupVisibleItems(items: ChatItem[]): DisplayItem[] {
-  const display: DisplayItem[] = []
-  let reasoning: ThinkingGroup['items'] = []
-  const flush = (trailing: boolean): void => {
-    if (reasoning.length === 0) return
-    if (trailing || reasoning.some((item) => item.summary.trim() || item.text.trim())) {
-      display.push({ kind: 'thinking-group', id: `thinking:${reasoning[0]?.id}`, items: reasoning })
-    }
-    reasoning = []
-  }
-  for (const item of items) {
-    if (item.kind === 'thinking') reasoning.push(item)
-    else {
-      flush(false)
-      display.push(item)
-    }
-  }
-  flush(true)
-  return display
-}
-
 export const MAX_CHAT_ITEMS = 400
 
 type Rec = Record<string, unknown>
@@ -94,75 +63,11 @@ export function parseThreadRows(value: unknown): ThreadRow[] {
       recencyAt: isNum(r.recencyAt) ? r.recencyAt : null,
       model: isStr(r.model) ? r.model : null,
       provider: isStr(r.modelProvider) ? r.modelProvider : '',
-      status: isStr(r.status) ? r.status : '',
-      projectId: isStr(r.projectId) && r.projectId !== '' ? r.projectId : null,
-      cwd: isStr(r.cwd) && r.cwd !== '' ? r.cwd : null
+      status: isStr(r.status) ? r.status : ''
     })
   }
   rows.sort((a, b) => threadTimestamp(b) - threadTimestamp(a))
   return rows
-}
-
-export function groupThreadsByRegisteredProject(
-  projects: ProjectListItem[],
-  threads: ThreadRow[]
-): {
-  groups: Array<{ project: ProjectListItem; rows: ThreadRow[] }>
-  unprojected: ThreadRow[]
-} {
-  const groups = projects.map((project) => ({ project, rows: [] as ThreadRow[] }))
-  const byId = new Map(groups.map((group) => [group.project.id, group]))
-  const byPath = [...groups].sort((a, b) => b.project.path.length - a.project.path.length)
-  const unprojected: ThreadRow[] = []
-  for (const row of [...threads].sort((a, b) => threadTimestamp(b) - threadTimestamp(a))) {
-    const explicit = row.projectId ? byId.get(row.projectId) : undefined
-    const fromCwd = row.cwd
-      ? byPath.find(
-          ({ project }) => row.cwd === project.path || row.cwd?.startsWith(`${project.path}/`)
-        )
-      : undefined
-    const group = explicit ?? fromCwd
-    if (group) {
-      group.rows.push(row)
-    } else if (row.cwd) {
-      let providerGroup = groups.find(({ project }) => project.id === `cwd:${row.cwd}`)
-      if (!providerGroup) {
-        const parts = row.cwd.split('/').filter(Boolean)
-        providerGroup = {
-          project: { id: `cwd:${row.cwd}`, name: parts.at(-1) ?? row.cwd, path: row.cwd },
-          rows: []
-        }
-        groups.push(providerGroup)
-      }
-      providerGroup.rows.push(row)
-    } else unprojected.push(row)
-  }
-  return { groups, unprojected }
-}
-
-export function groupThreadsByFolder(
-  projectPath: string,
-  rows: ThreadRow[]
-): Array<{ path: string | null; label: string; rows: ThreadRow[] }> {
-  const byPath = new Map<string | null, { path: string | null; label: string; rows: ThreadRow[] }>()
-  for (const row of rows) {
-    const path = row.cwd ?? null
-    let group = byPath.get(path)
-    if (!group) {
-      const label =
-        path === null
-          ? 'Unknown folder'
-          : path === projectPath
-            ? 'Project root'
-            : path.startsWith(`${projectPath}/`)
-              ? path.slice(projectPath.length + 1)
-              : 'Linked folder'
-      group = { path, label, rows: [] }
-      byPath.set(path, group)
-    }
-    group.rows.push(row)
-  }
-  return [...byPath.values()]
 }
 
 export function threadTimestamp(row: ThreadRow): number {
@@ -351,34 +256,6 @@ export function mergeChatItem(items: ChatItem[], next: ChatItem): ChatItem[] {
   const merged = idx >= 0 ? items.map((i, n) => (n === idx ? next : i)) : [...items, next]
   if (merged.length <= MAX_CHAT_ITEMS) return merged
   return merged.slice(merged.length - MAX_CHAT_ITEMS)
-}
-
-// Merge a thread/read transcript under items that arrived live while the read
-// was in flight. Newest state per item id wins: a lane item with the same id
-// is kept as-is (the live event is newer evidence than the read snapshot) and
-// the read fills only the ids the lane does not have, in read order. Lane-only
-// items append after the read transcript (they arrived later). Bounded.
-export function mergeTranscript(
-  lane: ChatItem[],
-  read: ChatItem[]
-): { items: ChatItem[]; dropped: number } {
-  if (lane.length === 0) return { items: read, dropped: 0 }
-  const laneById = new Map<string, ChatItem>()
-  for (const item of lane) if (item.id !== '') laneById.set(item.id, item)
-  const readIds = new Set<string>()
-  const merged: ChatItem[] = []
-  for (const item of read) {
-    if (item.id !== '') readIds.add(item.id)
-    merged.push(laneById.get(item.id) ?? item)
-  }
-  for (const item of lane) {
-    if (item.id === '' || !readIds.has(item.id)) merged.push(item)
-  }
-  if (merged.length <= MAX_CHAT_ITEMS) return { items: merged, dropped: 0 }
-  return {
-    items: merged.slice(merged.length - MAX_CHAT_ITEMS),
-    dropped: merged.length - MAX_CHAT_ITEMS
-  }
 }
 
 const appendDelta = (current: string | null, delta: string): string =>
