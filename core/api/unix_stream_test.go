@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"projectzero.local/zero/core/runtime"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -90,6 +91,84 @@ func readCockpitEvent(t *testing.T, reader *bufio.Reader) (string, runtime.Updat
 		t.Fatalf("unexpected payload: %s", data)
 	}
 	return name, update
+}
+
+func TestCockpitStreamSharesEventBytesAcrossConnections(t *testing.T) {
+	r, _, socket := cockpitServer(t)
+	open := func() (net.Conn, *bufio.Reader) {
+		t.Helper()
+		conn, response := cockpitGET(t, socket, "/v0.1/cockpit/stream")
+		if response.StatusCode != 200 {
+			t.Fatal(response.Status)
+		}
+		reader := bufio.NewReader(response.Body)
+		if name, _ := readCockpitEvent(t, reader); name != "ready" {
+			t.Fatalf("expected ready, got %s", name)
+		}
+		return conn, reader
+	}
+	connA, readerA := open()
+	defer connA.Close()
+	connB, readerB := open()
+	defer connB.Close()
+	if _, err := r.Execute(context.Background(), "owner", runtime.Request{ID: "start", Op: "session.start", Body: json.RawMessage(`{"project":"Zero"}`)}); err != nil {
+		t.Fatal(err)
+	}
+	nameA, eventA := readCockpitEvent(t, readerA)
+	nameB, eventB := readCockpitEvent(t, readerB)
+	if nameA != "runtime.changed" || nameB != "runtime.changed" || !reflect.DeepEqual(eventA, eventB) {
+		t.Fatalf("%s %+v / %s %+v", nameA, eventA, nameB, eventB)
+	}
+}
+
+func TestCockpitSnapshotCacheReplaysBytesPerRevision(t *testing.T) {
+	r, _, socket := cockpitServer(t)
+	ctx := context.Background()
+	if _, err := r.Execute(ctx, "owner", runtime.Request{ID: "start", Op: "session.start", Body: json.RawMessage(`{"project":"Zero"}`)}); err != nil {
+		t.Fatal(err)
+	}
+	_, first := cockpitGET(t, socket, "/v0.1/cockpit")
+	defer first.Body.Close()
+	if first.Header.Get("Content-Type") != "application/json" {
+		t.Fatal(first.Header)
+	}
+	one, err := io.ReadAll(first.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(one) == 0 || one[len(one)-1] != '\n' {
+		t.Fatal("snapshot body lost the encoder's trailing newline")
+	}
+	_, replay := cockpitGET(t, socket, "/v0.1/cockpit")
+	defer replay.Body.Close()
+	two, err := io.ReadAll(replay.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(two) != string(one) {
+		t.Fatal("same-revision GET did not replay cached bytes")
+	}
+	if _, err = r.Execute(ctx, "owner", runtime.Request{ID: "state", Op: "state.set", Body: json.RawMessage(`{"key":"desk.cache","value":"invalidated"}`)}); err != nil {
+		t.Fatal(err)
+	}
+	_, third := cockpitGET(t, socket, "/v0.1/cockpit")
+	defer third.Body.Close()
+	three, err := io.ReadAll(third.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(three) == string(one) {
+		t.Fatal("new revision served stale cached bytes")
+	}
+	var value struct {
+		Revision uint64 `json:"revision"`
+	}
+	if err = json.Unmarshal(three, &value); err != nil {
+		t.Fatal(err)
+	}
+	if value.Revision != r.Updates.Revision() {
+		t.Fatalf("snapshot revision %d != runtime revision %d", value.Revision, r.Updates.Revision())
+	}
 }
 
 func TestCockpitStreamSendsCommittedSessionChange(t *testing.T) {
