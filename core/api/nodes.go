@@ -17,7 +17,10 @@ import (
 // pollDue reports whether a connection poll must run its full Known/Pending
 // work: any committed write advanced the revision, or the fallback interval
 // elapsed for Pending's time-based transitions (dispatch backoff, deadlines)
-// which need no writer.
+// which need no writer. Revocation always commits (nodes.revoke, re-enroll,
+// grants.set all publish), so a static revision also means no revocation;
+// lease-expiry is derived read-only state that never touches the revoked bit
+// Known reads, so it needs no poll either.
 func pollDue(lastRev, rev uint64, lastFull, now time.Time) bool {
 	return rev != lastRev || now.Sub(lastFull) >= time.Second
 }
@@ -128,6 +131,8 @@ func NewNodeHandler(r *runtime.Runtime) http.Handler {
 					// Known and Pending would repeat their last answer. The 1s
 					// fallback covers Pending's time-based transitions
 					// (dispatch backoff, deadlines) without any writer.
+					// Lease-expiry flips no Known answer (revoked bit only),
+					// so it is covered by the same reasoning.
 					if !pollDue(lastRev, rev, lastFull, now) {
 						continue
 					}
