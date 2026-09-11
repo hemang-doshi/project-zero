@@ -117,6 +117,56 @@ describe('Esp32DeskDisplay structure', () => {
     }
   })
 
+  it('renders the detail pass 2 (solder, silkscreen, power cluster, TFT mount, button trim)', async () => {
+    const el = await mount({ status: 'online' })
+    for (const name of [
+      'mounting-holes',
+      'solder-joints',
+      'regulator',
+      'capacitors',
+      'crystal',
+      'diode',
+      'diode-band',
+      'fuse',
+      'power-led',
+      'rgb-led',
+      'silkscreen',
+      'flex-ribbon',
+      'flex-connector',
+      'sd-slot',
+      'sd-card',
+      'bezel-screws',
+      'standoffs',
+      'boot-cap',
+      'en-cap',
+      'button-legends'
+    ]) {
+      expect(el.querySelector(`[name="${name}"]`), name).not.toBeNull()
+    }
+  })
+
+  it('instances repeated detail at the budgeted counts', async () => {
+    const el = await mount({ status: 'online' })
+    for (const [name, count] of [
+      ['solder-joints', '24'],
+      ['silkscreen', '10'],
+      ['capacitors', '5'],
+      ['mounting-holes', '4'],
+      ['bezel-screws', '4'],
+      ['standoffs', '4'],
+      ['button-legends', '2']
+    ] as Array<[string, string]>) {
+      expect(el.querySelector(`[name="${name}"]`)?.getAttribute('data-count'), name).toBe(count)
+    }
+  })
+
+  it('stays within the 120 draw-call budget (one call per mesh/instancedMesh)', async () => {
+    const el = await mount({ status: 'online' })
+    const draws = el.querySelectorAll('mesh, instancedMesh').length
+    expect(draws).toBeGreaterThan(50)
+    expect(draws).toBeLessThanOrEqual(120)
+  })
+
   it('stands on the y=0 plane (contact shadow at ground level)', async () => {
     const el = await mount({ status: 'online' })
     expect(el.querySelector('[name="base-shadow"]')).not.toBeNull()
@@ -165,5 +215,19 @@ describe('Esp32DeskDisplay dimmed', () => {
     const dimPcb = materialOf(dim, 'esp32-pcb-material')
     expect(dimScreen?.getAttribute('emissiveintensity')).toBe('0.05')
     expect(dimPcb?.getAttribute('opacity')).toBe('0.35')
+  })
+
+  it('dims the power and RGB LEDs when dimmed', async () => {
+    const lit = await mount({ status: 'online' })
+    expect(materialOf(lit, 'esp32-power-material')?.getAttribute('emissiveintensity')).toBe('1.4')
+    expect(materialOf(lit, 'esp32-rgb-material')?.getAttribute('emissiveintensity')).toBe('1')
+
+    await act(async () => {
+      root?.unmount()
+    })
+    host?.remove()
+    const dim = await mount({ status: 'online', dimmed: true })
+    expect(materialOf(dim, 'esp32-power-material')?.getAttribute('emissiveintensity')).toBe('0.12')
+    expect(materialOf(dim, 'esp32-rgb-material')?.getAttribute('emissiveintensity')).toBe('0.1')
   })
 })
