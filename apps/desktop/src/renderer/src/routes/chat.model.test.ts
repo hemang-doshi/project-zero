@@ -4,6 +4,7 @@ import {
   MAX_BRIDGE_EVENTS,
   applyBridgeEvent,
   mergeChatItem,
+  mergeTranscript,
   parseThreadRows,
   parseTranscript,
   pushHarnessEvent,
@@ -271,6 +272,57 @@ describe('mergeChatItem', () => {
       id: 'e1'
     })
     expect(appended).toHaveLength(3)
+  })
+})
+
+describe('mergeTranscript (read-vs-live race)', () => {
+  it('keeps live lane state per id and fills only the ids the read uniquely has', () => {
+    const lane: ChatItem[] = [
+      { kind: 'message', role: 'user', text: 'q', id: 'u1' },
+      { kind: 'message', role: 'assistant', text: 'live partial', id: 'a1' },
+      { kind: 'message', role: 'assistant', text: 'live only', id: 'a2' }
+    ]
+    const read: ChatItem[] = [
+      { kind: 'message', role: 'user', text: 'q', id: 'u1' },
+      { kind: 'message', role: 'assistant', text: 'read full', id: 'a1' },
+      {
+        kind: 'exec',
+        command: 'ls',
+        cwd: '.',
+        output: null,
+        exitCode: null,
+        status: 'completed',
+        id: 'e1'
+      }
+    ]
+    const { items: merged } = mergeTranscript(lane, read)
+    expect(merged.map((i) => i.id)).toEqual(['u1', 'a1', 'e1', 'a2'])
+    expect(merged[1]).toMatchObject({ kind: 'message', text: 'live partial' })
+    expect(merged[2]).toMatchObject({ kind: 'exec' })
+    expect(merged[3]).toMatchObject({ kind: 'message', text: 'live only' })
+  })
+
+  it('returns the read transcript unchanged when the lane is empty', () => {
+    const read: ChatItem[] = [{ kind: 'message', role: 'user', text: 'q', id: 'u1' }]
+    expect(mergeTranscript([], read)).toEqual({ items: read, dropped: 0 })
+  })
+
+  it('returns the lane unchanged when the read is empty', () => {
+    const lane: ChatItem[] = [{ kind: 'message', role: 'user', text: 'q', id: 'u1' }]
+    expect(mergeTranscript(lane, [])).toEqual({ items: lane, dropped: 0 })
+  })
+
+  it('is bounded with an honest dropped count over the merged result', () => {
+    const lane: ChatItem[] = Array.from({ length: MAX_CHAT_ITEMS + 5 }, (_, i) => ({
+      kind: 'message',
+      role: 'assistant',
+      text: `live ${i}`,
+      id: `l${i}`
+    }))
+    const merged = mergeTranscript(lane, [])
+    expect(merged.items).toHaveLength(MAX_CHAT_ITEMS)
+    expect(merged.dropped).toBe(5)
+    expect((merged.items[0] as Extract<ChatItem, { kind: 'message' }>).text).toBe('live 5')
   })
 })
 
