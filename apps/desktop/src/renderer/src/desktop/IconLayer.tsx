@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react'
-import { ICON_H, ICON_W, iconGridPos, type DesktopIcon } from './items'
-import { DesktopGlyph } from './icons'
+import { ICON_H, ICON_W, fileById, iconGridPos, snapIconToGrid, type DesktopIcon } from './items'
+import { FileGlyph, RouteGlyph } from './icons'
 import { ZERO_TOKENS } from '../../../shared/tokens'
 
 export type IconLayerProps = {
@@ -73,6 +73,18 @@ const dotStyle: React.CSSProperties = {
   background: 'var(--z-status-green)'
 }
 
+// Files are documents, not applications: the folded-corner paper glyph draws
+// its own shape, so the face stays transparent — never the sculpted app tile.
+const fileFaceStyle: React.CSSProperties = {
+  position: 'relative',
+  width: 52,
+  height: 52,
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  filter: 'drop-shadow(0 3px 4px rgba(0,0,0,.18))'
+}
+
 const labelStyle: React.CSSProperties = {
   fontSize: 11,
   lineHeight: 1.2,
@@ -81,7 +93,9 @@ const labelStyle: React.CSSProperties = {
   maxWidth: ICON_W,
   overflow: 'hidden',
   textOverflow: 'ellipsis',
-  whiteSpace: 'nowrap'
+  whiteSpace: 'nowrap',
+  // Subtle cream glow keeps labels readable over wallpaper without a box.
+  textShadow: '0 1px 2px var(--z-card-cream), 0 0 8px var(--z-card-cream)'
 }
 
 export function IconLayer({
@@ -103,10 +117,12 @@ export function IconLayer({
       {icons.map((icon) => {
         const pos = posOf(icon)
         const running = icon.kind === 'route' && openRoutes.includes(icon.route ?? '')
+        const isFile = icon.kind === 'file'
         return (
           <div
             key={icon.id}
             className="zw-icon"
+            data-kind={icon.kind}
             data-route={icon.route}
             data-file={icon.file}
             data-running={running ? 'true' : undefined}
@@ -124,7 +140,7 @@ export function IconLayer({
                 y: p.y,
                 moved: false
               }
-              e.currentTarget.setPointerCapture(e.pointerId)
+              e.currentTarget.setPointerCapture?.(e.pointerId)
             }}
             onPointerMove={(e) => {
               const d = drag.current
@@ -133,8 +149,11 @@ export function IconLayer({
               const dy = e.clientY - d.py
               if (Math.abs(dx) > 3 || Math.abs(dy) > 3) d.moved = true
               if (d.moved) {
-                d.x = d.ox + dx
-                d.y = d.oy + dy
+                // The live preview already shows the snapped slot; the drop
+                // commits exactly what the user sees.
+                const slot = snapIconToGrid({ x: d.ox + dx, y: d.oy + dy })
+                d.x = slot.x
+                d.y = slot.y
                 setLive((prev) => ({ ...prev, [icon.id]: { x: d.x, y: d.y } }))
               }
             }}
@@ -144,7 +163,9 @@ export function IconLayer({
               drag.current = null
               if (d.moved) {
                 lastDragAt.current = Date.now()
-                onCommitPos(icon.id, d.x, d.y)
+                // Commit-on-drop only: nothing persists mid-drag.
+                const slot = snapIconToGrid({ x: d.x, y: d.y })
+                onCommitPos(icon.id, slot.x, slot.y)
               }
               setLive((prev) => {
                 const next = { ...prev }
@@ -158,10 +179,16 @@ export function IconLayer({
             }}
           >
             <div style={tileStyle}>
-              <div style={faceStyle}>
-                <DesktopGlyph route={icon.route} file={icon.file} size={30} />
-                {running ? <span data-dot="true" style={dotStyle} /> : null}
-              </div>
+              {isFile ? (
+                <div style={fileFaceStyle}>
+                  <FileGlyph ext={fileById(icon.file ?? '')?.ext ?? 'txt'} size={46} />
+                </div>
+              ) : (
+                <div style={faceStyle}>
+                  <RouteGlyph route={icon.route ?? ''} size={30} />
+                  {running ? <span data-dot="true" style={dotStyle} /> : null}
+                </div>
+              )}
               <span style={labelStyle}>{icon.label}</span>
             </div>
           </div>

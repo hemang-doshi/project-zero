@@ -124,5 +124,30 @@ export function startupMigrate(prefs: Prefs): Prefs {
     const origin = migrated.positions[route]
     windows[route] = origin ? { ...rect, x: origin.x, y: origin.y } : rect
   }
-  return { ...prefs, windows, layoutVersion: migrated.layoutVersion }
+  // One-way icon migration: free-placed positions from before grid snap round
+  // to their nearest slot on load. Geometry must match the renderer seed grid
+  // in renderer/src/desktop/items.ts (origin 24,28; pitch 88x96) — pinned by
+  // the grid-parity test in prefs.test.ts, so this never becomes a second grid.
+  const icons: Prefs['icons'] = {}
+  for (const [id, pos] of Object.entries(prefs.icons ?? {})) {
+    icons[id] = snapIconToGrid(pos)
+  }
+  return { ...prefs, windows, icons, layoutVersion: migrated.layoutVersion }
+}
+
+// Canonical desktop icon slot math (renderer items.ts is the source of truth;
+// this mirror exists because the main process must migrate before any window
+// loads — the grid-parity test pins them identical).
+export const ICON_GRID_ORIGIN = { x: 24, y: 28 }
+export const ICON_GRID_STEP = { x: 88, y: 96 }
+
+export function snapIconToGrid(p: Point): Point {
+  return {
+    x:
+      ICON_GRID_ORIGIN.x +
+      Math.round((p.x - ICON_GRID_ORIGIN.x) / ICON_GRID_STEP.x) * ICON_GRID_STEP.x,
+    y:
+      ICON_GRID_ORIGIN.y +
+      Math.round((p.y - ICON_GRID_ORIGIN.y) / ICON_GRID_STEP.y) * ICON_GRID_STEP.y
+  }
 }
