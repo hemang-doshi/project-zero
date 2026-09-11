@@ -198,13 +198,12 @@ describe('desk scene graph', () => {
     expect(host?.position).toEqual(DESK_LAYOUT.macbook)
   })
 
-  it('suffixes the host label with the hostname when the snapshot carries one', () => {
-    const bare = buildSceneGraph([], LIVE)
-    expect(bare.nodes.find((n) => n.id === HOST_NODE_ID)?.label).toBe('M4 MacBook Air')
-    const named = buildSceneGraph([], LIVE, 'hemangs-macbook-air')
-    expect(named.nodes.find((n) => n.id === HOST_NODE_ID)?.label).toBe(
-      'M4 MacBook Air · hemangs-macbook-air'
-    )
+  it('labels the host with the bare product label (no hostname in the snapshot)', () => {
+    // The snapshot exposes no hostname (session carries id/project only), so
+    // there is no suffix plumbing: the host is always exactly HOST_LABEL.
+    const graph = buildSceneGraph([], LIVE)
+    expect(graph.nodes.find((n) => n.id === HOST_NODE_ID)?.label).toBe('M4 MacBook Air')
+    expect(graph.nodes.find((n) => n.id === HOST_NODE_ID)?.label).toBe(HOST_LABEL)
   })
 
   it('maps the real fixture shape: host MacBook, monitor display, ESP32 display', () => {

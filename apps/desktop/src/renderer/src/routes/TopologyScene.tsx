@@ -1,5 +1,5 @@
 /* eslint-disable react/no-unknown-property -- R3F three intrinsics (position, rotation, scale, args, geometry, material, …) that the DOM property allowlist cannot know. Scoped to this scene file only. */
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import * as THREE from 'three'
 import { Canvas, useFrame, useThree, type ThreeEvent } from '@react-three/fiber'
 import { Html, OrbitControls } from '@react-three/drei'
@@ -42,27 +42,6 @@ import MousePad, { MODEL_FOOTPRINT as MOUSEPAD_FOOTPRINT } from './models/MouseP
 // attempted here. Probe lives in topology.model.ts (pure module) so this
 // file exports only the component.
 
-// Atmospheric runtime ring glow: a slow breathing alpha around the torus.
-// Kept per the earlier explicit owner ask (not rescinded): the ring reads as
-// the ZERO RUNTIME LAYER hovering above the physical desk.
-const RING_VERTEX = /* glsl */ `
-  varying vec2 vUv;
-  void main() {
-    vUv = uv;
-    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-  }
-`
-
-const RING_FRAGMENT = /* glsl */ `
-  uniform vec3 uColor;
-  uniform float uTime;
-  varying vec2 vUv;
-  void main() {
-    float breathe = 0.28 + 0.12 * sin(uTime * 1.2 + vUv.x * 6.2831);
-    gl_FragColor = vec4(uColor, breathe);
-  }
-`
-
 // Baked contact shadow: a radial-gradient alpha blob on a plane under each
 // device. Chosen over drei ContactShadows (which costs an extra depth render
 // pass per frame) — this is one transparent quad per device, zero passes.
@@ -83,8 +62,6 @@ const BLOB_FRAGMENT = /* glsl */ `
   }
 `
 
-const RING_RADIUS = 8.8
-const RING_Y = 1.4
 const INTRO_FROM = new THREE.Vector3(0, 4.6, 16.5)
 const INTRO_SECONDS = 1.2
 
@@ -117,40 +94,22 @@ function CameraRig({ suppressed }: { suppressed: boolean }): null {
   return null
 }
 
-export type PointerActivity = { lastMove: number }
-
 // Demand-mode pump: with frameloop="demand" nothing renders unless something
-// invalidates. This ticks at ~4fps ONLY while the intro is running, the
-// pointer recently moved (ring tilt chase), or a flow animates — and only
-// while the tab is visible. The interval itself is ~free when idle: it
-// returns without invalidating, so no frame renders. onTick lets the runtime
-// ring lerp its pointer tilt on these same ticks — no second loop. Cleared
+// invalidates. This ticks at ~4fps ONLY while the intro is running or a flow
+// animates — and only while the tab is visible. The interval itself is ~free
+// when idle: it returns without invalidating, so no frame renders. Cleared
 // on unmount with the window lifecycle.
-function Ticker({
-  animated,
-  activity,
-  onTick
-}: {
-  animated: boolean
-  activity: { current: PointerActivity }
-  onTick?: () => void
-}): null {
+function Ticker({ animated }: { animated: boolean }): null {
   const invalidate = useThree((s) => s.invalidate)
-  const tickRef = useRef(onTick)
-  useEffect(() => {
-    tickRef.current = onTick
-  })
   useEffect(() => {
     const startedAt = Date.now()
     const id = window.setInterval(() => {
-      const idleMs = Date.now() - activity.current.lastMove
-      if (Date.now() - startedAt >= 1300 && !animated && idleMs >= 1500) return
+      if (Date.now() - startedAt >= 1300 && !animated) return
       if (document.visibilityState !== 'visible') return
-      tickRef.current?.()
       invalidate()
     }, 250)
     return () => window.clearInterval(id)
-  }, [animated, activity, invalidate])
+  }, [animated, invalidate])
   return null
 }
 
@@ -276,54 +235,6 @@ function FocusController({
     }
   })
   return null
-}
-
-// The Zero runtime layer: a large thin atmospheric torus encircling the whole
-// desk with a breathing shader glow. The damped pointer tilt arrives as a
-// plain rotation prop lerped by the owner on the existing ticker ticks — no
-// new loop, no per-frame React state. The label rides the ring edge.
-function RuntimeRing({ tilt }: { tilt: { x: number; z: number } }): React.JSX.Element {
-  // Breathing glow handle: the only thing advance() mutates is the uniform
-  // object created inside this same memo. React state never moves per frame;
-  // useFrame only calls the handle.
-  const glow = useMemo(() => {
-    const mat = new THREE.ShaderMaterial({
-      uniforms: {
-        uColor: { value: new THREE.Color(ZERO_TOKENS.brandOrange) },
-        uTime: { value: 0 }
-      },
-      vertexShader: RING_VERTEX,
-      fragmentShader: RING_FRAGMENT,
-      transparent: true,
-      depthWrite: false
-    })
-    return {
-      material: mat,
-      advance: (delta: number): void => {
-        const ringTime = mat.uniforms.uTime as THREE.IUniform<number>
-        ringTime.value += delta
-      },
-      dispose: (): void => {
-        mat.dispose()
-      }
-    }
-  }, [])
-  useEffect(() => () => glow.dispose(), [glow])
-  useFrame((_, delta) => {
-    glow.advance(delta)
-  })
-  return (
-    <group rotation={[tilt.x, 0, tilt.z]} position={[0, RING_Y, 0]} data-testid="runtime-ring">
-      <mesh rotation={[-Math.PI / 2, 0, 0]} material={glow.material}>
-        <torusGeometry args={[RING_RADIUS, 0.03, 8, 128]} />
-      </mesh>
-      <group position={[RING_RADIUS * 0.8, 0.6, 0]}>
-        <Html center distanceFactor={14}>
-          <div style={ringLabelStyle}>ZERO RUNTIME LAYER</div>
-        </Html>
-      </group>
-    </group>
-  )
 }
 
 // Desk furniture: wood-tone neutral surface (canvasTan token), legs, the
@@ -456,7 +367,7 @@ function JumperMesh({ wire }: { wire: JumperWire }): React.JSX.Element {
 
 const labelStyle: React.CSSProperties = {
   fontFamily: ZERO_TYPE.mono,
-  fontSize: 10,
+  fontSize: 8,
   fontWeight: 700,
   letterSpacing: '0.06em',
   color: 'var(--z-ink)',
@@ -470,15 +381,6 @@ const labelStyle: React.CSSProperties = {
 const gatedStyle: React.CSSProperties = {
   ...labelStyle,
   color: 'var(--z-secondary-ink)'
-}
-
-const ringLabelStyle: React.CSSProperties = {
-  fontFamily: ZERO_TYPE.mono,
-  fontSize: 9,
-  fontWeight: 700,
-  letterSpacing: '0.14em',
-  color: 'var(--z-secondary-ink)',
-  whiteSpace: 'nowrap'
 }
 
 const detailStyle: React.CSSProperties = {
@@ -576,6 +478,7 @@ type MeshProps = {
   selected: boolean
   hovered: boolean
   focused: boolean
+  labelsHidden: boolean
   onHover: (id: string | null) => void
   onSelect: (id: string) => void
   onFocus: (id: string) => void
@@ -586,6 +489,7 @@ function SceneNodeMesh({
   selected,
   hovered,
   focused,
+  labelsHidden,
   onHover,
   onSelect,
   onFocus
@@ -647,7 +551,9 @@ function SceneNodeMesh({
           </Html>
         </group>
       ) : null}
-      <NodeLabel node={node} y={node.gated ? top + 0.45 : top + 0.35} />
+      {/* Per-node titles vanish in focus/close-up view (the focus detail
+          panel carries the title); the GATED badge stays as status. */}
+      {labelsHidden ? null : <NodeLabel node={node} y={node.gated ? top + 0.45 : top + 0.35} />}
     </group>
   )
 }
@@ -693,9 +599,6 @@ export const TopologyScene = memo(function TopologyScene({
   const [hoveredId, setHoveredId] = useState<string | null>(null)
   const [focus, setFocus] = useState<FocusState>({ focusedId: null })
   const [focusNonce, setFocusNonce] = useState(0)
-  const [ringTilt, setRingTilt] = useState({ x: 0, z: 0 })
-  const pointer = useRef({ x: 0, y: 0 })
-  const activity = useRef<PointerActivity>({ lastMove: 0 })
   const cables = useMemo(() => buildDeskCables(), [])
   const jumpers = useMemo(() => buildJumperWires(), [])
   const dots = useMemo(() => breadboardDots(), [])
@@ -710,16 +613,6 @@ export const TopologyScene = memo(function TopologyScene({
     []
   )
   useEffect(() => () => blobMat.dispose(), [blobMat])
-  // Damped ring tilt toward the pointer, evaluated on the existing 4fps flow
-  // ticker only (see Ticker onTick) — no second loop, no per-frame state.
-  const tickRing = useCallback(() => {
-    const p = pointer.current
-    setRingTilt((t) => {
-      const nx = t.x + (p.y * 0.22 - t.x) * 0.35
-      const nz = t.z + (-p.x * 0.22 - t.z) * 0.35
-      return Math.abs(nx - t.x) < 1e-4 && Math.abs(nz - t.z) < 1e-4 ? t : { x: nx, z: nz }
-    })
-  }, [])
   const available = useMemo(() => isWebGL2Available(), [])
   const hasGated = useMemo(() => graph.nodes.some((n) => n.gated), [graph])
   const byId = useMemo(() => new Map(graph.nodes.map((n) => [n.id, n])), [graph])
@@ -770,20 +663,7 @@ export const TopologyScene = memo(function TopologyScene({
   }
   const footprint = activeFocused !== null ? FOOTPRINT_FOR[activeFocused.kind] : null
   return (
-    <div
-      data-testid="topology-scene"
-      style={sceneWrap}
-      onPointerMove={(e) => {
-        activity.current.lastMove = Date.now()
-        const r = e.currentTarget.getBoundingClientRect()
-        if (r.width > 0 && r.height > 0) {
-          pointer.current = {
-            x: ((e.clientX - r.left) / r.width) * 2 - 1,
-            y: -(((e.clientY - r.top) / r.height) * 2 - 1)
-          }
-        }
-      }}
-    >
+    <div data-testid="topology-scene" style={sceneWrap}>
       <Canvas
         frameloop={SCENE_FRAMELOOP}
         dpr={[1, 2]}
@@ -802,7 +682,7 @@ export const TopologyScene = memo(function TopologyScene({
         <directionalLight position={[4, 6, 6]} intensity={1.1} />
         <directionalLight position={[-5, 3, -2]} intensity={0.25} />
         <CameraRig suppressed={focusNonce > 0} />
-        <Ticker animated={false} activity={activity} onTick={tickRing} />
+        <Ticker animated={false} />
         <Invalidator graph={graph} selectedId={selectedId} focusedId={focus.focusedId} />
         <FocusController viewKey={viewKey} view={view} />
         <DeskFurniture dots={dots} />
@@ -812,7 +692,6 @@ export const TopologyScene = memo(function TopologyScene({
         {jumpers.map((w) => (
           <JumperMesh key={w.id} wire={w} />
         ))}
-        <RuntimeRing tilt={ringTilt} />
         {graph.nodes.map((n) => (
           <group key={`shadow-${n.id}`}>
             <mesh
@@ -830,6 +709,7 @@ export const TopologyScene = memo(function TopologyScene({
               selected={selectedId === n.id}
               hovered={hoveredId === n.id}
               focused={activeFocused?.id === n.id}
+              labelsHidden={activeFocused !== null}
               onHover={setHoveredId}
               onSelect={onSelect}
               onFocus={requestFocus}
