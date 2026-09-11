@@ -6,6 +6,7 @@ import { CockpitModel } from './cockpit-model'
 import { fetchSnapshot, openStream, postCommand } from './socket'
 import { registerIpcHandlers, attachCockpitPush, attachBridgePush, bridgePair } from './ipc'
 import { PrefsStore, startupMigrate } from './prefs'
+import { createTray } from './tray'
 
 const appSupport = join(process.env.HOME ?? '', 'Library', 'Application Support', 'ProjectZero')
 const socketPath = join(appSupport, 'zero.sock')
@@ -38,7 +39,7 @@ const serveWallpaperImage = (request: Request): Response | Promise<Response> => 
   }
 }
 
-function createWindow(): void {
+function createWindow(model: CockpitModel): void {
   const mainWindow = new BrowserWindow({
     width: 900,
     height: 670,
@@ -50,18 +51,9 @@ function createWindow(): void {
     }
   })
 
-  const model = new CockpitModel(socketPath, fetchSnapshot, openStream, {
-    reconnectDelayMs: 1_000,
-    maxSnapshotAgeMs: 5_000,
-    schedule: (fn, ms) => {
-      const id = setTimeout(fn, ms)
-      return () => clearTimeout(id)
-    }
-  })
+  // One app-lifetime model: windows attach pushes, the tray subscribes.
   attachCockpitPush(model, mainWindow)
   attachBridgePush(bridgePair(), mainWindow)
-  model.start()
-  mainWindow.on('closed', () => model.stop())
 
   mainWindow.on('ready-to-show', () => {
     mainWindow.show()
@@ -84,10 +76,34 @@ app.whenReady().then(() => {
   const store = new PrefsStore(prefsStoreDir)
   store.save(startupMigrate(store.load()))
   registerIpcHandlers({ socketPath, fetchSnapshot, postCommand, store, pickImage })
-  createWindow()
+
+  // One app-lifetime CockpitModel shared by window pushes and the tray
+  // companion — no second model, no second stream.
+  const model = new CockpitModel(socketPath, fetchSnapshot, openStream, {
+    reconnectDelayMs: 1_000,
+    maxSnapshotAgeMs: 5_000,
+    schedule: (fn, ms) => {
+      const id = setTimeout(fn, ms)
+      return () => clearTimeout(id)
+    }
+  })
+  model.start()
+
+  const openDesktop = (): void => {
+    const win = BrowserWindow.getAllWindows()[0]
+    if (win === undefined) {
+      createWindow(model)
+      return
+    }
+    if (win.isMinimized()) win.restore()
+    win.show()
+    win.focus()
+  }
+  createTray(model, { openDesktop, quit: () => app.quit() })
+  createWindow(model)
 
   app.on('activate', function () {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow()
+    if (BrowserWindow.getAllWindows().length === 0) createWindow(model)
   })
 })
 

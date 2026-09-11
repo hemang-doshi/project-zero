@@ -4,24 +4,12 @@ import type { SSEEvent } from '../shared/protocol'
 import { CockpitModel } from './cockpit-model'
 import type { ModelUpdate } from './cockpit-model'
 import {
-  __images,
-  __resetImages,
-  __resetTray,
-  __setEmpty,
-  Menu,
-  Tray
-} from '../../__mocks__/electron'
-import {
-  createTray,
   trayDetailLine,
   trayFocusLine,
-  trayIcon,
   trayMenuItems,
   trayStatusLabel,
   type TrayActions
 } from './tray'
-
-vi.mock('electron')
 
 const LIVE: ModelUpdate = {
   snapshot: null,
@@ -208,27 +196,6 @@ describe('trayMenuItems', () => {
   })
 })
 
-describe('trayIcon', () => {
-  it('builds the template icon from build assets with a 2x retina representation', () => {
-    __resetImages()
-    trayIcon()
-    expect(__images).toHaveLength(1)
-    expect(__images[0].path).toContain('trayTemplate.png')
-    expect(__images[0].reps).toEqual([{ scaleFactor: 2, buffer: expect.any(Buffer) }])
-    expect(__images[0].template).toBe(true)
-  })
-
-  it('falls back to the token-colored non-template icon when the template is unavailable', () => {
-    __resetImages()
-    __setEmpty('trayTemplate')
-    trayIcon()
-    expect(__images).toHaveLength(2)
-    expect(__images[1].path).toContain('trayOrange.png')
-    expect(__images[1].reps).toEqual([{ scaleFactor: 2, buffer: expect.any(Buffer) }])
-    expect(__images[1].template).toBe(false)
-  })
-})
-
 type StreamCtl = { emit: (e: SSEEvent) => void; end: (err?: Error) => void }
 type FetchSlot = { resolve: (v: unknown) => void }
 type ModelHarness = {
@@ -262,11 +229,6 @@ function harness(): ModelHarness {
 const ready = (): SSEEvent => ({
   name: 'ready',
   data: JSON.stringify({ revision: 1, domains: [], timestamp: 't' })
-})
-
-const changed = (rev = 2): SSEEvent => ({
-  name: 'runtime.changed',
-  data: JSON.stringify({ revision: rev, domains: ['spotify'], timestamp: 't' })
 })
 
 describe('tray with the real cockpit model (no daemon contact)', () => {
@@ -320,91 +282,5 @@ describe('tray with the real cockpit model (no daemon contact)', () => {
     await vi.waitFor(() => expect(h.updates.at(-1)?.state).toBe('offline'))
     const items = trayMenuItems(h.updates.at(-1)!, 999_000, asTrayActions(actions()))
     expect(items[0].label).toBe('Runtime offline')
-  })
-})
-
-// Rebuild gating: setContextMenu is skipped whenever the rendered labels are
-// unchanged (the 1 s tick and redundant model pushes must not churn the
-// NSMenu plumbing).
-const flush = async (): Promise<void> => {
-  for (let i = 0; i < 10; i++) await Promise.resolve()
-}
-
-describe('createTray rebuild gating', () => {
-  const idleSnapshot = (): unknown =>
-    withSnapshot({
-      session: { ...LIVE_SNAPSHOT.session, state: 'IDLE' },
-      invocations: [],
-      approvals: [],
-      firings: [],
-      truncated: {}
-    }).snapshot
-
-  it('skips setContextMenu for pushes and ticks with unchanged labels', async () => {
-    __resetImages()
-    __resetTray()
-    vi.useFakeTimers()
-    try {
-      const h = harness()
-      createTray(h.model, asTrayActions(actions()))
-      expect(Tray.contextMenus).toHaveLength(1) // initial offline build
-      expect(Menu.templates).toHaveLength(1)
-
-      h.model.start()
-      await flush()
-      h.streams[0].emit(ready())
-      await flush()
-      expect(h.fetches).toHaveLength(1)
-      h.fetches[0].resolve(idleSnapshot())
-      await flush()
-      await flush()
-      // offline→connecting→live: three real label changes → three rebuilds
-      expect(Tray.contextMenus).toHaveLength(3)
-      const afterLive = Tray.contextMenus.length
-
-      // a redundant push with an identical-label snapshot (new reference) must
-      // not rebuild
-      h.streams[0].emit(changed())
-      await flush()
-      expect(h.fetches).toHaveLength(2)
-      h.fetches[1].resolve(idleSnapshot())
-      await flush()
-      expect(Tray.contextMenus).toHaveLength(afterLive)
-
-      // the 1 s tick with unchanged labels must not rebuild
-      vi.advanceTimersByTime(5_000)
-      await flush()
-      expect(Tray.contextMenus).toHaveLength(afterLive)
-    } finally {
-      vi.useRealTimers()
-    }
-  })
-
-  it('keeps the focus line ticking while live and RUNNING', async () => {
-    __resetImages()
-    __resetTray()
-    vi.useFakeTimers()
-    try {
-      const h = harness()
-      createTray(h.model, asTrayActions(actions()))
-      expect(Tray.contextMenus).toHaveLength(1)
-      h.model.start()
-      await flush()
-      h.streams[0].emit(ready())
-      await flush()
-      h.fetches[0].resolve(LIVE_SNAPSHOT)
-      await flush()
-      const afterLive = Tray.contextMenus.length
-      expect(afterLive).toBeGreaterThanOrEqual(2)
-      // focus H:MM:SS advances one second per tick → rebuild per tick
-      vi.advanceTimersByTime(1_000)
-      await flush()
-      expect(Tray.contextMenus).toHaveLength(afterLive + 1)
-      vi.advanceTimersByTime(1_000)
-      await flush()
-      expect(Tray.contextMenus).toHaveLength(afterLive + 2)
-    } finally {
-      vi.useRealTimers()
-    }
   })
 })

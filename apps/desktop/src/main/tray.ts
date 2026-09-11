@@ -1,14 +1,8 @@
-/// <reference types="electron-vite/node" />
-import { readFileSync } from 'node:fs'
 import { Tray, Menu, nativeImage } from 'electron'
 import type { MenuItemConstructorOptions } from 'electron'
 import { elapsed } from '../shared/format'
 import type { RuntimeConnState } from '../shared/protocol'
 import type { CockpitModel, ModelUpdate } from './cockpit-model'
-import trayTemplate from './assets/tray/trayTemplate.png?asset'
-import trayTemplate2x from './assets/tray/trayTemplate@2x.png?asset'
-import trayOrange from './assets/tray/trayOrange.png?asset'
-import trayOrange2x from './assets/tray/trayOrange@2x.png?asset'
 
 // Compact tray companion: runtime status, focus timer, delivery/attention,
 // Open Zero Desktop, Quit. Nothing else — no project selection, no intent
@@ -147,38 +141,33 @@ export function trayMenuItems(
   return items
 }
 
-// Tray icon sourced from real build assets (Task 16): a 16×16 black-alpha
-// template PNG plus an explicitly added 32×32 @2x representation — hashed
-// asset filenames defeat Electron's sibling `@2x` convention, so the retina
-// representation is added by hand. The non-template fallback is rendered at
-// icon-generation time from ZERO_TOKENS.brandOrange (see tools/make-icon.sh).
-export function trayIcon(): Electron.NativeImage {
-  const img = nativeImage.createFromPath(trayTemplate)
+// Neutral template image (16×16 black circle, alpha-only) generated at build
+// time per the token rules; fallback is the brand-orange circle whose fill is
+// ZERO_TOKENS.brandOrange (#F54E00) rendered at icon-generation time. Both are
+// 167-byte PNGs — no icon pipeline (Task 16 owns packaging assets).
+const TEMPLATE_ICON_PNG = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAbklEQVR4nGNgwA4kgDgKiKuhOAoqRhCAFM0F4v848Fx8BlkC8RM8mmH4CVQths3EaEY2BMUl+JyNzztw20nVDMNgV0RRYABILziayDWgmioGUOwFigOR4miEuYKihAQCFCVlZJeQnZnQDSIqOwMAhAeweXIu+jwAAAAASUVORK5CYII=',
+  'base64'
+)
+const ORANGE_ICON_PNG = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAbklEQVR4nGP46sfAgAVLAHEUEFdDcRRUDEMtNo1zgfg/DjwX3SBkzZZA/ASPZhh+AlWLYoAEkZqRDZFANgCfs/F5B247qZphWIIBGsLkGhDFAI0mcg2opooBFHuB4kCkOBqpkpAoTspUyUxkZWcAWRXziLvDblQAAAAASUVORK5CYII=',
+  'base64'
+)
+
+function trayIcon(): Electron.NativeImage {
+  const img = nativeImage.createFromBuffer(TEMPLATE_ICON_PNG)
   if (!img.isEmpty()) {
-    img.addRepresentation({ scaleFactor: 2, buffer: readFileSync(trayTemplate2x) })
     img.setTemplateImage(true)
     return img
   }
-  const fallback = nativeImage.createFromPath(trayOrange)
-  if (!fallback.isEmpty()) {
-    fallback.addRepresentation({ scaleFactor: 2, buffer: readFileSync(trayOrange2x) })
-  }
-  return fallback
+  return nativeImage.createFromBuffer(ORANGE_ICON_PNG)
 }
 
 export function createTray(model: CockpitModel, actions: TrayActions): Tray {
   const tray = new Tray(trayIcon())
   tray.setToolTip('Zero')
   let last: ModelUpdate = { snapshot: null, state: 'connecting', receivedAt: null, lastError: null }
-  let lastSignature: string | null = null
-  const signature = (): string =>
-    trayMenuItems(last, Date.now(), actions)
-      .map((i) => (typeof i.label === 'string' ? i.label : ''))
-      .join('\n')
   const rebuild = (): void => {
-    const sig = signature()
-    if (sig === lastSignature) return
-    lastSignature = sig
     tray.setContextMenu(Menu.buildFromTemplate(trayMenuItems(last, Date.now(), actions)))
   }
   model.subscribe((u) => {
@@ -186,9 +175,7 @@ export function createTray(model: CockpitModel, actions: TrayActions): Tray {
     rebuild()
   })
   // The focus timer ticks between model pushes (daemon events arrive in
-  // bursts); the label signature keeps this 1 s check cheap: while live and
-  // RUNNING the H:MM:SS line changes each tick and the menu rebuilds, while
-  // offline/IDLE pushes and ticks with unchanged labels skip setContextMenu.
+  // bursts); a cheap 1 s rebuild keeps the tray timer live.
   setInterval(rebuild, 1_000)
   return tray
 }
