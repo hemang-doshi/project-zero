@@ -5,10 +5,15 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ZERO_TOKENS } from '../../../../shared/tokens'
 import MousePad, {
+  BRAID_N,
+  FEET_COUNT,
+  GRIP_DOT_COUNT,
   MODEL_FOOTPRINT,
   MOUSE_BASE_Y,
   PAD_TOP,
   STATUS_HEX,
+  STITCH_COUNT,
+  WHEEL_RIB_COUNT,
   type MousePadStatus
 } from './MousePad'
 
@@ -79,25 +84,34 @@ describe('MousePad footprint', () => {
 })
 
 describe('MousePad structure', () => {
-  it('renders the named meshes (pad, edge, body, buttons, wheel, side buttons, accents, cable stub, LED)', async () => {
+  it('renders the named meshes (pad, edge, stitches, base, underglow, body, buttons, wheel, grips, accents, cable stub, LED)', async () => {
     const el = await mount({ status: 'online' })
     for (const name of [
       'pad',
       'pad-edge',
+      'stitches',
       'mouse-base',
+      'underglow',
+      'ptfe-feet',
       'mouse-body',
+      'logo-plate',
       'button-left',
       'button-right',
       'button-seam',
       'wheel',
       'wheel-hub',
-      'rib-0',
-      'rib-2',
+      'wheel-ribs',
+      'dpi-button',
+      'dpi-led',
       'side-button-0',
       'side-button-1',
+      'grip-left',
+      'grip-right',
+      'grip-dots',
       'accent-left',
       'accent-right',
       'cable-stub',
+      'braid-rings',
       'status-light'
     ]) {
       expect(el.querySelector(`[name="${name}"]`), name).not.toBeNull()
@@ -160,5 +174,53 @@ describe('MousePad dimmed', () => {
     )
     const dimAccents = dim.querySelectorAll('[data-testid="mousepad-accent-material"]')
     expect(dimAccents[0]?.getAttribute('emissiveintensity')).toBe('0.1')
+  })
+})
+
+describe('MousePad detail pass 2', () => {
+  it('pins the instanced detail counts (ribs 10, feet 4, grip dots 20, braid 6, stitches 62)', async () => {
+    expect(WHEEL_RIB_COUNT).toBe(10)
+    expect(FEET_COUNT).toBe(4)
+    expect(GRIP_DOT_COUNT).toBe(20)
+    expect(BRAID_N).toBe(6)
+    expect(STITCH_COUNT).toBe(62)
+    const el = await mount({ status: 'online' })
+    for (const [name, count] of [
+      ['wheel-ribs', '10'],
+      ['ptfe-feet', '4'],
+      ['grip-dots', '20'],
+      ['braid-rings', '6'],
+      ['stitches', '62']
+    ] as Array<[string, string]>) {
+      expect(el.querySelector(`[name="${name}"]`)?.getAttribute('data-count'), name).toBe(count)
+    }
+  })
+
+  it('stays within the 120 draw-call budget (18 before, 26 after)', async () => {
+    const el = await mount({ status: 'online' })
+    const draws = el.querySelectorAll('mesh, instancedMesh').length
+    expect(draws).toBe(26)
+    expect(draws).toBeLessThanOrEqual(120)
+  })
+
+  it('drives the DPI LED from node status like the rear crown LED', async () => {
+    const el = await mount({ status: 'gated' })
+    const mat = materialOf(el, 'mousepad-dpi-material')
+    expect(mat).not.toBeNull()
+    expect(mat?.getAttribute('emissive')?.toLowerCase()).toBe(ZERO_TOKENS.errorRed.toLowerCase())
+  })
+
+  it('dims the new emissive detail with the board', async () => {
+    const lit = await mount({ status: 'online' })
+    expect(materialOf(lit, 'mousepad-dpi-material')?.getAttribute('emissiveintensity')).toBe('1.6')
+    expect(materialOf(lit, 'mousepad-underglow-material')?.getAttribute('opacity')).toBe('0.5')
+
+    await act(async () => {
+      root?.unmount()
+    })
+    host?.remove()
+    const dim = await mount({ status: 'online', dimmed: true })
+    expect(materialOf(dim, 'mousepad-dpi-material')?.getAttribute('emissiveintensity')).toBe('0.15')
+    expect(materialOf(dim, 'mousepad-underglow-material')?.getAttribute('opacity')).toBe('0.1')
   })
 })
