@@ -164,10 +164,39 @@ describe('TopologyScene', () => {
     }
   })
 
-  it('keeps the subtle runtime ring above the desk', async () => {
+  it('carries no runtime ring: the owner removed it', async () => {
     const el = await mount(() => {})
-    expect(el.querySelector('[data-testid="runtime-ring"]')).not.toBeNull()
-    expect(el.textContent).toContain('ZERO RUNTIME LAYER')
+    expect(el.querySelector('[data-testid="runtime-ring"]')).toBeNull()
+    expect(el.textContent).not.toContain('ZERO RUNTIME LAYER')
+  })
+
+  it('renders overview titles small (pinned legible-minimal 8px)', async () => {
+    const el = await mount(() => {})
+    const label = [...el.querySelectorAll('div')].find(
+      (d) => d.textContent === 'M4 MacBook Air · ONLINE'
+    )
+    expect(label).toBeDefined()
+    expect(label?.style.fontSize).toBe('8px')
+  })
+
+  it('hides per-node titles in focus view while the detail panel carries the title', async () => {
+    const el = await mount(() => {})
+    expect(el.textContent).toContain('Desk Display · ESP32 · ONLINE')
+    await act(async () => {
+      el.querySelector('[data-testid="node-local-host"]')?.dispatchEvent(
+        new MouseEvent('click', { bubbles: true })
+      )
+    })
+    expect(el.querySelector('[data-testid="focus-detail"]')).not.toBeNull()
+    // Titles vanish; the detail panel carries the focused title instead.
+    expect(el.textContent).not.toContain('Desk Display · ESP32 · ONLINE')
+    expect(el.textContent).not.toContain('Mouse + Desk Mat · ONLINE')
+    expect(el.textContent).not.toContain('M4 MacBook Air · ONLINE')
+    expect(el.querySelector('[data-testid="focus-detail"]')?.textContent).toContain(
+      'M4 MacBook Air'
+    )
+    // The GATED status badge is not a title and stays.
+    expect(el.textContent).toContain('GATED')
   })
 
   it('always renders the host MacBook even though the fixture enrolls no Mac', async () => {

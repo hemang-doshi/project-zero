@@ -286,22 +286,19 @@ export function breadboardDots(): Array<[number, number]> {
   return dots.slice(0, BREADBOARD_DOT_CAP)
 }
 
-export function buildSceneGraph(
-  snapshotNodes: CockpitNode[],
-  conn: RuntimeConnState,
-  hostname?: string
-): SceneGraph {
+export function buildSceneGraph(snapshotNodes: CockpitNode[], conn: RuntimeConnState): SceneGraph {
   // The list route stays the honest source: revoked registrations remain in
   // the list but leave the spatial scene (lifecycle evidence, not topology).
   const live = snapshotNodes.filter((n) => !n.revoked)
   const online = conn === 'live'
 
   const hostTone: Tone = nodeTone(conn, 'ONLINE')
+  // The snapshot exposes no hostname (session carries id/project only), so
+  // the host renders under the bare product label — no suffix plumbing.
   const host: SceneNode = {
     id: HOST_NODE_ID,
     kind: 'macbook',
-    label:
-      hostname !== undefined && hostname.length > 0 ? `${HOST_LABEL} · ${hostname}` : HOST_LABEL,
+    label: HOST_LABEL,
     sublabel: 'local runtime host',
     status: online ? 'ONLINE' : 'OFFLINE',
     tone: hostTone,
