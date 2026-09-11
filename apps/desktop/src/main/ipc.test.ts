@@ -288,6 +288,59 @@ describe('telemetry.sample', () => {
   })
 })
 
+const ARTWORK_BYTES = Buffer.alloc(2048)
+ARTWORK_BYTES[0] = 0xff
+ARTWORK_BYTES[1] = 0xff
+
+describe('artwork.fetch', () => {
+  it('fetches the daemon asset route and converts RGB565 to a PNG data URL', async () => {
+    const d = deps()
+    d.fetchSnapshot = vi.fn(() =>
+      Promise.resolve({
+        version: '0.2',
+        id: 'a'.repeat(64),
+        artwork: { rgb565: ARTWORK_BYTES.toString('base64') }
+      })
+    )
+    const invoke = createDispatch(d, () => fakePair(fakeBridge('live'), fakeBridge('live')))
+    const result = (await invoke('artwork.fetch', { id: 'a'.repeat(64) })) as {
+      dataUrl: string | null
+    }
+    expect(d.fetchSnapshot).toHaveBeenCalledWith('/tmp/no-such-test.sock', {
+      path: '/v0.1/artwork/' + 'a'.repeat(64)
+    })
+    expect(result.dataUrl?.startsWith('data:image/png;base64,iVBOR')).toBe(true)
+  })
+
+  it('fails soft to a null data URL when the daemon rejects the digest', async () => {
+    const d = deps()
+    d.fetchSnapshot = vi.fn(() => Promise.reject(new Error('Cockpit snapshot rejected (400)')))
+    const invoke = createDispatch(d, () => fakePair(fakeBridge('live'), fakeBridge('live')))
+    await expect(invoke('artwork.fetch', { id: 'a'.repeat(64) })).resolves.toEqual({
+      dataUrl: null
+    })
+  })
+
+  it('returns a null data URL when the asset lacks valid RGB565 bytes', async () => {
+    const d = deps()
+    d.fetchSnapshot = vi.fn(() => Promise.resolve({ version: '0.2', artwork: { rgb565: 'AAAA' } }))
+    const invoke = createDispatch(d, () => fakePair(fakeBridge('live'), fakeBridge('live')))
+    await expect(invoke('artwork.fetch', { id: 'a'.repeat(64) })).resolves.toEqual({
+      dataUrl: null
+    })
+  })
+
+  it('rejects malformed ids without contacting the daemon', async () => {
+    const d = deps()
+    const invoke = createDispatch(d, () => fakePair(fakeBridge('live'), fakeBridge('live')))
+    await expect(invoke('artwork.fetch', { id: 'not hex!' })).rejects.toThrow(
+      'Malformed artwork payload'
+    )
+    await expect(invoke('artwork.fetch', {})).rejects.toThrow('Malformed artwork payload')
+    expect(d.fetchSnapshot).not.toHaveBeenCalled()
+  })
+})
+
 describe('attachBridgePush', () => {
   it('forwards bridge events tagged with the bridge harness identity', () => {
     const codex = fakeBridge('live')

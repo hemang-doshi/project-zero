@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 import {
   validateOp,
+  type ArtworkPayload,
   type CommandPayload,
   type ProjectPayload,
   type TelemetrySample,
@@ -10,6 +11,7 @@ import {
 } from '../shared/ipc'
 import { applyPrefsPatch, type Prefs } from './prefs'
 import { createBridgePair, type BridgeDeps, type HarnessId, type RpcEvent } from './bridges'
+import { artworkDataUrl } from './artwork-image'
 import type { CockpitModel, ModelUpdate } from './cockpit-model'
 
 export type PrefsStoreLike = {
@@ -122,6 +124,29 @@ export function createDispatch(
       typeof result === 'object' && result !== null ? (result as Record<string, unknown>) : {}
     return { harness: 'codex', thread: root['thread'] ?? null }
   }
+  // The daemon caches artwork by content digest (entities kind='artwork'); the
+  // cockpit display projection deliberately omits the blob, so this op reads
+  // the evidence route and converts RGB565 to a PNG data URL. Any daemon error
+  // or malformed asset fails soft to dataUrl null (honest no-cover render).
+  const artworkFetch = async (payload: unknown): Promise<unknown> => {
+    const { id } = (payload ?? {}) as Partial<ArtworkPayload>
+    if (typeof id !== 'string' || !/^[0-9a-f]{8,64}$/i.test(id)) {
+      throw new Error('Malformed artwork payload')
+    }
+    try {
+      const asset = await deps.fetchSnapshot(deps.socketPath, { path: `/v0.1/artwork/${id}` })
+      const root =
+        typeof asset === 'object' && asset !== null ? (asset as Record<string, unknown>) : {}
+      const artwork =
+        typeof root['artwork'] === 'object' && root['artwork'] !== null
+          ? (root['artwork'] as Record<string, unknown>)
+          : {}
+      const rgb565 = typeof artwork['rgb565'] === 'string' ? artwork['rgb565'] : null
+      return { dataUrl: rgb565 !== null ? artworkDataUrl(rgb565) : null }
+    } catch {
+      return { dataUrl: null }
+    }
+  }
   return async (op: unknown, payload?: unknown): Promise<unknown> => {
     if (typeof op !== 'string' || !validateOp(op)) throw new Error('Unknown op')
     switch (op) {
@@ -172,6 +197,8 @@ export function createDispatch(
       }
       case 'telemetry.sample':
         return deps.sampleTelemetry()
+      case 'artwork.fetch':
+        return artworkFetch(payload)
     }
   }
 }

@@ -78,6 +78,16 @@ export type CockpitPolicy = {
   enabled: boolean
 }
 
+// Transient audio levels carried by the daemon's cockpit projection
+// (core/runtime/updates.go Cockpit): normalized bass bytes sampled from the
+// mac audio tap while Spotify plays. Absent on older daemons → null.
+export type CockpitAudio = {
+  level: number
+  bass: number
+  sequence: number
+  status: string
+}
+
 export type CockpitSnapshot = {
   version: string
   revision: number
@@ -90,6 +100,7 @@ export type CockpitSnapshot = {
   truncated: CockpitTruncated
   approvals: CockpitApproval[]
   policies: CockpitPolicy[]
+  audio: CockpitAudio | null
   firings: number
 }
 
@@ -297,6 +308,17 @@ const parsePolicy = (v: unknown): CockpitPolicy | null => {
   return { id: r.id, status: r.status, enabled: r.enabled === true }
 }
 
+const parseAudio = (v: unknown): CockpitAudio | null => {
+  const r = asRecord(v)
+  if (r === null || !isStr(r.status)) return null
+  const level = optNum(r.level)
+  const bass = optNum(r.bass)
+  const sequence = optNum(r.sequence)
+  if (level === null || bass === null || sequence === null) return null
+  if (level < 0 || bass < 0 || sequence < 0) return null
+  return { level, bass, sequence, status: r.status }
+}
+
 const parseIntegration = (v: unknown): CockpitIntegration | null => {
   const r = asRecord(v)
   if (r === null || !isStr(r.id) || !isStr(r.status)) return null
@@ -361,6 +383,7 @@ function parseSnapshotUncached(value: unknown): CockpitSnapshot | null {
     policies: Array.isArray(root.policies)
       ? root.policies.map((item) => parsePolicy(item)).filter((p): p is CockpitPolicy => p !== null)
       : [],
+    audio: parseAudio(root.audio),
     firings: Array.isArray(root.firings) ? root.firings.length : 0
   }
 }
@@ -375,6 +398,37 @@ export const displayNodes = (snapshot: unknown): CockpitNode[] => {
   return parsed.nodes.filter(
     (n) => !n.revoked && n.capabilities.some((c) => DISPLAY_CAPS.includes(c))
   )
+}
+
+// Bounded Spotify media view for the desk card: only the projection keys the
+// daemon exposes (state/track/artist/artwork_id/audio_capture); anything
+// missing collapses to an honest empty string / null artwork reference.
+export type SpotifyMedia = {
+  enabled: boolean
+  status: string
+  state: string
+  track: string
+  artist: string
+  artworkId: string | null
+  audioCapture: string
+}
+
+export function selectSpotify(snapshot: unknown): SpotifyMedia | null {
+  const parsed = parseSnapshot(snapshot)
+  if (parsed === null) return null
+  const media = parsed.integrations.find((i) => i.id === 'spotify')
+  if (media === undefined) return null
+  const str = (key: string): string => (isStr(media.data[key]) ? (media.data[key] as string) : '')
+  const artworkId = str('artwork_id')
+  return {
+    enabled: media.enabled,
+    status: media.status,
+    state: str('state'),
+    track: str('track'),
+    artist: str('artist'),
+    artworkId: artworkId !== '' ? artworkId : null,
+    audioCapture: str('audio_capture')
+  }
 }
 
 export function connectivity(conn: RuntimeConnState, snapshot: unknown): Connectivity {
