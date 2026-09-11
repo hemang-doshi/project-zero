@@ -1,5 +1,6 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs'
 import {
+  candidateSelfLearntRoots,
   defaultSkillRoots,
   discoverPlugins,
   discoverSelfLearnt,
@@ -13,9 +14,9 @@ import type { SkillsDiscoverResult } from '../shared/ipc'
 // main process builds the injectable FsDeps in ~3 lines and scans the real
 // roots: defaultSkillRoots(HOME) PLUS pluginPackageSkillRoots() over the
 // opencode packages cache (lane B's fix report names this composition as
-// REQUIRED for the `superpowers` family to appear). Approved learned skills
-// are read only from the app-profile directory passed by main; no global
-// candidate folder is scanned. Cached per app launch; rescans on explicit
+// REQUIRED for the `superpowers` family to appear). Self-learnt scans the
+// candidate learned roots (checked-and-absent on this machine, so the []
+// is the honest answer). Cached per app launch; rescans on explicit
 // refresh. Fail-soft: never throws — unreadable roots yield ok:false.
 export const nodeSkillFs = (): FsDeps => ({
   readdir: (dir) => {
@@ -47,8 +48,7 @@ export type SkillDiscoverer = {
 
 export function createSkillDiscoverer(
   fs: FsDeps = nodeSkillFs(),
-  homeDir?: string,
-  learnedRoot?: string
+  homeDir?: string
 ): SkillDiscoverer {
   let cached: SkillsDiscoverResult | null = null
   const discover = (refresh = false): SkillsDiscoverResult => {
@@ -60,10 +60,7 @@ export function createSkillDiscoverer(
         ...pluginPackageSkillRoots(`${home}/.cache/opencode/packages`, fs)
       ]
       const groups = discoverPlugins(roots, fs)
-      const selfLearnt = discoverSelfLearnt({
-        ...fs,
-        roots: learnedRoot ? [learnedRoot] : []
-      })
+      const selfLearnt = discoverSelfLearnt({ ...fs, roots: candidateSelfLearntRoots(home) })
       const readable = roots.some((root) => fs.readdir(root) !== null)
       cached = readable
         ? { ok: true, groups, selfLearnt, note: null }

@@ -38,6 +38,7 @@ describe('validateOp', () => {
         'prefs.get',
         'prefs.set',
         'project.get',
+        'skills.discover',
         'snapshot.fetch',
         'telemetry.sample',
         'wallpaper.pick'

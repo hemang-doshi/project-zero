@@ -1,6 +1,6 @@
-import { memo, useEffect, useMemo, useState } from 'react'
+import { memo, useCallback, useEffect, useState } from 'react'
 import { ZERO_TYPE } from '../../../shared/tokens'
-import { OPS, type OpName } from '../../../shared/ipc'
+import { type OpName } from '../../../shared/ipc'
 import { Chip } from './Chip'
 import { SkillLabScene } from './SkillLabScene'
 import type { PluginGroup, SkillSummary } from './skillPlugins'
@@ -65,6 +65,19 @@ const errorNotice: React.CSSProperties = {
   margin: 0
 }
 
+const refreshStyle: React.CSSProperties = {
+  fontFamily: ZERO_TYPE.mono,
+  fontSize: 10,
+  fontWeight: 700,
+  letterSpacing: '0.1em',
+  color: 'var(--z-ink)',
+  background: 'transparent',
+  border: '1px solid var(--z-line)',
+  borderRadius: 5,
+  padding: '4px 10px',
+  cursor: 'pointer'
+}
+
 const cardStyle: React.CSSProperties = {
   background: 'var(--z-card-cream)',
   border: '1px solid var(--z-line)',
@@ -90,13 +103,14 @@ const skillDetail: React.CSSProperties = {
   margin: 0
 }
 
-// Live plugin discovery rides the skills.discover IPC op, which lands in a
-// follow-up lane (main/ipc are owned elsewhere). Until shared OPS carries it,
-// the route renders the fixture-derived fallback honestly and the 3D grid
-// stays empty — the scene itself renders fully from props either way.
-const SKILLS_DISCOVER_OP = 'skills.discover'
-
-const hasSkillsOp = Object.hasOwn(OPS, SKILLS_DISCOVER_OP)
+// Live plugin discovery rides the skills.discover IPC op (Task 37D): the main
+// process scans the real skill roots through lane B's pure layer and this
+// route feeds groups + selfLearnt into the scene props. Failures and empty
+// scans keep the honest-empty states — the scene itself renders fully from
+// props either way. DesktopCanvas mounts this route only for open,
+// unminimized windows, so the mount effect fires exactly when the route is
+// open and visible.
+const SKILLS_DISCOVER_OP: OpName = 'skills.discover'
 
 type SkillDiscovery = { groups: PluginGroup[]; selfLearnt: SkillSummary[] }
 
@@ -164,18 +178,10 @@ const parseDiscovery = (raw: unknown): SkillDiscovery | null => {
   return { groups, selfLearnt }
 }
 
-// Fixture-derived fallback: the learned-in-* fixtures are the self-learnt
-// evidence in this build; authored fixtures stay in the existing list only.
-const fixtureSelfLearnt = (fixtures: SkillFixture[]): SkillSummary[] =>
-  fixtures
-    .filter((s) => s.isUsable && s.source !== 'authored')
-    .map((s) => ({
-      id: s.id,
-      name: s.name,
-      source: 'self-learnt' as const,
-      pluginId: null as string | null,
-      description: s.summary
-    }))
+const parseNote = (raw: unknown): string | null => {
+  if (!isRecord(raw)) return null
+  return asTrimmedString(raw.note)
+}
 
 const initialChipStyle: React.CSSProperties = {
   width: 20,
@@ -233,31 +239,52 @@ function SkillRow({ skill }: { skill: SkillFixture }): React.JSX.Element {
 export const SkillLabRoute = memo(function SkillLabRoute(): React.JSX.Element {
   const enabled = SKILL_FIXTURES.filter((s) => s.enabled && s.isUsable).length
   const hasBridge = typeof window !== 'undefined' && window.zero !== undefined
-  const fallbackSelfLearnt = useMemo(() => fixtureSelfLearnt(SKILL_FIXTURES), [])
   const [groups, setGroups] = useState<PluginGroup[]>([])
-  const [selfLearnt, setSelfLearnt] = useState<SkillSummary[]>(fallbackSelfLearnt)
-  const [liveDiscovery, setLiveDiscovery] = useState(false)
+  const [selfLearnt, setSelfLearnt] = useState<SkillSummary[]>([])
+  const [note, setNote] = useState<string | null>(null)
+  const [refreshing, setRefreshing] = useState(false)
+
+  // Applies one discovery result; state sets ride promise callbacks (never
+  // synchronous effect bodies) per the hooks lint.
+  const applyDiscovery = useCallback((raw: unknown): void => {
+    const parsed = parseDiscovery(raw)
+    if (parsed !== null) {
+      setGroups(parsed.groups)
+      setSelfLearnt(parsed.selfLearnt)
+    }
+    setNote(parseNote(raw))
+  }, [])
 
   useEffect(() => {
-    if (!hasBridge || !hasSkillsOp) return
+    if (!hasBridge) return
     let active = true
-    window.zero
-      .invoke(SKILLS_DISCOVER_OP as OpName)
-      .then((raw) => {
-        if (!active) return
-        const parsed = parseDiscovery(raw)
-        if (parsed === null) return
-        setGroups(parsed.groups)
-        setSelfLearnt(parsed.selfLearnt)
-        setLiveDiscovery(true)
-      })
-      .catch(() => {
-        // Honest fallback: keep the fixture-derived rows and the empty grid.
-      })
+    window.zero.invoke(SKILLS_DISCOVER_OP, { refresh: false }).then(
+      (raw) => {
+        if (active) applyDiscovery(raw)
+      },
+      () => {
+        // Honest-empty: keep the empty grid and the empty self-learnt rows.
+      }
+    )
     return () => {
       active = false
     }
-  }, [hasBridge])
+  }, [hasBridge, applyDiscovery])
+
+  const onRefresh = (): void => {
+    if (!hasBridge || refreshing) return
+    setRefreshing(true)
+    window.zero.invoke(SKILLS_DISCOVER_OP, { refresh: true }).then(
+      (raw) => {
+        applyDiscovery(raw)
+        setRefreshing(false)
+      },
+      () => {
+        // Keep the last good grid on a failed rescan, release the button.
+        setRefreshing(false)
+      }
+    )
+  }
 
   return (
     <div className="zw-route" style={routeStyle}>
@@ -287,14 +314,28 @@ export const SkillLabRoute = memo(function SkillLabRoute(): React.JSX.Element {
       )}
       <div style={headerRow}>
         <span style={microStyle}>INSTALLED BY PLUGIN</span>
-        <Chip label={`${groups.length} PLUGINS`} tone={groups.length === 0 ? 'neutral' : 'healthy'} />
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+          <Chip
+            label={`${groups.length} PLUGINS`}
+            tone={groups.length === 0 ? 'neutral' : 'healthy'}
+          />
+          <button
+            type="button"
+            data-testid="skills-refresh"
+            style={{ ...refreshStyle, opacity: !hasBridge || refreshing ? 0.5 : 1 }}
+            disabled={!hasBridge || refreshing}
+            onClick={onRefresh}
+          >
+            {refreshing ? 'REFRESHING…' : 'REFRESH'}
+          </button>
+        </span>
       </div>
       <SkillLabScene groups={groups} selfLearnt={selfLearnt} />
-      <span style={noticeStyle}>
-        {liveDiscovery
-          ? 'Live plugin discovery via skills.discover.'
-          : 'skills.discover is not wired in this build — the vial grid is honestly empty and self-learnt rows are fixture-derived.'}
-      </span>
+      {note !== null ? (
+        <span data-testid="skills-note" style={noticeStyle}>
+          {note}
+        </span>
+      ) : null}
       <div style={headerRow}>
         <span style={microStyle}>ALL SKILLS (SHARED FIXTURES)</span>
       </div>
@@ -307,7 +348,8 @@ export const SkillLabRoute = memo(function SkillLabRoute(): React.JSX.Element {
       </div>
       <span style={noticeStyle}>
         Fixture data in this build: the daemon exposes no skill store and the sandboxed renderer has
-        no filesystem op, so the owner-controlled skills directory is not wired here.
+        no filesystem op, so the list above stays fixture data while the live grid is scanned by the
+        main process.
       </span>
     </div>
   )
