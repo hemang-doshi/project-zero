@@ -89,6 +89,7 @@ describe('Esp32DeskDisplay structure', () => {
       'boot',
       'en',
       'stand',
+      'stand-arm',
       'status-light'
     ]) {
       expect(el.querySelector(`[name="${name}"]`), name).not.toBeNull()
