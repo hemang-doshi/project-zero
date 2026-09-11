@@ -17,12 +17,11 @@ export const ZERO_TOKENS: Record<string, string> = {
   secondaryInk: '#5C4038',
   line: '#DED7CA',
   orange: '#F54E00',
-  orangePressed: '#A83300',
-  cardWhite: '#FFFFFF'
+  orangePressed: '#A83300'
 }
 
 export const ZERO_TYPE = {
-  body: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+  body: 'Inter, system-ui, -apple-system, sans-serif',
   mono: 'ui-monospace, SFMono-Regular, Menlo, monospace'
 } as const
 
