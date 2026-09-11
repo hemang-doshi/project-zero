@@ -6,6 +6,7 @@ import type { BridgeDeps, HarnessId, RpcEvent } from './bridges'
 import { attachBridgePush, createDispatch, type SocketDeps } from './ipc'
 import { defaultPrefs, type Prefs } from './prefs'
 import { PrefsStore } from './prefs'
+import type { TelemetrySample } from '../shared/ipc'
 
 type FakeBridge = {
   state: 'disconnected' | 'connecting' | 'live'
@@ -47,12 +48,20 @@ function harnessName(state: string): string {
   return state
 }
 
+const TELEMETRY_SAMPLE: TelemetrySample = {
+  cpu: 4.2,
+  ram: { used: 8, total: 16, percent: 50 },
+  ssd: { used: 100, total: 245, percent: 40.8 },
+  gpu: null
+}
+
 const deps = (): SocketDeps => ({
   socketPath: '/tmp/no-such-test.sock',
   fetchSnapshot: vi.fn(() => Promise.resolve({})),
   postCommand: vi.fn(() => Promise.resolve({})),
   store: new PrefsStore(fs.mkdtempSync(path.join(os.tmpdir(), 'zero-ipc-prefs-'))),
-  pickImage: vi.fn(() => Promise.resolve(null))
+  pickImage: vi.fn(() => Promise.resolve(null)),
+  sampleTelemetry: vi.fn(() => Promise.resolve(TELEMETRY_SAMPLE))
 })
 
 function fakePair(codex: FakeBridge, ocp: FakeBridge): BridgeDeps {
@@ -166,7 +175,8 @@ describe('prefs ops', () => {
       fetchSnapshot: vi.fn(() => Promise.resolve({})),
       postCommand: vi.fn(() => Promise.resolve({})),
       store,
-      pickImage: vi.fn(() => Promise.resolve(null))
+      pickImage: vi.fn(() => Promise.resolve(null)),
+      sampleTelemetry: vi.fn(() => Promise.resolve(TELEMETRY_SAMPLE))
     }
     const invoke = createDispatch(d, () => fakePair(fakeBridge('live'), fakeBridge('live')))
     await expect(invoke('prefs.set', 'nonsense')).rejects.toThrow('Malformed prefs payload')
@@ -199,6 +209,16 @@ describe('wallpaper.pick', () => {
     d.pickImage = vi.fn(() => Promise.resolve(null))
     const invoke = createDispatch(d, () => fakePair(fakeBridge('live'), fakeBridge('live')))
     await expect(invoke('wallpaper.pick')).resolves.toBeNull()
+  })
+})
+
+describe('telemetry.sample', () => {
+  it('answers with the injected local sampler payload without daemon contact', async () => {
+    const d = deps()
+    const invoke = createDispatch(d, () => fakePair(fakeBridge('live'), fakeBridge('live')))
+    await expect(invoke('telemetry.sample')).resolves.toBe(TELEMETRY_SAMPLE)
+    expect(d.sampleTelemetry).toHaveBeenCalledOnce()
+    expect(d.fetchSnapshot).not.toHaveBeenCalled()
   })
 })
 
