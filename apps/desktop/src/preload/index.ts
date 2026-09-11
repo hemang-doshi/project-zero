@@ -7,10 +7,11 @@ const api = {}
 const zero = {
   invoke: (op: string, payload?: unknown): Promise<unknown> =>
     ipcRenderer.invoke('zero:invoke', op, payload),
-  subscribe: (_channel: 'cockpit', cb: (u: unknown) => void): (() => void) => {
+  subscribe: (channel: 'cockpit' | 'bridge', cb: (u: unknown) => void): (() => void) => {
     const h = (_: unknown, u: unknown): void => cb(u)
-    ipcRenderer.on('zero:cockpit', h)
-    return () => ipcRenderer.removeListener('zero:cockpit', h)
+    const on = channel === 'bridge' ? 'zero:bridge' : 'zero:cockpit'
+    ipcRenderer.on(on, h)
+    return () => ipcRenderer.removeListener(on, h)
   }
 }
 
