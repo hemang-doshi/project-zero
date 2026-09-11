@@ -3,13 +3,17 @@ import { elapsed } from '../shared/format'
 import type { SSEEvent } from '../shared/protocol'
 import { CockpitModel } from './cockpit-model'
 import type { ModelUpdate } from './cockpit-model'
+import { __images, __resetImages, __setEmpty } from '../../__mocks__/electron'
 import {
   trayDetailLine,
   trayFocusLine,
+  trayIcon,
   trayMenuItems,
   trayStatusLabel,
   type TrayActions
 } from './tray'
+
+vi.mock('electron')
 
 const LIVE: ModelUpdate = {
   snapshot: null,
@@ -193,6 +197,27 @@ describe('trayMenuItems', () => {
     const quit = items[4].click as (() => void) | undefined
     quit?.()
     expect(a.quit).toHaveBeenCalledOnce()
+  })
+})
+
+describe('trayIcon', () => {
+  it('builds the template icon from build assets with a 2x retina representation', () => {
+    __resetImages()
+    trayIcon()
+    expect(__images).toHaveLength(1)
+    expect(__images[0].path).toContain('trayTemplate.png')
+    expect(__images[0].reps).toEqual([{ scaleFactor: 2, buffer: expect.any(Buffer) }])
+    expect(__images[0].template).toBe(true)
+  })
+
+  it('falls back to the token-colored non-template icon when the template is unavailable', () => {
+    __resetImages()
+    __setEmpty('trayTemplate')
+    trayIcon()
+    expect(__images).toHaveLength(2)
+    expect(__images[1].path).toContain('trayOrange.png')
+    expect(__images[1].reps).toEqual([{ scaleFactor: 2, buffer: expect.any(Buffer) }])
+    expect(__images[1].template).toBe(false)
   })
 })
 

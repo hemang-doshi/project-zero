@@ -40,26 +40,5 @@ export const __resetImages = (): void => {
   images.length = 0
   emptyHints = []
 }
-
-// Records every setContextMenu call so tests can assert the tray rebuild
-// gating (rebuild only when rendered labels actually change).
-export class Tray {
-  static readonly contextMenus: unknown[] = []
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars, @typescript-eslint/no-empty-function
-  setToolTip(_tip: string): void {}
-  setContextMenu(menu: unknown): void {
-    Tray.contextMenus.push(menu)
-  }
-}
-
-export const Menu = {
-  templates: [] as unknown[],
-  buildFromTemplate(template: unknown): unknown {
-    Menu.templates.push(template)
-    return { template }
-  }
-}
-export const __resetTray = (): void => {
-  Tray.contextMenus.length = 0
-  Menu.templates.length = 0
-}
+export const Tray = class Tray {}
+export const Menu = { buildFromTemplate: (): unknown[] => [] }

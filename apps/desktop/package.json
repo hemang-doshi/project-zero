@@ -1,10 +1,9 @@
 {
   "name": "desktop",
   "version": "1.0.0",
-  "description": "An Electron application with React and TypeScript",
+  "description": "Project Zero desktop cockpit",
   "main": "./out/main/index.js",
-  "author": "example.com",
-  "homepage": "https://electron-vite.org",
+  "author": "Project Zero",
   "scripts": {
     "format": "prettier --write .",
     "lint": "eslint --cache .",
@@ -14,6 +13,7 @@
     "start": "electron-vite preview",
     "dev": "electron-vite dev",
     "build": "electron-vite build",
+    "dist": "./tools/make-icon.sh && electron-vite build && electron-builder --mac",
     "test": "vitest run --passWithNoTests",
     "e2e": "playwright test",
     "postinstall": "electron-builder install-app-deps",
