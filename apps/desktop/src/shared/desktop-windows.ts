@@ -37,22 +37,21 @@ export function migrateStackedOrigins(
   const collides = (a: Point, b: Point): boolean =>
     Math.abs(a.x - b.x) < tolerance && Math.abs(a.y - b.y) < tolerance
   const out: Record<string, Point> = {}
-  const kept: Point[] = []
-  const moved: Point[] = []
+  const occupied: Point[] = []
   let nextSlot = 0
   for (const [route, stored] of Object.entries(positions)) {
-    if (kept.some((k) => k.x === stored.x && k.y === stored.y)) {
+    if (occupied.some((o) => collides(o, stored))) {
       let candidate: Point = { x: inset + nextSlot * spacing, y: inset + nextSlot * spacing }
-      while (moved.some((m) => collides(m, candidate))) {
+      while (occupied.some((o) => collides(o, candidate))) {
         nextSlot++
         candidate = { x: inset + nextSlot * spacing, y: inset + nextSlot * spacing }
       }
       out[route] = candidate
-      moved.push(candidate)
+      occupied.push(candidate)
       nextSlot++
     } else {
       out[route] = stored
-      kept.push(stored)
+      occupied.push(stored)
     }
   }
   return { positions: out, layoutVersion: LAYOUT_VERSION }
