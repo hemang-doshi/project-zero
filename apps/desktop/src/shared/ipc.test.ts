@@ -8,6 +8,7 @@ describe('validateOp', () => {
     expect(validateOp('command.send')).toBe(true)
     expect(validateOp('prefs.get')).toBe(true)
     expect(validateOp('telemetry.sample')).toBe(true)
+    expect(validateOp('artwork.fetch')).toBe(true)
     expect(validateOp('fs.read')).toBe(false)
     expect(validateOp('exec')).toBe(false)
   })
@@ -19,6 +20,7 @@ describe('validateOp', () => {
   it('exposes exactly the planned op set', () => {
     expect(Object.keys(OPS).sort()).toEqual(
       [
+        'artwork.fetch',
         'codex.connect',
         'codex.disconnect',
         'codex.discover',

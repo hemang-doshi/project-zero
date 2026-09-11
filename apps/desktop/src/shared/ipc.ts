@@ -17,13 +17,15 @@ export const OPS = {
   'ocp.state': true,
   'ocp.discover': true,
   'wallpaper.pick': true,
-  'telemetry.sample': true
+  'telemetry.sample': true,
+  'artwork.fetch': true
 } as const
 
 export type OpName = keyof typeof OPS
 export const validateOp = (op: string): op is OpName => Object.hasOwn(OPS, op)
 export type CommandPayload = { op: string; body?: Record<string, unknown> }
 export type ProjectPayload = { id: string }
+export type ArtworkPayload = { id: string }
 export type CodexSendPayload = { method: string; params?: unknown }
 export type ThreadGetPayload = { threadId: string }
 

@@ -11,6 +11,7 @@ import {
   sessionChipTone,
   sessionTone,
   pressureTone,
+  selectSpotify,
   EMPTY_MACHINE_SAMPLE,
   type MachineSample
 } from './runtime.types'
@@ -312,5 +313,67 @@ describe('pressureTone', () => {
     expect(pressureTone('low')).toBe('healthy')
     expect(pressureTone('medium')).toBe('attention')
     expect(pressureTone('high')).toBe('error')
+  })
+})
+
+describe('cockpit audio projection (Task 26)', () => {
+  it('parses the fixture audio block the daemon projection now carries', () => {
+    const snapshot = parseSnapshot(fixture())
+    expect(snapshot?.audio).toEqual({
+      level: 8,
+      bass: 118,
+      sequence: 142,
+      status: 'ACTIVE'
+    })
+  })
+
+  it('collapses malformed or absent audio to null without failing the snapshot', () => {
+    const value = fixture() as Record<string, unknown>
+    expect(parseSnapshot({ ...value, audio: 'nope' })?.audio).toBeNull()
+    expect(parseSnapshot({ ...value, audio: { bass: 'x', status: 3 } })?.audio).toBeNull()
+    expect(parseSnapshot({ ...value, audio: { bass: -3, status: 'ACTIVE' } })?.audio).toBeNull()
+    const noAudio = { ...value } as Record<string, unknown>
+    delete noAudio.audio
+    expect(parseSnapshot(noAudio)?.audio).toBeNull()
+    expect(parseSnapshot(noAudio)).not.toBeNull()
+  })
+})
+
+describe('selectSpotify', () => {
+  it('reads the bounded media fields the desk card renders', () => {
+    const spotify = selectSpotify(fixture())
+    expect(spotify).toEqual({
+      enabled: true,
+      status: 'ONLINE',
+      state: 'paused',
+      track: 'Parking Lot',
+      artist: 'Mustard',
+      artworkId: 'f74dcb2fdf1cb1496dfa3f98e9a305eb3b43674242d728acee0082d9c528c087',
+      audioCapture: 'DISABLED'
+    })
+  })
+
+  it('is null when the snapshot has no spotify integration', () => {
+    const value = fixture() as Record<string, unknown>
+    expect(selectSpotify({ ...value, integrations: [] })).toBeNull()
+    expect(selectSpotify({ ...value, integrations: 'no' })).toBeNull()
+    expect(selectSpotify(null)).toBeNull()
+  })
+
+  it('keeps non-string media fields out of the honest projection', () => {
+    const value = fixture() as Record<string, unknown>
+    const integrations = (value.integrations as Record<string, unknown>[]).map((i) =>
+      i.id === 'spotify' ? { ...i, data: { state: 3, track: null, artist: 'X', artwork_id: 4 } } : i
+    )
+    const spotify = selectSpotify({ ...value, integrations })
+    expect(spotify).toEqual({
+      enabled: true,
+      status: 'ONLINE',
+      state: '',
+      track: '',
+      artist: 'X',
+      artworkId: null,
+      audioCapture: ''
+    })
   })
 })
