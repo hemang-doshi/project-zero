@@ -24,6 +24,8 @@ describe('validateOp', () => {
         'codex.discover',
         'codex.send',
         'codex.state',
+        'codex.thread.get',
+        'codex.threads',
         'command.send',
         'ocp.connect',
         'ocp.disconnect',

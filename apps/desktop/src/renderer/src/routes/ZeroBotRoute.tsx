@@ -1,7 +1,19 @@
 import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import { ZERO_TYPE } from '../../../shared/tokens'
 import { Chip } from './Chip'
+import { ChatRow, ThreadList } from './ZeroBotChat'
 import type { Tone } from './runtime.types'
+import {
+  EMPTY_HARNESS_LOG,
+  parseThreadRows,
+  parseTranscript,
+  pushHarnessEvent,
+  applyBridgeEvent,
+  threadTitle,
+  type ChatItem,
+  type HarnessEventLog,
+  type ThreadRow
+} from './chat.model'
 import {
   HARNESS_DEFAULT_MODEL,
   HARNESS_MODELS,
@@ -12,7 +24,6 @@ import {
   harnessLockWarning,
   mirrorLabel,
   parseDiscovery,
-  pushBridgeEvent,
   visibleBridgeEvents,
   type BridgeConnState,
   type BridgeEvent,
@@ -161,6 +172,15 @@ const eventRow: React.CSSProperties = {
   minWidth: 0
 }
 
+const transcriptColumn: React.CSSProperties = {
+  display: 'flex',
+  flexDirection: 'column',
+  gap: 8,
+  maxHeight: 380,
+  overflowY: 'auto',
+  minHeight: 60
+}
+
 type BridgeInfo = { state: BridgeConnState; lastDiagnostic: string | null }
 
 const UNKNOWN_INFO: BridgeInfo = { state: 'unknown', lastDiagnostic: null }
@@ -199,6 +219,19 @@ export function BridgeEventRow({ event }: { event: BridgeEvent }): React.JSX.Ele
   )
 }
 
+type ThreadLane = {
+  rows: ThreadRow[]
+  items: ChatItem[]
+  dropped: number
+  threadId: string | null
+}
+
+const EMPTY_LANE: ThreadLane = { rows: [], items: [], dropped: 0, threadId: null }
+
+type HarnessState = Record<Harness, ThreadLane>
+
+const EMPTY_LANES: HarnessState = { codex: { ...EMPTY_LANE }, opencode: { ...EMPTY_LANE } }
+
 export const ZeroBotRoute = memo(function ZeroBotRoute(): React.JSX.Element {
   const [harness, setHarness] = useState<Harness>('codex')
   const [states, setStates] = useState<Record<Harness, BridgeInfo>>({
@@ -210,12 +243,14 @@ export const ZeroBotRoute = memo(function ZeroBotRoute(): React.JSX.Element {
     codex: HARNESS_DEFAULT_MODEL.codex,
     opencode: HARNESS_DEFAULT_MODEL.opencode
   })
-  const [events, setEvents] = useState<BridgeEvent[]>([])
-  const [dropped, setDropped] = useState(0)
+  const [lanes, setLanes] = useState<HarnessState>(EMPTY_LANES)
+  const [logs, setLogs] = useState<Record<Harness, HarnessEventLog>>(EMPTY_HARNESS_LOG)
   const [inFlight, setInFlight] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
-  const eventsRef = useRef<BridgeEvent[]>([])
+  const lanesRef = useRef<HarnessState>(EMPTY_LANES)
+  const logsRef = useRef<Record<Harness, HarnessEventLog>>(EMPTY_HARNESS_LOG)
+  const openRef = useRef<Record<Harness, string | null>>({ codex: null, opencode: null })
   const aliveRef = useRef(true)
 
   useEffect(() => {
@@ -237,6 +272,21 @@ export const ZeroBotRoute = memo(function ZeroBotRoute(): React.JSX.Element {
               lastDiagnostic: typeof r.lastDiagnostic === 'string' ? r.lastDiagnostic : null
             }
           }))
+          if (h === 'codex' && asBridgeState(r.state) === 'live' && aliveRef.current) {
+            void window.zero
+              .invoke('codex.threads')
+              .then((rowsValue) => {
+                const rows = parseThreadRows(rowsValue)
+                if (!aliveRef.current || rows.length === 0) return
+                const laneNow = lanesRef.current.codex
+                const next: HarnessState = { ...lanesRef.current, codex: { ...laneNow, rows } }
+                lanesRef.current = next
+                setLanes(next)
+              })
+              .catch(() => {
+                /* fail-soft: the state card still shows the live bridge */
+              })
+          }
         })
         .catch((err: unknown) => {
           setStates((m) => ({ ...m, [h]: { state: 'disconnected', lastDiagnostic: null } }))
@@ -250,14 +300,42 @@ export const ZeroBotRoute = memo(function ZeroBotRoute(): React.JSX.Element {
       const h = push.harness === 'codex' || push.harness === 'opencode' ? push.harness : null
       const method = typeof push.event?.method === 'string' ? push.event.method : null
       if (h === null || method === null || !aliveRef.current) return
-      const r = pushBridgeEvent(eventsRef.current, {
-        harness: h,
-        method,
-        params: push.event?.params
-      })
-      eventsRef.current = r.events
-      setEvents(r.events)
-      setDropped((d) => d + r.dropped)
+      const ev: BridgeEvent = { harness: h, method, params: push.event?.params }
+      const nextLogs = pushHarnessEvent(logsRef.current, ev)
+      logsRef.current = nextLogs
+      setLogs(nextLogs)
+      const openId = openRef.current[h]
+      const params = (typeof ev.params === 'object' && ev.params !== null ? ev.params : null) as {
+        threadId?: unknown
+      } | null
+      const eventThread = typeof params?.threadId === 'string' ? params.threadId : null
+      if (openId !== null && (eventThread === null || eventThread === openId)) {
+        const lane = lanesRef.current[h]
+        const applied = applyBridgeEvent(lane.items, method, ev.params)
+        if (applied.changed) {
+          const nextLanes: HarnessState = {
+            ...lanesRef.current,
+            [h]: { ...lane, items: applied.items }
+          }
+          lanesRef.current = nextLanes
+          setLanes(nextLanes)
+        }
+      }
+      if (method === 'thread/started' && h === 'codex') {
+        void window.zero
+          .invoke('codex.threads')
+          .then((v) => {
+            const rows = parseThreadRows(v)
+            if (!aliveRef.current || rows.length === 0) return
+            const lane = lanesRef.current.codex
+            const nextLanes: HarnessState = { ...lanesRef.current, codex: { ...lane, rows } }
+            lanesRef.current = nextLanes
+            setLanes(nextLanes)
+          })
+          .catch(() => {
+            /* fail-soft: the wire log still carries the event */
+          })
+      }
     })
     return () => {
       aliveRef.current = false
@@ -269,8 +347,50 @@ export const ZeroBotRoute = memo(function ZeroBotRoute(): React.JSX.Element {
   const result = discovery[harness] ?? null
   const selectedModel = models[harness]
   const mismatch = harnessLockWarning(selectedModel, harness)
-  const shown = useMemo(() => visibleBridgeEvents(events, harness), [events, harness])
+  const lane = lanes[harness]
+  const log = logs[harness]
+  const shownEvents = useMemo(() => visibleBridgeEvents(log.events, harness), [log.events, harness])
   const live = info.state === 'live'
+
+  const loadThreads = (h: Harness): Promise<void> =>
+    window.zero
+      .invoke('codex.threads')
+      .then((v) => {
+        const rows = parseThreadRows(v)
+        const laneNow = lanesRef.current[h]
+        const next: HarnessState = { ...lanesRef.current, [h]: { ...laneNow, rows } }
+        lanesRef.current = next
+        setLanes(next)
+      })
+      .catch((err: unknown) => setError(err instanceof Error ? err.message : String(err)))
+
+  const openThread = (threadId: string): void => {
+    if (harness !== 'codex') return
+    openRef.current = { ...openRef.current, codex: threadId }
+    const laneNow = lanesRef.current.codex
+    const opened: HarnessState = {
+      ...lanesRef.current,
+      codex: { ...laneNow, threadId }
+    }
+    lanesRef.current = opened
+    setLanes(opened)
+    setError(null)
+    setNotice(null)
+    window.zero
+      .invoke('codex.thread.get', { threadId })
+      .then((v) => {
+        const parsed = parseTranscript(v)
+        const laneNext = lanesRef.current.codex
+        const next: HarnessState = {
+          ...lanesRef.current,
+          codex: { ...laneNext, items: parsed.items, dropped: parsed.dropped }
+        }
+        lanesRef.current = next
+        setLanes(next)
+        if (parsed.items.length === 0) setNotice('The thread transcript read returned no items.')
+      })
+      .catch((err: unknown) => setError(err instanceof Error ? err.message : String(err)))
+  }
 
   const run = (action: 'connect' | 'disconnect' | 'discover'): void => {
     setInFlight(true)
@@ -299,6 +419,7 @@ export const ZeroBotRoute = memo(function ZeroBotRoute(): React.JSX.Element {
               ? `${harness} bridge connected; no thread, session, prompt or turn was started.`
               : `${harness} bridge disconnected.`
           )
+          if (action === 'connect' && harness === 'codex') void loadThreads('codex')
         }
       })
       .catch((err: unknown) => setError(err instanceof Error ? err.message : String(err)))
@@ -308,6 +429,8 @@ export const ZeroBotRoute = memo(function ZeroBotRoute(): React.JSX.Element {
   const modelOptions = Array.from(
     new Set([...HARNESS_MODELS[harness], ...(result?.models.map((m) => m.id) ?? [])])
   )
+
+  const openRow = lane.rows.find((r) => r.id === lane.threadId) ?? null
 
   return (
     <div className="zw-route" style={routeStyle}>
@@ -378,36 +501,66 @@ export const ZeroBotRoute = memo(function ZeroBotRoute(): React.JSX.Element {
 
       <div style={cardStyle}>
         <div style={headerRow}>
-          <span style={datumLabel}>DISCOVERY · READ-ONLY PROBES</span>
+          <span style={datumLabel}>DISCOVERY · THREADS + MODELS</span>
           <span style={datumLabel}>
-            {harness === 'codex' ? 'MODEL/LIST + THREAD/LIST' : 'HONEST ABSENCE'}
+            {harness === 'codex' ? 'THREAD/LIST · READ-ONLY' : 'HONEST ABSENCE'}
           </span>
         </div>
-        {result === null ? (
+        {harness === 'opencode' ? (
           <span style={noticeStyle}>
-            {harness === 'codex'
-              ? 'No discovery yet. Connect Codex, then run the read-only probes.'
-              : 'OpenCode ACP advertises no read-only discovery method in this build; sessions surface from streamed bridge events.'}
+            OpenCode ACP advertises no read-only discovery method in this build; sessions surface
+            from streamed bridge events.
+          </span>
+        ) : lane.rows.length === 0 ? (
+          <span style={noticeStyle}>
+            {live
+              ? 'Connected; no threads returned by the read-only list yet.'
+              : 'No thread list yet. Connect Codex to load the read-only thread list.'}
+          </span>
+        ) : (
+          <ThreadList rows={lane.rows} selectedId={lane.threadId} onSelect={openThread} />
+        )}
+        {harness === 'codex' && result !== null && result.models.length > 0 ? (
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+            {result.models.map((m) => (
+              <Chip key={m.id} label={`${m.id} · advertised`} tone="neutral" />
+            ))}
+          </div>
+        ) : null}
+      </div>
+
+      <div style={cardStyle}>
+        <div style={headerRow}>
+          <span style={datumLabel}>CONVERSATION · {harness.toUpperCase()}</span>
+          {lane.threadId !== null ? (
+            live ? (
+              <Chip label="LIVE" tone="healthy" />
+            ) : (
+              <Chip label="RETAINED" tone="neutral" />
+            )
+          ) : null}
+        </div>
+        {lane.threadId === null ? (
+          <span style={noticeStyle}>
+            {harness === 'opencode'
+              ? 'OpenCode sessions surface from streamed bridge events; no read-only transcript read exists in this build.'
+              : 'Select a thread above to render its transcript. Live events append to the open thread.'}
           </span>
         ) : (
           <>
-            {result.note !== null ? <span style={noticeStyle}>{result.note}</span> : null}
-            {result.models.length > 0 ? (
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                {result.models.map((m) => (
-                  <Chip key={m.id} label={`${m.id} · advertised`} tone="neutral" />
-                ))}
-              </div>
+            <span style={{ ...microStyle, fontWeight: 400, letterSpacing: '0.06em' }}>
+              {openRow !== null ? threadTitle(openRow) : lane.threadId}
+            </span>
+            <div style={transcriptColumn}>
+              {lane.items.map((item, n) => (
+                <ChatRow key={item.id === '' ? `${item.kind}-anon-${n}` : item.id} item={item} />
+              ))}
+            </div>
+            {lane.dropped > 0 ? (
+              <span style={noticeStyle}>
+                +{lane.dropped} earlier item(s) dropped from bounded memory.
+              </span>
             ) : null}
-            {result.threads.length > 0 ? (
-              result.threads.map((t) => (
-                <span key={t.id} style={eventCell}>
-                  thread {t.id} · {t.name !== '' ? t.name : 'untitled'}
-                </span>
-              ))
-            ) : (
-              <span style={noticeStyle}>No threads returned by the discovery probe.</span>
-            )}
           </>
         )}
       </div>
@@ -415,7 +568,7 @@ export const ZeroBotRoute = memo(function ZeroBotRoute(): React.JSX.Element {
       <div style={cardStyle}>
         <div style={headerRow}>
           <span style={datumLabel}>CONVERSATION · BRIDGE EVENTS</span>
-          {shown.length > 0 ? (
+          {shownEvents.length > 0 ? (
             live ? (
               <Chip label="LIVE EVIDENCE" tone="healthy" />
             ) : (
@@ -423,20 +576,20 @@ export const ZeroBotRoute = memo(function ZeroBotRoute(): React.JSX.Element {
             )
           ) : null}
         </div>
-        {shown.length === 0 ? (
+        {shownEvents.length === 0 ? (
           <span style={noticeStyle}>
-            {info.state === 'live'
+            {live
               ? 'Connected; no bridge event has streamed into this window yet.'
               : 'No bridge events in this window yet. Connect manually to surface streamed protocol state.'}
           </span>
         ) : (
           <>
-            {shown.map((e, i) => (
+            {shownEvents.map((e, i) => (
               <BridgeEventRow key={`${e.harness}-${i}`} event={e} />
             ))}
-            {dropped > 0 ? (
+            {log.dropped > 0 ? (
               <span style={noticeStyle}>
-                +{dropped} older event(s) dropped from bounded memory.
+                +{log.dropped} older event(s) dropped from bounded {harness} memory.
               </span>
             ) : null}
           </>

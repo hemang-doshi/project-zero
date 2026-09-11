@@ -751,17 +751,6 @@ export const SEND_BLOCKED_NOTICE =
 export const VOICE_DISABLED_NOTICE =
   'Voice input is disabled in this build; use system dictation instead.'
 
-export const MAX_BRIDGE_EVENTS = 100
-
-export function pushBridgeEvent(
-  events: BridgeEvent[],
-  push: BridgeEvent
-): { events: BridgeEvent[]; dropped: number } {
-  const next = [...events, push]
-  if (next.length <= MAX_BRIDGE_EVENTS) return { events: next, dropped: 0 }
-  return { events: next.slice(next.length - MAX_BRIDGE_EVENTS), dropped: 1 }
-}
-
 export function visibleBridgeEvents(events: BridgeEvent[], harness: Harness): BridgeEvent[] {
   return events.filter((e) => e.harness === harness)
 }

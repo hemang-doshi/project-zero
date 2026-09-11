@@ -9,6 +9,8 @@ export const OPS = {
   'codex.send': true,
   'codex.state': true,
   'codex.discover': true,
+  'codex.threads': true,
+  'codex.thread.get': true,
   'ocp.connect': true,
   'ocp.disconnect': true,
   'ocp.send': true,
@@ -23,6 +25,7 @@ export const validateOp = (op: string): op is OpName => Object.hasOwn(OPS, op)
 export type CommandPayload = { op: string; body?: Record<string, unknown> }
 export type ProjectPayload = { id: string }
 export type CodexSendPayload = { method: string; params?: unknown }
+export type ThreadGetPayload = { threadId: string }
 
 // Wire payload of the telemetry.sample op, produced by the main-process
 // sampler. Percentages are 0-100; byte counts are raw bytes; gpu is always
