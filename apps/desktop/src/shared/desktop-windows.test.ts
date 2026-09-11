@@ -48,10 +48,10 @@ describe('migrateStackedOrigins', () => {
     expect(out.positions.desk).toEqual({ x: 28, y: 28 })
     expect(out.positions.runtime).not.toEqual(out.positions.desk)
     expect(out.positions.network).not.toEqual(out.positions.desk)
-    expect(out.positions.runtime).toEqual({ x: 32, y: 32 })
-    expect(out.positions.network).toEqual({ x: 80, y: 80 })
-    expect(out.positions.airlock).toEqual({ x: 56, y: 56 })
-    expect(out.positions.zeroBot).not.toEqual(out.positions.airlock)
+    expect(out.positions.runtime).toEqual({ x: 80, y: 80 })
+    expect(out.positions.network).toEqual({ x: 128, y: 128 })
+    expect(out.positions.airlock).toEqual({ x: 176, y: 176 })
+    expect(out.positions.zeroBot).toEqual({ x: 224, y: 224 })
   })
   it('is idempotent once version >= 2', () => {
     const positions = { desk: { x: 28, y: 28 }, runtime: { x: 28, y: 28 } }
