@@ -62,13 +62,30 @@ func ServeUnix(ctx context.Context, r *runtime.Runtime, path string, ca *identit
 		w.WriteHeader(400)
 		json.NewEncoder(w).Encode(map[string]string{"error": e.Error()})
 	}
+	// The cockpit snapshot is rebuilt only when the projection revision
+	// advances; repeat GETs replay the same serialized bytes.
+	snapshots := &snapshotCache{
+		current: r.Updates.Revision,
+		build: func(q context.Context) ([]byte, error) {
+			value, err := r.Cockpit(q)
+			if err != nil {
+				return nil, err
+			}
+			data, err := json.Marshal(value)
+			if err != nil {
+				return nil, err
+			}
+			return append(data, '\n'), nil
+		},
+	}
 	mux.HandleFunc("GET /v0.1/cockpit", func(w http.ResponseWriter, q *http.Request) {
-		value, err := r.Cockpit(q.Context())
+		data, err := snapshots.get(q.Context())
 		if err != nil {
 			fail(w, err)
 			return
 		}
-		reply(w, value)
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(data)
 	})
 	mux.HandleFunc("GET /v0.1/cockpit/stream", func(w http.ResponseWriter, q *http.Request) {
 		controller := http.NewResponseController(w)
@@ -86,9 +103,15 @@ func ServeUnix(ctx context.Context, r *runtime.Runtime, path string, ca *identit
 			if err := controller.SetWriteDeadline(time.Now().Add(5 * time.Second)); err != nil {
 				return err
 			}
-			data, err := json.Marshal(value)
-			if err != nil {
-				return err
+			// Publish shares one serialization across subscribers; only a
+			// coalesced (or per-request) update is marshaled here.
+			data := value.Encoded()
+			var err error
+			if data == nil {
+				data, err = json.Marshal(value)
+				if err != nil {
+					return err
+				}
 			}
 			if _, err = fmt.Fprintf(w, "event: %s\ndata: %s\n\n", name, data); err != nil {
 				return err

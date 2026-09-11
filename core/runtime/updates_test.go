@@ -27,6 +27,9 @@ func TestUpdatesCoalescesDomainsAfterPublish(t *testing.T) {
 		if !reflect.DeepEqual(event.Domains, []string{"integrations", "nodes", "session"}) || event.Revision != 2 || event.Timestamp.IsZero() {
 			t.Fatalf("%+v", event)
 		}
+		if event.Encoded() != nil {
+			t.Fatal("coalesced update kept publish-time bytes")
+		}
 	case <-time.After(time.Second):
 		t.Fatal("missing update")
 	}
@@ -34,6 +37,37 @@ func TestUpdatesCoalescesDomainsAfterPublish(t *testing.T) {
 	case event := <-events:
 		t.Fatalf("uncoalesced update: %+v", event)
 	default:
+	}
+}
+
+func TestUpdatesSharesSerializedEventBytes(t *testing.T) {
+	u := NewUpdates()
+	first, a, cancelA := u.Subscribe()
+	defer cancelA()
+	_, b, cancelB := u.Subscribe()
+	defer cancelB()
+	if first.Encoded() != nil {
+		t.Fatal("ready update carries publish bytes")
+	}
+	u.Publish("nodes")
+	var events []Update
+	for _, ch := range []<-chan Update{a, b} {
+		select {
+		case event := <-ch:
+			events = append(events, event)
+		case <-time.After(time.Second):
+			t.Fatal("missing update")
+		}
+	}
+	expected, err := json.Marshal(events[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(events[0].Encoded()) != string(expected) {
+		t.Fatalf("shared bytes differ from wire bytes: %s vs %s", events[0].Encoded(), expected)
+	}
+	if reflect.ValueOf(events[0].Encoded()).Pointer() != reflect.ValueOf(events[1].Encoded()).Pointer() {
+		t.Fatal("publish serialized per subscriber instead of sharing bytes")
 	}
 }
 
