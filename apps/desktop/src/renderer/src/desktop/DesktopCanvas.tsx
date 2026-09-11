@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react'
 import type { RouteId } from './canvas'
 import type { Rect } from '../../../shared/desktop-windows'
+import type { CanvasBounds } from '../store/windows'
 import { DesktopWindow } from './DesktopWindow'
-import { Taskbar } from './Taskbar'
+import { Taskbar, TASKBAR_H } from './Taskbar'
 import { ROUTES } from '../routes/registry'
 import { IconLayer } from './IconLayer'
 import { WallpaperLayer } from './WallpaperLayer'
@@ -22,26 +23,21 @@ export type DesktopCanvasProps = {
   open: string[]
   zOrder: string[]
   minimized: string[]
+  maximized: string[]
   rects: Record<string, Rect>
   onSelect: (route: string) => void
   onClose: (route: string) => void
   onMinimize: (route: string) => void
-  onMaximize: (route: string) => void
+  onMaximize: (route: string, bounds: CanvasBounds) => void
   onCommit: (route: string, rect: Rect) => void
 }
 
-const triggerStyle: React.CSSProperties = {
-  border: '1px solid var(--z-nav-border)',
-  borderRadius: 8,
-  background: 'transparent',
-  color: 'var(--z-ink)',
-  fontFamily: 'inherit',
-  fontSize: 10.5,
-  fontWeight: 700,
-  letterSpacing: '0.1em',
-  padding: '3px 10px',
-  cursor: 'pointer'
-}
+// Maximize spans the entire canvas edge to edge; the taskbar stays visible
+// below it, so canvas height is the viewport minus the bar.
+const canvasBounds = (): CanvasBounds => ({
+  w: window.innerWidth,
+  h: window.innerHeight - TASKBAR_H
+})
 
 const openIcon = (icon: DesktopIcon): void => {
   const prefs = useDesktopPrefs.getState()
@@ -56,6 +52,7 @@ export function DesktopCanvas({
   open,
   zOrder,
   minimized,
+  maximized,
   rects,
   onSelect,
   onClose,
@@ -69,6 +66,13 @@ export function DesktopCanvas({
   const focus = useWindows((s) => s.focus)
   useEffect(() => {
     void hydrateDesktopPrefs()
+  }, [])
+  useEffect(() => {
+    // A maximized window must keep spanning the canvas when the app window
+    // itself is resized.
+    const refitMaximized = (): void => useWindows.getState().refit(canvasBounds())
+    window.addEventListener('resize', refitMaximized)
+    return () => window.removeEventListener('resize', refitMaximized)
   }, [])
   const visible = zOrder.filter((r) => open.includes(r) && !minimized.includes(r))
   const front = visible.at(-1) ?? null
@@ -100,10 +104,11 @@ export function DesktopCanvas({
             title={fileWindow ? viewerTitle(fileWindow) : undefined}
             rect={rects[id]}
             front={id === front}
+            maximized={maximized.includes(id)}
             onSelect={() => (fileWindow ? focus(id) : onSelect(id))}
             onClose={() => onClose(id)}
             onMinimize={() => onMinimize(id)}
-            onMaximize={() => onMaximize(id)}
+            onMaximize={() => onMaximize(id, canvasBounds())}
             onCommit={(r) => {
               if (fileWindow) {
                 useWindows.getState().commit(id, r)
@@ -121,12 +126,14 @@ export function DesktopCanvas({
           </DesktopWindow>
         )
       })}
-      <Taskbar open={open} minimized={minimized} front={front} onSelect={onSelect} />
-      <div style={{ position: 'absolute', right: 10, bottom: 5, zIndex: 21 }}>
-        <button type="button" style={triggerStyle} onClick={() => setSettingsOpen(true)}>
-          SETTINGS
-        </button>
-      </div>
+      <Taskbar
+        open={open}
+        minimized={minimized}
+        front={front}
+        onSelect={onSelect}
+        onMinimize={onMinimize}
+        onOpenSettings={() => setSettingsOpen(true)}
+      />
       {settingsOpen ? (
         <SettingsSheet
           wallpaper={wallpaper}

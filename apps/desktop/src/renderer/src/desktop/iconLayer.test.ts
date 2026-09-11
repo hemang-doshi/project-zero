@@ -9,7 +9,6 @@ import {
   SEED_BOTTOM_RESERVE,
   SEED_VIEWPORT,
   iconGridPos,
-  monogram,
   type DesktopIcon
 } from './items'
 
@@ -43,20 +42,24 @@ describe('icon geometry', () => {
       expect(p.y + ICON_H).toBeLessThanOrEqual(SEED_VIEWPORT.height - SEED_BOTTOM_RESERVE)
     })
   })
-  it('builds the tile monogram from the label', () => {
-    expect(monogram('Desk')).toBe('DE')
-    expect(monogram('Flight Recorder')).toBe('FR')
-    expect(monogram('Zero Bot')).toBe('ZB')
-  })
 })
 
 describe('IconLayer render', () => {
-  it('renders every icon label and tile glyph', () => {
+  it('renders every icon label', () => {
     const html = renderToString(createElement(IconLayer, props([])))
     expect(html).toContain('Desk')
-    expect(html).toContain('DE')
     expect(html).toContain('README.txt')
-    expect(html).toContain('TXT')
+  })
+  it('draws real svg glyphs on layered tiles — not letter squares', () => {
+    const html = renderToString(createElement(IconLayer, props([])))
+    expect((html.match(/data-glyph=/g) ?? []).length).toBe(icons.length)
+    expect(html).toContain(
+      'linear-gradient(180deg, var(--z-card-cream) 0%, var(--z-canvas-tan) 100%)'
+    )
+    expect(html).toContain('inset 0 1px 0 var(--z-card-white)')
+    expect(html).toContain('0 3px 9px rgba(0,0,0,.14)')
+    expect(html).not.toContain('>DE<')
+    expect(html).not.toContain('>TXT<')
   })
   it('marks route icons of open routes with the running indicator', () => {
     const open = renderToString(createElement(IconLayer, props(['desk'])))

@@ -26,6 +26,7 @@ function App(): React.JSX.Element {
   const open = useWindows((s) => s.open)
   const zOrder = useWindows((s) => s.zOrder)
   const minimized = useWindows((s) => s.minimized)
+  const maximized = useWindows((s) => s.maximized)
   const rects = useWindows((s) => s.rects)
   const focus = useWindows((s) => s.focus)
   const close = useWindows((s) => s.close)
@@ -45,6 +46,7 @@ function App(): React.JSX.Element {
         open={open}
         zOrder={zOrder}
         minimized={minimized}
+        maximized={maximized}
         rects={rects}
         onSelect={focus}
         onClose={close}

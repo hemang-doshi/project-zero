@@ -8,8 +8,7 @@ import {
   type Rect
 } from '../../../shared/desktop-windows'
 
-const MAX_W = 1100
-const MAX_H = 900
+export type CanvasBounds = { w: number; h: number }
 
 const SEED_ROUTES = ['desk', 'runtime'] as const
 
@@ -22,6 +21,7 @@ export type WindowsData = {
   open: string[]
   zOrder: string[]
   minimized: string[]
+  maximized: string[]
   selected: string
   rects: Record<string, Rect>
 }
@@ -32,7 +32,8 @@ export type WindowsState = WindowsData & {
   openFile: (id: string, rect?: Rect) => void
   close: (route: string) => void
   minimize: (route: string) => void
-  maximize: (route: string) => void
+  maximize: (route: string, bounds: CanvasBounds) => void
+  refit: (bounds: CanvasBounds) => void
   commit: (route: string, rect: Rect) => void
 }
 
@@ -41,11 +42,14 @@ export function initialWindows(): WindowsData {
     open: [...SEED_ROUTES],
     zOrder: [...SEED_ROUTES],
     minimized: [],
+    maximized: [],
     selected: SEED_ROUTES[SEED_ROUTES.length - 1],
     rects: seedRects()
   }
 }
 
+// Pre-maximize rects, one per route, module-level like the store itself:
+// maximized state is deliberately not persisted (Task 8 ruling).
 const resting: Record<string, Rect> = {}
 
 const openWindowId = (
@@ -70,10 +74,25 @@ const openWindowId = (
   })
 }
 
+const maximizedRect = (bounds: CanvasBounds): Rect => {
+  const clamped = clampSize(bounds.w, bounds.h)
+  return { x: 0, y: 0, w: clamped.w, h: clamped.h }
+}
+
 export const useWindows = create<WindowsState>((set, get) => ({
   ...initialWindows(),
-  focus: (route) =>
-    set((prev) => ({
+  focus: (route) => {
+    const prev = get()
+    // Clicking an already-front window must be a state no-op (Task 8 rule):
+    // no set() call, so no store notification and no re-render churn.
+    if (
+      prev.zOrder.at(-1) === route &&
+      prev.selected === route &&
+      !prev.minimized.includes(route)
+    ) {
+      return
+    }
+    set({
       zOrder:
         prev.zOrder.at(-1) === route
           ? prev.zOrder
@@ -82,7 +101,8 @@ export const useWindows = create<WindowsState>((set, get) => ({
         ? prev.minimized.filter((r) => r !== route)
         : prev.minimized,
       selected: route
-    })),
+    })
+  },
   openRoute: (route, rect) => openWindowId(route, rect, get, set),
   openFile: (id, rect) => openWindowId(`file:${id}`, rect, get, set),
   close: (route) =>
@@ -94,6 +114,7 @@ export const useWindows = create<WindowsState>((set, get) => ({
         open,
         zOrder,
         minimized,
+        maximized: prev.maximized.filter((r) => r !== route),
         selected:
           prev.selected === route ? fallbackSelection(route, zOrder, minimized) : prev.selected
       }
@@ -108,20 +129,42 @@ export const useWindows = create<WindowsState>((set, get) => ({
         prev.selected === route ? fallbackSelection(route, prev.zOrder, minimized) : prev.selected
     })
   },
-  maximize: (route) => {
-    const cur = get().rects[route]
-    if (cur.w === MAX_W && cur.h === MAX_H && cur.x === 0 && cur.y === 0) {
+  maximize: (route, bounds) => {
+    const prev = get()
+    const rects = { ...prev.rects }
+    if (prev.maximized.includes(route)) {
       const rest = resting[route]
-      if (rest) set((prev) => ({ rects: { ...prev.rects, [route]: rest } }))
+      if (rest) rects[route] = rest
+      set({ rects, maximized: prev.maximized.filter((r) => r !== route) })
       return
     }
-    resting[route] = cur
-    set((prev) => ({ rects: { ...prev.rects, [route]: { x: 0, y: 0, w: MAX_W, h: MAX_H } } }))
+    resting[route] = rects[route]
+    rects[route] = maximizedRect(bounds)
+    set({ rects, maximized: [...prev.maximized, route] })
+  },
+  refit: (bounds) => {
+    const prev = get()
+    if (prev.maximized.length === 0) return
+    const rect = maximizedRect(bounds)
+    const rects = { ...prev.rects }
+    for (const route of prev.maximized) rects[route] = rect
+    set({ rects })
   },
   commit: (route, rect) => {
     const clamped = clampSize(rect.w, rect.h)
-    set((prev) => ({
-      rects: { ...prev.rects, [route]: { ...rect, w: clamped.w, h: clamped.h } }
-    }))
+    const committed = { ...rect, w: clamped.w, h: clamped.h }
+    const prev = get()
+    if (prev.maximized.includes(route)) {
+      // Resizing a maximized window commits the resize as the new normal
+      // rect: the window leaves maximized state and un-maximize from here
+      // restores exactly what the user resized to.
+      resting[route] = committed
+      set({
+        rects: { ...prev.rects, [route]: committed },
+        maximized: prev.maximized.filter((r) => r !== route)
+      })
+      return
+    }
+    set((cur) => ({ rects: { ...cur.rects, [route]: committed } }))
   }
 }))

@@ -23,10 +23,10 @@ export default defineConfig({
   plugins: [assetPaths()],
   test: {
     include: [
-      'src/main/**/*.test.ts',
-      'src/shared/**/*.test.ts',
-      'src/renderer/**/*.test.ts',
-      'tools/**/*.test.ts'
+      'src/main/**/*.test.{ts,tsx}',
+      'src/shared/**/*.test.{ts,tsx}',
+      'src/renderer/**/*.test.{ts,tsx}',
+      'tools/**/*.test.{ts,tsx}'
     ],
     environment: 'node'
   }
