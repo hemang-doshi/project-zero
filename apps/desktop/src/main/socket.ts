@@ -41,43 +41,6 @@ export function fetchSnapshot(
   })
 }
 
-export function postCommand(socketPath: string, body: unknown): Promise<unknown> {
-  return new Promise((resolve, reject) => {
-    const payload = JSON.stringify(body)
-    const req = http.request(
-      {
-        socketPath,
-        path: '/v0.1/commands',
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Content-Length': Buffer.byteLength(payload)
-        }
-      },
-      (res) => {
-        if (res.statusCode !== 200) {
-          res.resume()
-          reject(new Error(`Command rejected (${res.statusCode})`))
-          return
-        }
-        const chunks: Buffer[] = []
-        res.on('data', (c: Buffer) => chunks.push(c))
-        res.on('end', () => {
-          try {
-            resolve(JSON.parse(Buffer.concat(chunks).toString('utf8')))
-          } catch {
-            reject(new Error('Invalid command response encoding'))
-          }
-        })
-        res.on('error', reject)
-      }
-    )
-    req.setTimeout(DEFAULT_TIMEOUT_MS, () => req.destroy(new Error('Command request timed out')))
-    req.on('error', reject)
-    req.end(payload)
-  })
-}
-
 export function openStream(
   socketPath: string,
   onEvent: (e: SSEEvent) => void,
