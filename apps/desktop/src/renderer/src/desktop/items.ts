@@ -50,9 +50,3 @@ export const iconGridPos = (index: number): { x: number; y: number } => ({
   x: GRID_ORIGIN.x + Math.floor(index / SEED_PER_COLUMN) * (ICON_W + GRID_COLUMN_GAP),
   y: GRID_ORIGIN.y + (index % SEED_PER_COLUMN) * GRID_STEP_Y
 })
-
-export const monogram = (label: string): string => {
-  const words = label.split(/\s+/).filter((w) => w.length > 0)
-  if (words.length >= 2) return (words[0][0] + words[1][0]).toUpperCase()
-  return label.slice(0, 2).toUpperCase()
-}

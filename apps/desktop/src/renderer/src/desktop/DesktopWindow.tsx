@@ -37,20 +37,12 @@ const lightStyle = (color: string): React.CSSProperties => ({
   background: color
 })
 
-const lightMouseDown = (e: React.MouseEvent<HTMLButtonElement>): void => e.stopPropagation()
-
-const lightClick =
-  (action: () => void) =>
-  (e: React.MouseEvent<HTMLButtonElement>): void => {
-    e.stopPropagation()
-    action()
-  }
-
 export type DesktopWindowProps = {
   route: string
   title?: string
   rect: Rect
   front: boolean
+  maximized: boolean
   onSelect: () => void
   onClose: () => void
   onMinimize: () => void
@@ -64,6 +56,7 @@ export function DesktopWindow({
   title: titleOverride,
   rect,
   front,
+  maximized,
   onSelect,
   onClose,
   onMinimize,
@@ -80,6 +73,8 @@ export function DesktopWindow({
       size={{ width: rect.w, height: rect.h }}
       position={{ x: rect.x, y: rect.y }}
       dragHandleClassName="zw-header"
+      cancel=".zw-light"
+      onMouseDown={() => onSelect()}
       enableResizing={ALL_EIGHT}
       minWidth={320}
       minHeight={240}
@@ -102,34 +97,31 @@ export function DesktopWindow({
       style={{
         zIndex: front ? 10 : 1,
         background: 'var(--z-card-cream)',
-        borderRadius: 14,
+        borderRadius: maximized ? 0 : 14,
         overflow: 'hidden',
         boxShadow: front ? '0 12px 32px rgba(0,0,0,.18)' : '0 6px 16px rgba(0,0,0,.10)'
       }}
     >
-      <div className="zw-header" style={headerStyle} onClick={() => onSelect()}>
+      <div className="zw-header" style={headerStyle}>
         <button
           type="button"
           className="zw-light"
           style={lightStyle('var(--z-error-red)')}
-          onMouseDown={lightMouseDown}
-          onClick={lightClick(onClose)}
+          onClick={onClose}
           aria-label="Close"
         />
         <button
           type="button"
           className="zw-light"
           style={lightStyle('var(--z-marker-yellow)')}
-          onMouseDown={lightMouseDown}
-          onClick={lightClick(onMinimize)}
+          onClick={onMinimize}
           aria-label="Minimize"
         />
         <button
           type="button"
           className="zw-light"
           style={lightStyle('var(--z-status-green)')}
-          onMouseDown={lightMouseDown}
-          onClick={lightClick(onMaximize)}
+          onClick={onMaximize}
           aria-label="Maximize"
         />
         <span style={{ pointerEvents: 'none', fontSize: 13, color: 'var(--z-ink)' }}>{title}</span>

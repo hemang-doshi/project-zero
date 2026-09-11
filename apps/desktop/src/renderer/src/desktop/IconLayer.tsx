@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react'
-import { ICON_H, ICON_W, fileById, iconGridPos, monogram, type DesktopIcon } from './items'
+import { ICON_H, ICON_W, iconGridPos, type DesktopIcon } from './items'
+import { DesktopGlyph } from './icons'
 
 export type IconLayerProps = {
   icons: DesktopIcon[]
@@ -45,15 +46,13 @@ const faceStyle: React.CSSProperties = {
   height: 52,
   borderRadius: 13,
   border: '1px solid var(--z-line)',
-  background: 'var(--z-card-cream)',
-  boxShadow: '0 2px 6px rgba(0,0,0,.12)',
+  background: 'linear-gradient(180deg, var(--z-card-cream) 0%, var(--z-canvas-tan) 100%)',
+  boxShadow:
+    'inset 0 1px 0 var(--z-card-white), inset 0 -6px 10px rgba(25,28,32,.05), 0 3px 9px rgba(0,0,0,.14)',
   display: 'flex',
   alignItems: 'center',
   justifyContent: 'center',
-  color: 'var(--z-ink)',
-  fontSize: 13,
-  fontWeight: 700,
-  letterSpacing: '0.06em'
+  color: 'var(--z-ink)'
 }
 
 const dotStyle: React.CSSProperties = {
@@ -152,9 +151,7 @@ export function IconLayer({
           >
             <div style={tileStyle}>
               <div style={faceStyle}>
-                {icon.kind === 'route'
-                  ? monogram(icon.label)
-                  : (fileById(icon.file ?? '')?.ext ?? 'FILE').toUpperCase()}
+                <DesktopGlyph route={icon.route} file={icon.file} size={30} />
                 {running ? <span data-dot="true" style={dotStyle} /> : null}
               </div>
               <span style={labelStyle}>{icon.label}</span>

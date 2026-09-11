@@ -83,4 +83,78 @@ describe('useWindows', () => {
     expect(useWindows.getState().zOrder.at(-1)).toBe('file:readme')
     expect(useWindows.getState().zOrder.filter((r) => r === 'file:readme')).toHaveLength(1)
   })
+
+  it('focusing the already-front selected window does not churn state', () => {
+    let sets = 0
+    const unsubscribe = useWindows.subscribe(() => {
+      sets += 1
+    })
+    useWindows.getState().focus('runtime')
+    expect(sets).toBe(0)
+    unsubscribe()
+  })
+
+  it('focusing an already-front unselected window only selects it', () => {
+    useWindows.setState(initialWindows())
+    useWindows.setState({ selected: 'desk' })
+    let sets = 0
+    const unsubscribe = useWindows.subscribe(() => {
+      sets += 1
+    })
+    useWindows.getState().focus('runtime')
+    expect(sets).toBe(1)
+    expect(useWindows.getState().zOrder).toEqual(['desk', 'runtime'])
+    expect(useWindows.getState().selected).toBe('runtime')
+    unsubscribe()
+  })
+})
+
+describe('window maximize', () => {
+  beforeEach(() => {
+    useWindows.setState(initialWindows())
+  })
+
+  it('maximize spans the full canvas bounds', () => {
+    useWindows.getState().maximize('desk', { w: 900, h: 638 })
+    expect(useWindows.getState().rects.desk).toEqual({ x: 0, y: 0, w: 900, h: 638 })
+    expect(useWindows.getState().maximized).toEqual(['desk'])
+  })
+
+  it('un-maximize restores the pre-maximize rect', () => {
+    useWindows.getState().maximize('desk', { w: 900, h: 638 })
+    useWindows.getState().maximize('desk', { w: 900, h: 638 })
+    expect(useWindows.getState().rects.desk).toEqual({ x: 0, y: 0, w: 560, h: 480 })
+    expect(useWindows.getState().maximized).toEqual([])
+  })
+
+  it('committing a resize on a maximized window makes it the new normal rect', () => {
+    useWindows.getState().maximize('desk', { w: 900, h: 638 })
+    useWindows.getState().commit('desk', { x: 12, y: 14, w: 640, h: 520 })
+    expect(useWindows.getState().maximized).toEqual([])
+    expect(useWindows.getState().rects.desk).toEqual({ x: 12, y: 14, w: 640, h: 520 })
+    useWindows.getState().maximize('desk', { w: 900, h: 638 })
+    expect(useWindows.getState().rects.desk).toEqual({ x: 0, y: 0, w: 900, h: 638 })
+    useWindows.getState().maximize('desk', { w: 900, h: 638 })
+    expect(useWindows.getState().rects.desk).toEqual({ x: 12, y: 14, w: 640, h: 520 })
+  })
+
+  it('refit re-spans every maximized window to new bounds and leaves others alone', () => {
+    useWindows.getState().openRoute('network')
+    useWindows.getState().maximize('desk', { w: 900, h: 638 })
+    useWindows.getState().maximize('network', { w: 900, h: 638 })
+    useWindows.getState().refit({ w: 1000, h: 700 })
+    expect(useWindows.getState().rects.desk).toEqual({ x: 0, y: 0, w: 1000, h: 700 })
+    expect(useWindows.getState().rects.network).toEqual({ x: 0, y: 0, w: 1000, h: 700 })
+    expect(useWindows.getState().maximized).toEqual(['desk', 'network'])
+  })
+
+  it('refit with no maximized windows does nothing', () => {
+    let sets = 0
+    const unsubscribe = useWindows.subscribe(() => {
+      sets += 1
+    })
+    useWindows.getState().refit({ w: 1000, h: 700 })
+    expect(sets).toBe(0)
+    unsubscribe()
+  })
 })
