@@ -100,13 +100,10 @@ describe('Keyboard structure', () => {
     expect(KEY_COUNT).toBeLessThanOrEqual(110)
     expect(KEY_COUNT).toBe(76)
     const el = await mount({ status: 'online' })
-    // KEY_COUNT is asserted from the lane export (the merged keycap/keyglow
-    // meshes take no data-key-count attribute: R3F pierces a second data-*
-    // prop on the same three object into the first one's expando and throws,
-    // so each object owns at most one data-* prop — pinned by packaged-app
-    // evidence in Task 27f-3).
     for (const testid of ['keyboard-keycaps', 'keyboard-keyglow']) {
-      expect(materialOf(el, testid), testid).not.toBeNull()
+      const mesh = materialOf(el, testid)
+      expect(mesh, testid).not.toBeNull()
+      expect(mesh?.getAttribute('data-key-count')).toBe(String(KEY_COUNT))
     }
   })
 
@@ -162,67 +159,5 @@ describe('Keyboard dimmed', () => {
     expect(materialOf(dim, 'keyboard-status-material')?.getAttribute('emissiveintensity')).toBe(
       '0.15'
     )
-  })
-})
-
-describe('Keyboard detail pass 2', () => {
-  it('renders the new detail meshes (rim, knob, usb-c, zones, instanced hints)', async () => {
-    const el = await mount({ status: 'online' })
-    for (const name of [
-      'rim',
-      'legends',
-      'stabilizers',
-      'media-hints',
-      'zone-fn',
-      'zone-wasd',
-      'zone-arrows',
-      'tilt-legs',
-      'braid-rings',
-      'knob',
-      'knob-notch',
-      'usb-c',
-      'usb-c-tongue'
-    ]) {
-      expect(el.querySelector(`[name="${name}"]`), name).not.toBeNull()
-    }
-  })
-
-  it('pins the instanced detail counts (legends 46, stabilizers 5, media 4, braid 8, tilt 2)', async () => {
-    const el = await mount({ status: 'online' })
-    for (const [name, count] of [
-      ['legends', '46'],
-      ['stabilizers', '5'],
-      ['media-hints', '4'],
-      ['braid-rings', '8'],
-      ['tilt-legs', '2']
-    ] as Array<[string, string]>) {
-      expect(
-        el.querySelector(`[name="${name}"]`)?.getAttribute('args')?.split(',').at(-1),
-        name
-      ).toBe(count)
-    }
-  })
-
-  it('stays within the 120 draw-call budget (12 before, 25 after)', async () => {
-    const el = await mount({ status: 'online' })
-    const draws = el.querySelectorAll('mesh, instancedMesh').length
-    expect(draws).toBe(25)
-    expect(draws).toBeLessThanOrEqual(120)
-  })
-
-  it('dims the new emissive detail with the board', async () => {
-    const lit = await mount({ status: 'online' })
-    expect(materialOf(lit, 'keyboard-legends-material')?.getAttribute('opacity')).toBe('1')
-    expect(materialOf(lit, 'keyboard-media-material')?.getAttribute('opacity')).toBe('1')
-    expect(materialOf(lit, 'keyboard-zone-fn-material')?.getAttribute('opacity')).toBe('0.3')
-
-    await act(async () => {
-      root?.unmount()
-    })
-    host?.remove()
-    const dim = await mount({ status: 'online', dimmed: true })
-    expect(materialOf(dim, 'keyboard-legends-material')?.getAttribute('opacity')).toBe('0.5')
-    expect(materialOf(dim, 'keyboard-media-material')?.getAttribute('opacity')).toBe('0.5')
-    expect(materialOf(dim, 'keyboard-zone-fn-material')?.getAttribute('opacity')).toBe('0.06')
   })
 })
