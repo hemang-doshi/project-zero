@@ -164,3 +164,62 @@ describe('Keyboard dimmed', () => {
     )
   })
 })
+
+describe('Keyboard detail pass 2', () => {
+  it('renders the new detail meshes (rim, knob, usb-c, zones, instanced hints)', async () => {
+    const el = await mount({ status: 'online' })
+    for (const name of [
+      'rim',
+      'legends',
+      'stabilizers',
+      'media-hints',
+      'zone-fn',
+      'zone-wasd',
+      'zone-arrows',
+      'tilt-legs',
+      'braid-rings',
+      'knob',
+      'knob-notch',
+      'usb-c',
+      'usb-c-tongue'
+    ]) {
+      expect(el.querySelector(`[name="${name}"]`), name).not.toBeNull()
+    }
+  })
+
+  it('pins the instanced detail counts (legends 46, stabilizers 5, media 4, braid 8, tilt 2)', async () => {
+    const el = await mount({ status: 'online' })
+    for (const [name, count] of [
+      ['legends', '46'],
+      ['stabilizers', '5'],
+      ['media-hints', '4'],
+      ['braid-rings', '8'],
+      ['tilt-legs', '2']
+    ] as Array<[string, string]>) {
+      expect(el.querySelector(`[name="${name}"]`)?.getAttribute('data-count'), name).toBe(count)
+    }
+  })
+
+  it('stays within the 120 draw-call budget (12 before, 25 after)', async () => {
+    const el = await mount({ status: 'online' })
+    const draws = el.querySelectorAll('mesh, instancedMesh').length
+    expect(draws).toBe(25)
+    expect(draws).toBeLessThanOrEqual(120)
+  })
+
+  it('dims the new emissive detail with the board', async () => {
+    const lit = await mount({ status: 'online' })
+    expect(materialOf(lit, 'keyboard-legends-material')?.getAttribute('opacity')).toBe('1')
+    expect(materialOf(lit, 'keyboard-media-material')?.getAttribute('opacity')).toBe('1')
+    expect(materialOf(lit, 'keyboard-zone-fn-material')?.getAttribute('opacity')).toBe('0.3')
+
+    await act(async () => {
+      root?.unmount()
+    })
+    host?.remove()
+    const dim = await mount({ status: 'online', dimmed: true })
+    expect(materialOf(dim, 'keyboard-legends-material')?.getAttribute('opacity')).toBe('0.5')
+    expect(materialOf(dim, 'keyboard-media-material')?.getAttribute('opacity')).toBe('0.5')
+    expect(materialOf(dim, 'keyboard-zone-fn-material')?.getAttribute('opacity')).toBe('0.06')
+  })
+})

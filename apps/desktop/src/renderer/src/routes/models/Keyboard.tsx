@@ -1,6 +1,7 @@
 /* eslint-disable react/no-unknown-property -- R3F three intrinsics (position, rotation, scale, args, geometry, material, color, emissive, …) that the DOM property allowlist cannot know. Scoped to this model file only. */
 /* eslint-disable react-refresh/only-export-components -- binding model-lane contract: MODEL_FOOTPRINT + STATUS_HEX must live beside the component. */
-import { memo } from 'react'
+import { memo, useLayoutEffect, useRef } from 'react'
+import { invalidate } from '@react-three/fiber'
 import * as THREE from 'three'
 
 export type KeyboardStatus = 'online' | 'suspect' | 'offline' | 'gated'
@@ -182,6 +183,63 @@ function mergeBoxes(parts: BoxPart[], withColor: boolean): THREE.BufferGeometry 
 
 const CAP_COLOR = new THREE.Color(CAP)
 
+// Detail-pass-2 accent colors (hardcoded, not tokens — the model-lane rule
+// forbids new tokens; nearest-token kin noted where one exists).
+const RIM_ALU = '#8E949D' // brushed aluminum (no token aluminum exists)
+const STAB_BAR = '#4B5563' // stabilizer steel (no token exists)
+const LEGEND_LIT = '#D7DBE0' // cap-legend silkscreen (no token exists)
+const LEGEND_DIM = '#5B6068'
+const MEDIA_LIT = '#BAE6FD' // media hints, near --z-highlight-blue
+const MEDIA_DIM = '#3E4A5A'
+const KNOB_NOTCH = '#E8EAED' // indicator notch (no token exists)
+const USBC_TONGUE = '#9AA0A8' // connector tongue metal (no token exists)
+const BRAID = '#23262C' // braided sleeve (no token exists)
+// Per-zone RGB washes: function row ice-blue, WASD near --z-status-green,
+// arrows near --z-marker-yellow.
+const ZONE_FN = '#7DD3FC'
+const ZONE_WASD = '#34D399'
+const ZONE_ARROWS = '#FBBF24'
+
+// Detail pass 2 (Task 29e) instancing budgets — 13 new draws (12 → 25, cap
+// 120): legends, stabilizers, media hints, braid rings, tilt legs (one
+// instancedMesh each), knob + notch, USB-C + tongue, rim (one merged mesh),
+// three zone washes.
+const LEGEND_SIZE = 0.032
+const LEGEND_Y = CAP_Y + CAP_H / 2 + 0.002
+const STAB_Y = CAP_Y - CAP_H / 2 - 0.009
+// Alphanumeric 1u caps in the four staggered rows only: 13 + 12 + 11 + 10.
+const LEGEND_KEYS = KEYS.filter(
+  (k) => k.row >= 1 && k.row <= 4 && Math.abs(k.w - (PX - GAP)) < 1e-9
+)
+export const LEGEND_COUNT = LEGEND_KEYS.length
+// Wide keys (≥2u): backspace, enter, both shifts, spacebar.
+const STAB_KEYS = KEYS.filter((k) => k.w >= 2 * PX - GAP - 1e-9)
+export const STAB_COUNT = STAB_KEYS.length
+// First four function-row caps carry media-key hint bars.
+const MEDIA_KEYS = KEYS.filter((k) => k.row === 0).slice(0, 4)
+export const MEDIA_COUNT = MEDIA_KEYS.length
+const BRAID_N = 8
+const TILT_LEG_XS = [-0.9, 0.9]
+export const TILT_LEG_COUNT = TILT_LEG_XS.length
+
+// Aluminum top-frame rim: four rails merged into ONE geometry (one draw).
+const RIM_Y = 0.16
+const rimGeometry = mergeBoxes(
+  [
+    { w: 0.03, h: 0.02, d: 1.02, x: -1.385, y: RIM_Y, z: 0, color: null },
+    { w: 0.03, h: 0.02, d: 1.02, x: 1.385, y: RIM_Y, z: 0, color: null },
+    { w: 2.8, h: 0.02, d: 0.03, x: 0, y: RIM_Y, z: -0.495, color: null },
+    { w: 2.8, h: 0.02, d: 0.03, x: 0, y: RIM_Y, z: 0.495, color: null }
+  ],
+  false
+)
+
+type FillItem = {
+  p: [number, number, number]
+  rx?: number
+  sx?: number
+}
+
 // All 76 caps in one mesh; the function row rides 0.035 higher.
 const capGeometry = mergeBoxes(
   KEYS.map((k) => ({
@@ -245,6 +303,65 @@ function KeyboardInner({
   const statusGlow = dimmed ? 0.15 : 1.6
   const glowOpacity = dimmed ? 0.5 : 1
   const washOpacity = dimmed ? 0.06 : 0.3
+  const legendOpacity = dimmed ? 0.5 : 1
+
+  // Instanced repeated parts (legend quads, stabilizer bars, media hints,
+  // braid rings, tilt legs). Same harness as the iPhone/ESP32 lanes: the
+  // `typeof setMatrixAt` guard no-ops under the mock-DOM unit render, where
+  // refs are plain elements instead of THREE objects. useLayoutEffect +
+  // demand invalidate(): matrices fill before paint, and the global
+  // invalidate() no-ops when no Canvas is mounted.
+  const legendsRef = useRef<THREE.InstancedMesh | null>(null)
+  const stabRef = useRef<THREE.InstancedMesh | null>(null)
+  const mediaRef = useRef<THREE.InstancedMesh | null>(null)
+  const braidRef = useRef<THREE.InstancedMesh | null>(null)
+  const tiltRef = useRef<THREE.InstancedMesh | null>(null)
+
+  useLayoutEffect(() => {
+    const dummy = new THREE.Object3D()
+    const fill = (mesh: THREE.InstancedMesh | null, items: FillItem[]): void => {
+      if (mesh === null || typeof mesh.setMatrixAt !== 'function') return
+      items.forEach((item, i) => {
+        dummy.position.set(item.p[0], item.p[1], item.p[2])
+        dummy.rotation.set(item.rx ?? 0, 0, 0)
+        dummy.scale.set(item.sx ?? 1, 1, 1)
+        dummy.updateMatrix()
+        mesh.setMatrixAt(i, dummy.matrix)
+      })
+      mesh.instanceMatrix.needsUpdate = true
+    }
+    fill(
+      legendsRef.current,
+      LEGEND_KEYS.map((k) => ({ p: [k.x, LEGEND_Y + k.lift, k.z], rx: -Math.PI / 2 }))
+    )
+    fill(
+      stabRef.current,
+      STAB_KEYS.map((k) => ({ p: [k.x, STAB_Y + k.lift, k.z], sx: k.w * 0.72 }))
+    )
+    fill(
+      mediaRef.current,
+      MEDIA_KEYS.map((k) => ({ p: [k.x, LEGEND_Y + k.lift, k.z], rx: -Math.PI / 2 }))
+    )
+    fill(
+      braidRef.current,
+      Array.from(
+        { length: BRAID_N },
+        (_, i) => ({ p: [-1.0, 0.125 + i * 0.011, -0.513], rx: Math.PI / 2 }) as FillItem
+      )
+    )
+    fill(
+      tiltRef.current,
+      TILT_LEG_XS.map((x) => ({ p: [x, 0.045, -0.36], rx: -0.45 }) as FillItem)
+    )
+    // Demand-frameloop nudge: the one-shot fills above land before paint, so
+    // request the frame. Guarded — the mock-DOM unit render has no Canvas,
+    // and some test mocks of @react-three/fiber omit invalidate entirely.
+    try {
+      invalidate()
+    } catch {
+      // No live Canvas to nudge; the initial mount frame already covers it.
+    }
+  }, [])
 
   return (
     <group position={[0, 0, 0]}>
@@ -288,6 +405,25 @@ function KeyboardInner({
           </mesh>
         ))}
 
+        {/* flip-out tilt legs under the rear edge (one instanced draw) */}
+        <instancedMesh
+          name="tilt-legs"
+          data-testid="keyboard-tilt-legs"
+          data-count={TILT_LEG_COUNT}
+          ref={tiltRef}
+          args={[undefined, undefined, TILT_LEG_COUNT]}
+          frustumCulled={false}
+        >
+          <boxGeometry args={[0.2, 0.022, 0.13]} />
+          <meshStandardMaterial
+            color={NEAR_BLACK}
+            roughness={0.8}
+            metalness={0.1}
+            transparent={dimmed}
+            opacity={bodyOpacity}
+          />
+        </instancedMesh>
+
         {/* all 76 keycaps in a single draw call (KEY_COUNT exported beside the
             component; no data-key-count attribute — R3F pierces a second
             data-* prop on the same object into the first one's expando and
@@ -311,6 +447,125 @@ function KeyboardInner({
             color={dimmed ? '#575064' : '#FFFFFF'}
             transparent={dimmed}
             opacity={glowOpacity}
+            toneMapped={false}
+          />
+        </mesh>
+
+        {/* aluminum top-frame rim around the key field (one merged mesh) */}
+        <mesh name="rim" data-testid="keyboard-rim" geometry={rimGeometry}>
+          <meshStandardMaterial
+            color={RIM_ALU}
+            roughness={0.35}
+            metalness={0.8}
+            transparent={dimmed}
+            opacity={bodyOpacity}
+          />
+        </mesh>
+
+        {/* per-key legend glyphs: tiny emissive quads on alphanumeric caps
+            only (no textures; one instanced draw) */}
+        <instancedMesh
+          name="legends"
+          data-testid="keyboard-legends"
+          data-count={LEGEND_COUNT}
+          ref={legendsRef}
+          args={[undefined, undefined, LEGEND_COUNT]}
+          frustumCulled={false}
+        >
+          <planeGeometry args={[LEGEND_SIZE, LEGEND_SIZE]} />
+          <meshBasicMaterial
+            data-testid="keyboard-legends-material"
+            color={dimmed ? LEGEND_DIM : LEGEND_LIT}
+            transparent={dimmed}
+            opacity={legendOpacity}
+            toneMapped={false}
+          />
+        </instancedMesh>
+
+        {/* stabilizer hint bars under wide keys (one instanced draw) */}
+        <instancedMesh
+          name="stabilizers"
+          data-testid="keyboard-stabilizers"
+          data-count={STAB_COUNT}
+          ref={stabRef}
+          args={[undefined, undefined, STAB_COUNT]}
+          frustumCulled={false}
+        >
+          <boxGeometry args={[1, 0.014, 0.014]} />
+          <meshStandardMaterial
+            color={STAB_BAR}
+            roughness={0.6}
+            metalness={0.3}
+            transparent={dimmed}
+            opacity={bodyOpacity}
+          />
+        </instancedMesh>
+
+        {/* media-key hint bars on the first four function-row caps */}
+        <instancedMesh
+          name="media-hints"
+          data-testid="keyboard-media-hints"
+          data-count={MEDIA_COUNT}
+          ref={mediaRef}
+          args={[undefined, undefined, MEDIA_COUNT]}
+          frustumCulled={false}
+        >
+          <planeGeometry args={[0.05, 0.014]} />
+          <meshBasicMaterial
+            data-testid="keyboard-media-material"
+            color={dimmed ? MEDIA_DIM : MEDIA_LIT}
+            transparent={dimmed}
+            opacity={legendOpacity}
+            toneMapped={false}
+          />
+        </instancedMesh>
+
+        {/* per-zone RGB washes: function row, WASD cluster, arrows */}
+        <mesh
+          name="zone-fn"
+          data-testid="keyboard-zone-fn"
+          rotation-x={-Math.PI / 2}
+          position={[0, 0.1535, -0.375]}
+        >
+          <planeGeometry args={[2.58, 0.11]} />
+          <meshBasicMaterial
+            data-testid="keyboard-zone-fn-material"
+            color={ZONE_FN}
+            transparent
+            opacity={washOpacity}
+            depthWrite={false}
+            toneMapped={false}
+          />
+        </mesh>
+        <mesh
+          name="zone-wasd"
+          data-testid="keyboard-zone-wasd"
+          rotation-x={-Math.PI / 2}
+          position={[-0.69, 0.154, -0.005]}
+        >
+          <planeGeometry args={[0.56, 0.34]} />
+          <meshBasicMaterial
+            data-testid="keyboard-zone-wasd-material"
+            color={ZONE_WASD}
+            transparent
+            opacity={washOpacity}
+            depthWrite={false}
+            toneMapped={false}
+          />
+        </mesh>
+        <mesh
+          name="zone-arrows"
+          data-testid="keyboard-zone-arrows"
+          rotation-x={-Math.PI / 2}
+          position={[0.73, 0.1545, 0.29]}
+        >
+          <planeGeometry args={[0.56, 0.3]} />
+          <meshBasicMaterial
+            data-testid="keyboard-zone-arrows-material"
+            color={ZONE_ARROWS}
+            transparent
+            opacity={washOpacity}
+            depthWrite={false}
             toneMapped={false}
           />
         </mesh>
@@ -344,6 +599,68 @@ function KeyboardInner({
             color={NEAR_BLACK}
             roughness={0.6}
             metalness={0.2}
+            transparent={dimmed}
+            opacity={bodyOpacity}
+          />
+        </mesh>
+
+        {/* braided-sleeve hint: segmented rings around the rising coil */}
+        <instancedMesh
+          name="braid-rings"
+          data-testid="keyboard-braid-rings"
+          data-count={BRAID_N}
+          ref={braidRef}
+          args={[undefined, undefined, BRAID_N]}
+          frustumCulled={false}
+        >
+          <torusGeometry args={[0.045, 0.004, 6, 20]} />
+          <meshStandardMaterial
+            color={BRAID}
+            roughness={0.7}
+            metalness={0.2}
+            transparent={dimmed}
+            opacity={bodyOpacity}
+          />
+        </instancedMesh>
+
+        {/* rotary volume knob on the top-right bezel + indicator notch */}
+        <mesh name="knob" data-testid="keyboard-knob" position={[1.345, 0.1775, -0.28]}>
+          <cylinderGeometry args={[0.045, 0.048, 0.055, 24]} />
+          <meshStandardMaterial
+            color={CAP}
+            roughness={0.5}
+            metalness={0.4}
+            transparent={dimmed}
+            opacity={bodyOpacity}
+          />
+        </mesh>
+        <mesh name="knob-notch" position={[1.345, 0.207, -0.26]}>
+          <boxGeometry args={[0.01, 0.006, 0.03]} />
+          <meshBasicMaterial
+            color={KNOB_NOTCH}
+            transparent={dimmed}
+            opacity={legendOpacity}
+            toneMapped={false}
+          />
+        </mesh>
+
+        {/* USB-C port recess on the top edge + connector tongue */}
+        <mesh name="usb-c" data-testid="keyboard-usb-c" position={[0.9, 0.09, -0.505]}>
+          <boxGeometry args={[0.1, 0.035, 0.03]} />
+          <meshStandardMaterial
+            color={NEAR_BLACK}
+            roughness={0.6}
+            metalness={0.2}
+            transparent={dimmed}
+            opacity={bodyOpacity}
+          />
+        </mesh>
+        <mesh name="usb-c-tongue" position={[0.9, 0.09, -0.518]}>
+          <boxGeometry args={[0.07, 0.012, 0.012]} />
+          <meshStandardMaterial
+            color={USBC_TONGUE}
+            roughness={0.4}
+            metalness={0.7}
             transparent={dimmed}
             opacity={bodyOpacity}
           />
