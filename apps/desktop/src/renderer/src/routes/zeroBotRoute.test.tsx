@@ -418,4 +418,131 @@ describe('ZeroBotRoute thread surface', () => {
     })
     await vi.waitFor(() => expect(host?.innerHTML).toContain('No OpenCode sessions found'))
   })
+
+  it('renders the workspace regions: sidebar, canvas, composer and inspector', async () => {
+    stubZero(fakeZero({}))
+    renderRoute()
+    const regions = (name: string): Element | null =>
+      host?.querySelector(`[data-region="${name}"]`) ?? null
+    expect(regions('sidebar')).not.toBeNull()
+    expect(regions('canvas')).not.toBeNull()
+    expect(regions('composer')).not.toBeNull()
+    expect(regions('inspector')).not.toBeNull()
+    expect(host?.innerHTML).toContain('New conversation')
+  })
+
+  it('collapses and reopens the inspector without touching any data path', async () => {
+    const invoke = vi.fn(async (op: string) => {
+      if (op === 'codex.state' || op === 'ocp.state') {
+        return { state: 'disconnected', lastDiagnostic: null }
+      }
+      throw new Error(`unexpected op ${op}`)
+    })
+    stubZero(fakeZero({}))
+    ;(globalThis as unknown as { window: { zero: FakeZero } }).window.zero.invoke = invoke
+    renderRoute()
+    const toggle = Array.from(host?.querySelectorAll('button') ?? []).find(
+      (b) => b.textContent === 'Hide inspector'
+    )
+    expect(toggle).toBeDefined()
+    act(() => {
+      toggle?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+    expect(host?.querySelector('[data-region="inspector"]')).toBeNull()
+    const reopen = Array.from(host?.querySelectorAll('button') ?? []).find(
+      (b) => b.textContent === 'Show inspector'
+    )
+    act(() => {
+      reopen?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+    expect(host?.querySelector('[data-region="inspector"]')).not.toBeNull()
+    expect(invoke.mock.calls.some(([op]) => op === 'codex.threads')).toBe(false)
+  })
+
+  it('attributes open-thread turns to Zero with muted provider models and summaries', async () => {
+    const invoke = vi.fn(async (op, payload) => {
+      if (op === 'codex.state') return { state: 'live', lastDiagnostic: null }
+      if (op === 'ocp.state') return { state: 'disconnected', lastDiagnostic: null }
+      if (op === 'codex.threads') return THREAD_ROWS_PAYLOAD
+      if (op === 'codex.thread.get' && (payload as { threadId?: string })?.threadId === 't1') {
+        return THREAD_GET_PAYLOAD
+      }
+      throw new Error(`unexpected op ${op}`)
+    })
+    stubZero(fakeZero({}))
+    ;(globalThis as unknown as { window: { zero: FakeZero } }).window.zero.invoke = invoke
+    renderRoute()
+    await vi.waitFor(() => expect(host?.innerHTML).toContain('first chat thread'))
+    const row = Array.from(host?.querySelectorAll('button') ?? []).find((b) =>
+      b.textContent?.includes('first chat thread')
+    )
+    await act(async () => {
+      row?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      await Promise.resolve()
+    })
+    await vi.waitFor(() => expect(host?.innerHTML).toContain('via Codex'))
+    const html = host?.innerHTML ?? ''
+    expect(html).toContain('gpt-5.6-sol')
+    expect(html).toContain('Ran npm test')
+    expect(html).toContain('designed but pending')
+  })
+
+  it('invites starting in the composer from the empty canvas with send honestly blocked', async () => {
+    stubZero(fakeZero({}))
+    renderRoute()
+    expect(host?.innerHTML).toContain('No conversation open')
+    const box = host?.querySelector('[data-region="composer"] textarea')
+    expect(box).not.toBeNull()
+    expect(box?.getAttribute('rows')).toBe('3')
+    expect(host?.innerHTML).toContain(SEND_BLOCKED_NOTICE)
+    const send = Array.from(host?.querySelectorAll('button') ?? []).find(
+      (b) => b.getAttribute('aria-label') === 'Send turn'
+    )
+    expect(send?.hasAttribute('disabled')).toBe(true)
+  })
+
+  it('clears the open thread locally on New conversation without any daemon write', async () => {
+    const invoke = vi.fn(async (op, payload) => {
+      if (op === 'codex.state') return { state: 'live', lastDiagnostic: null }
+      if (op === 'ocp.state') return { state: 'disconnected', lastDiagnostic: null }
+      if (op === 'codex.threads') return THREAD_ROWS_PAYLOAD
+      if (op === 'codex.thread.get' && (payload as { threadId?: string })?.threadId === 't1') {
+        return THREAD_GET_PAYLOAD
+      }
+      throw new Error(`unexpected op ${op}`)
+    })
+    stubZero(fakeZero({}))
+    ;(globalThis as unknown as { window: { zero: FakeZero } }).window.zero.invoke = invoke
+    renderRoute()
+    await vi.waitFor(() => expect(host?.innerHTML).toContain('first chat thread'))
+    const row = Array.from(host?.querySelectorAll('button') ?? []).find((b) =>
+      b.textContent?.includes('first chat thread')
+    )
+    await act(async () => {
+      row?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      await Promise.resolve()
+    })
+    await vi.waitFor(() => expect(host?.innerHTML).toContain('run the tests'))
+    const fresh = Array.from(host?.querySelectorAll('button') ?? []).find(
+      (b) => b.textContent === 'New conversation'
+    )
+    act(() => {
+      fresh?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+    expect(host?.innerHTML).toContain('No conversation open')
+    expect(host?.innerHTML).not.toContain('run the tests')
+    const ops = invoke.mock.calls.map(([op]) => op as string)
+    expect(ops).not.toContain('codex.send')
+    expect(ops).not.toContain('ocp.send')
+  })
+
+  it('explains bridge failures in human copy with the raw diagnostic behind it', async () => {
+    const invoke = vi.fn(async () => Promise.reject(new Error('socket refused at /tmp/z.sock')))
+    stubZero(fakeZero({}))
+    ;(globalThis as unknown as { window: { zero: FakeZero } }).window.zero.invoke = invoke
+    renderRoute()
+    await vi.waitFor(() => expect(host?.innerHTML).toContain('hit a problem'))
+    expect(host?.innerHTML).toContain('socket refused at /tmp/z.sock')
+    expect(host?.innerHTML).toContain('Reconnect')
+  })
 })

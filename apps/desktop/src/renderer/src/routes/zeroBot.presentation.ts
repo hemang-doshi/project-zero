@@ -17,14 +17,6 @@ export const PROVIDER_DISPLAY: Record<Harness, string> = {
   opencode: 'OpenCode'
 }
 
-export function projectErrorMessage(error: unknown): string {
-  const message = error instanceof Error ? error.message : String(error)
-  if (message.includes('ENOENT') && message.includes('zero.sock')) {
-    return 'Zero runtime is not running on this Mac. Registered projects need the local daemon; Codex and OpenCode history can still be browsed.'
-  }
-  return message
-}
-
 export type ViaAttribution = { author: 'Zero'; via: string | null }
 
 // Zero authors the turn; the provider/model that executed it is muted,
@@ -71,9 +63,8 @@ export function summarizeToolItem(item: ToolItem): string {
 // Semantic one-line summary for an exec card header. The command stays
 // verbatim (machine metadata); only the framing verb is added.
 export function summarizeExecItem(item: ExecItem): string {
-  const command = item.command.length > 72 ? `${item.command.slice(0, 71)}…` : item.command
-  if (item.exitCode === null) return `Running ${command}`
-  return `Ran ${command}`
+  if (item.exitCode === null) return `Running ${item.command}`
+  return `Ran ${item.command} · EXIT ${item.exitCode}`
 }
 
 // Streaming state grounded in actual lane evidence only: a running exec, an
@@ -102,45 +93,4 @@ export function turnItemCounts(items: ChatItem[]): TurnItemCounts {
     else notices += 1
   }
   return { messages, thinking, tools, notices }
-}
-
-export type ToolOutcomeSummary = {
-  total: number
-  completed: number
-  failed: number
-  running: number
-  groups: Array<{ name: string; count: number }>
-}
-
-export function toolOutcomeSummary(items: ChatItem[]): ToolOutcomeSummary {
-  let completed = 0
-  let failed = 0
-  let running = 0
-  const groups = new Map<string, number>()
-  for (const item of items) {
-    if (item.kind !== 'tool' && item.kind !== 'exec') continue
-    const name = item.kind === 'exec' ? 'terminal' : item.tool
-    groups.set(name, (groups.get(name) ?? 0) + 1)
-    const status = item.status.toLowerCase()
-    if (
-      status === 'error' ||
-      status === 'failed' ||
-      (item.kind === 'exec' && item.exitCode !== null && item.exitCode !== 0)
-    )
-      failed += 1
-    else if (
-      status === 'inprogress' ||
-      status === 'pending' ||
-      (item.kind === 'exec' && item.exitCode === null)
-    )
-      running += 1
-    else completed += 1
-  }
-  return {
-    total: completed + failed + running,
-    completed,
-    failed,
-    running,
-    groups: [...groups].map(([name, count]) => ({ name, count }))
-  }
 }

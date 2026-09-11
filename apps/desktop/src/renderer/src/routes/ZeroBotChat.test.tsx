@@ -134,12 +134,17 @@ describe('MarkdownText via ChatRow messages', () => {
 })
 
 describe('ExecBlock', () => {
-  it('renders command and output in the mono stack with exit status', () => {
+  it('shows a semantic summary first and keeps raw output behind expansion', () => {
     const html = mount(createElement(ExecBlock, { item: exec }))
-    expect(html).toContain('npm test')
-    expect(html).toContain('all green')
+    expect(html).toContain('Ran npm test')
     expect(html).toContain('EXIT 0')
     expect(html).toContain('ui-monospace')
+    expect(html).not.toContain('all green')
+    act(() => {
+      host?.querySelector('button')?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+    expect(host?.innerHTML).toContain('npm test')
+    expect(host?.innerHTML).toContain('all green')
   })
 
   it('marks a failed execution honestly', () => {
@@ -153,12 +158,50 @@ describe('ExecBlock', () => {
 })
 
 describe('ToolBlock', () => {
-  it('renders tool name, server namespace and status', () => {
+  it('shows a semantic summary first and keeps raw output behind expansion', () => {
     const html = mount(createElement(ToolBlock, { item: tool }))
-    expect(html).toContain('read_file')
-    expect(html).toContain('fs')
+    expect(html).toContain('Read 1 file')
     expect(html).toContain('COMPLETED')
-    expect(html).toContain('file body')
+    expect(html).not.toContain('file body')
+    act(() => {
+      host?.querySelector('button')?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+    const expanded = host?.innerHTML ?? ''
+    expect(expanded).toContain('read_file')
+    expect(expanded).toContain('fs')
+    expect(expanded).toContain('COMPLETED')
+    expect(expanded).toContain('file body')
+  })
+})
+
+describe('ChatRow Zero attribution', () => {
+  it('authors assistant turns as Zero with muted verbatim provider attribution', () => {
+    const html = mount(
+      createElement(ChatRow, {
+        item: { kind: 'message', role: 'assistant', text: 'hi', id: 'a1' },
+        harness: 'codex',
+        model: 'gpt-5.6-sol'
+      })
+    )
+    expect(html).toContain('Zero')
+    expect(html).toContain('via Codex')
+    expect(html).toContain('gpt-5.6-sol')
+    expect(html).not.toContain('ZERO BOT')
+  })
+
+  it('speaks chat in the human voice and metadata in the machine voice', () => {
+    mount(
+      createElement(ChatRow, {
+        item: { kind: 'message', role: 'assistant', text: 'hi', id: 'a1' },
+        harness: 'codex',
+        model: 'gpt-5.6-sol'
+      })
+    )
+    const human = host?.querySelector('[data-voice="human"]')
+    const machine = host?.querySelector('[data-voice="machine"]')
+    expect(human).not.toBeNull()
+    expect(machine).not.toBeNull()
+    expect((machine as HTMLElement | null)?.textContent).toContain('via Codex')
   })
 })
 

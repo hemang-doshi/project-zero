@@ -3,11 +3,24 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { ZERO_TYPE } from '../../../shared/tokens'
 import { threadTimestamp, threadTitle, type ChatItem, type ThreadRow } from './chat.model'
+import { formatViaAttribution, summarizeExecItem, summarizeToolItem } from './zeroBot.presentation'
+import type { Harness } from './runtime.types'
 
 export type ThinkingItem = Extract<ChatItem, { kind: 'thinking' }>
 type ExecItem = Extract<ChatItem, { kind: 'exec' }>
 type ToolItem = Extract<ChatItem, { kind: 'tool' }>
 type NoticeItem = Extract<ChatItem, { kind: 'notice' }>
+
+// Typographic voices (spec §§6-7, contract TYPOGRAPHY): human UI text speaks
+// in the system sans stack; machine metadata (ids, timestamps, model ids,
+// commands) speaks mono. The data-voice attributes pin the contract in tests.
+const humanVoice: React.CSSProperties = {
+  fontFamily: ZERO_TYPE.body
+}
+
+const machineVoice: React.CSSProperties = {
+  fontFamily: ZERO_TYPE.mono
+}
 
 const micro: React.CSSProperties = {
   fontFamily: ZERO_TYPE.mono,
@@ -32,7 +45,7 @@ export const MarkdownText = memo(function MarkdownText({
   text: string
 }): React.JSX.Element {
   return (
-    <div style={markdownBody}>
+    <div data-voice="human" style={markdownBody}>
       <ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown>
     </div>
   )
@@ -51,8 +64,11 @@ export const ThinkingBlock = memo(function ThinkingBlock({
         type="button"
         aria-expanded={open}
         onClick={() => setOpen((v) => !v)}
+        data-voice="human"
         style={{
-          ...micro,
+          ...humanVoice,
+          fontSize: 11.5,
+          fontWeight: 700,
           background: 'transparent',
           border: '1px solid color-mix(in srgb, var(--z-line) 80%, transparent)',
           borderRadius: 6,
@@ -70,6 +86,7 @@ export const ThinkingBlock = memo(function ThinkingBlock({
       </button>
       {open ? (
         <div
+          data-voice="machine"
           style={{
             fontFamily: ZERO_TYPE.mono,
             fontSize: 10.5,
@@ -103,12 +120,14 @@ const exitTone = (exitCode: number | null, status: string): string => {
 }
 
 export const ExecBlock = memo(function ExecBlock({ item }: { item: ExecItem }): React.JSX.Element {
+  const [open, setOpen] = useState(false)
   const exitLabel =
     item.exitCode === null
       ? item.status === ''
         ? 'RUNNING'
         : item.status.toUpperCase()
       : `EXIT ${item.exitCode}`
+  const summary = summarizeExecItem(item)
   return (
     <div
       style={{
@@ -122,29 +141,73 @@ export const ExecBlock = memo(function ExecBlock({ item }: { item: ExecItem }): 
         minWidth: 0
       }}
     >
-      <div style={{ display: 'flex', gap: 8, alignItems: 'baseline', minWidth: 0 }}>
-        <span style={{ ...micro, color: 'var(--z-secondary-ink)' }}>EXEC</span>
-        <span style={{ ...execShell, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', flex: 1 }}>
-          {item.command}
-        </span>
-        <span style={{ ...micro, color: exitTone(item.exitCode, item.status) }}>{exitLabel}</span>
-      </div>
-      {item.cwd !== '' ? <span style={{ ...micro, opacity: 0.8 }}>CWD {item.cwd}</span> : null}
-      {item.output !== null && item.output !== '' ? (
-        <div
-          style={{
-            ...execShell,
-            background: 'color-mix(in srgb, var(--z-canvas-tan) 55%, transparent)',
-            borderRadius: 6,
-            padding: '6px 8px',
-            whiteSpace: 'pre-wrap',
-            overflowWrap: 'anywhere',
-            maxHeight: 180,
-            overflowY: 'auto'
-          }}
+      <button
+        type="button"
+        aria-expanded={open}
+        onClick={() => setOpen((v) => !v)}
+        style={{
+          display: 'flex',
+          gap: 8,
+          alignItems: 'baseline',
+          minWidth: 0,
+          background: 'transparent',
+          border: 'none',
+          padding: 0,
+          cursor: 'pointer',
+          textAlign: 'left'
+        }}
+      >
+        <span style={{ ...micro, color: 'var(--z-secondary-ink)' }}>{open ? '▾' : '▸'}</span>
+        <span
+          data-voice="human"
+          style={{ ...humanVoice, fontSize: 12, color: 'var(--z-ink)', flex: 1 }}
         >
-          {item.output}
-        </div>
+          {summary}
+        </span>
+        <span
+          data-voice="machine"
+          style={{ ...machineVoice, ...micro, color: exitTone(item.exitCode, item.status) }}
+        >
+          {exitLabel}
+        </span>
+      </button>
+      {open ? (
+        <>
+          <span
+            data-voice="machine"
+            style={{
+              ...machineVoice,
+              ...execShell,
+              whiteSpace: 'pre-wrap',
+              overflowWrap: 'anywhere'
+            }}
+          >
+            {item.command}
+          </span>
+          {item.cwd !== '' ? (
+            <span data-voice="machine" style={{ ...machineVoice, ...micro, opacity: 0.8 }}>
+              CWD {item.cwd}
+            </span>
+          ) : null}
+          {item.output !== null && item.output !== '' ? (
+            <div
+              data-voice="machine"
+              style={{
+                ...machineVoice,
+                ...execShell,
+                background: 'color-mix(in srgb, var(--z-canvas-tan) 55%, transparent)',
+                borderRadius: 6,
+                padding: '6px 8px',
+                whiteSpace: 'pre-wrap',
+                overflowWrap: 'anywhere',
+                maxHeight: 180,
+                overflowY: 'auto'
+              }}
+            >
+              {item.output}
+            </div>
+          ) : null}
+        </>
       ) : null}
     </div>
   )
@@ -165,6 +228,8 @@ const statusColor = (status: string): string => {
 }
 
 export const ToolBlock = memo(function ToolBlock({ item }: { item: ToolItem }): React.JSX.Element {
+  const [open, setOpen] = useState(false)
+  const summary = summarizeToolItem(item)
   return (
     <div
       style={{
@@ -178,46 +243,79 @@ export const ToolBlock = memo(function ToolBlock({ item }: { item: ToolItem }): 
         minWidth: 0
       }}
     >
-      <div style={{ display: 'flex', gap: 8, alignItems: 'baseline', minWidth: 0 }}>
-        <span style={{ ...micro, color: 'var(--z-secondary-ink)' }}>TOOL</span>
-        <span style={{ fontFamily: ZERO_TYPE.mono, fontSize: 11, color: 'var(--z-ink)' }}>
-          {item.tool}
-          {item.server !== null ? ` · ${item.server}` : ''}
+      <button
+        type="button"
+        aria-expanded={open}
+        onClick={() => setOpen((v) => !v)}
+        style={{
+          display: 'flex',
+          gap: 8,
+          alignItems: 'baseline',
+          minWidth: 0,
+          background: 'transparent',
+          border: 'none',
+          padding: 0,
+          cursor: 'pointer',
+          textAlign: 'left'
+        }}
+      >
+        <span style={{ ...micro, color: 'var(--z-secondary-ink)' }}>{open ? '▾' : '▸'}</span>
+        <span
+          data-voice="human"
+          style={{ ...humanVoice, fontSize: 12, color: 'var(--z-ink)', flex: 1 }}
+        >
+          {summary}
         </span>
-        <span style={{ ...micro, color: statusColor(item.status) }}>
+        <span
+          data-voice="machine"
+          style={{ ...machineVoice, ...micro, color: statusColor(item.status) }}
+        >
           {item.status !== '' ? item.status.toUpperCase() : '—'}
         </span>
-      </div>
-      {item.detail !== '' ? (
-        <span
-          style={{
-            fontFamily: ZERO_TYPE.mono,
-            fontSize: 10,
-            color: 'var(--z-secondary-ink)',
-            overflowWrap: 'anywhere',
-            wordBreak: 'break-all'
-          }}
-        >
-          {item.detail.length > 300 ? `${item.detail.slice(0, 300)}…` : item.detail}
-        </span>
-      ) : null}
-      {item.result !== null && item.result !== '' ? (
-        <div
-          style={{
-            fontFamily: ZERO_TYPE.mono,
-            fontSize: 10,
-            color: 'var(--z-ink)',
-            background: 'color-mix(in srgb, var(--z-canvas-tan) 55%, transparent)',
-            borderRadius: 6,
-            padding: '6px 8px',
-            whiteSpace: 'pre-wrap',
-            overflowWrap: 'anywhere',
-            maxHeight: 140,
-            overflowY: 'auto'
-          }}
-        >
-          {item.result.length > 800 ? `${item.result.slice(0, 800)}…` : item.result}
-        </div>
+      </button>
+      {open ? (
+        <>
+          <span
+            data-voice="machine"
+            style={{ ...machineVoice, fontSize: 11, color: 'var(--z-secondary-ink)' }}
+          >
+            {item.tool}
+            {item.server !== null ? ` · ${item.server}` : ''}
+          </span>
+          {item.detail !== '' ? (
+            <span
+              data-voice="machine"
+              style={{
+                ...machineVoice,
+                fontSize: 10,
+                color: 'var(--z-secondary-ink)',
+                overflowWrap: 'anywhere',
+                wordBreak: 'break-all'
+              }}
+            >
+              {item.detail.length > 300 ? `${item.detail.slice(0, 300)}…` : item.detail}
+            </span>
+          ) : null}
+          {item.result !== null && item.result !== '' ? (
+            <div
+              data-voice="machine"
+              style={{
+                ...machineVoice,
+                fontSize: 10,
+                color: 'var(--z-ink)',
+                background: 'color-mix(in srgb, var(--z-canvas-tan) 55%, transparent)',
+                borderRadius: 6,
+                padding: '6px 8px',
+                whiteSpace: 'pre-wrap',
+                overflowWrap: 'anywhere',
+                maxHeight: 140,
+                overflowY: 'auto'
+              }}
+            >
+              {item.result.length > 800 ? `${item.result.slice(0, 800)}…` : item.result}
+            </div>
+          ) : null}
+        </>
       ) : null}
     </div>
   )
@@ -225,7 +323,9 @@ export const ToolBlock = memo(function ToolBlock({ item }: { item: ToolItem }): 
 
 const NoticeRow = memo(function NoticeRow({ item }: { item: NoticeItem }): React.JSX.Element {
   return (
-    <span style={{ ...micro, color: 'var(--z-secondary-ink)' }}>PROTOCOL ITEM · {item.text}</span>
+    <span data-voice="machine" style={{ ...micro, color: 'var(--z-secondary-ink)' }}>
+      PROTOCOL ITEM · {item.text}
+    </span>
   )
 })
 
@@ -236,7 +336,10 @@ const userBubble: React.CSSProperties = {
   border: '1px solid var(--z-orange)',
   borderRadius: '10px 10px 3px 10px',
   padding: '8px 12px',
-  minWidth: 0
+  minWidth: 0,
+  display: 'flex',
+  flexDirection: 'column',
+  gap: 4
 }
 
 const assistantBubble: React.CSSProperties = {
@@ -246,7 +349,10 @@ const assistantBubble: React.CSSProperties = {
   border: '1px solid var(--z-line)',
   borderRadius: '10px 10px 10px 3px',
   padding: '8px 12px',
-  minWidth: 0
+  minWidth: 0,
+  display: 'flex',
+  flexDirection: 'column',
+  gap: 4
 }
 
 const rowLabel: React.CSSProperties = {
@@ -254,17 +360,41 @@ const rowLabel: React.CSSProperties = {
   color: 'var(--z-secondary-ink)'
 }
 
-export const ChatRow = memo(function ChatRow({ item }: { item: ChatItem }): React.JSX.Element {
+export const ChatRow = memo(function ChatRow({
+  item,
+  harness = 'codex',
+  model = null
+}: {
+  item: ChatItem
+  harness?: Harness
+  model?: string | null
+}): React.JSX.Element {
   switch (item.kind) {
-    case 'message':
+    case 'message': {
+      // Zero authors every assistant turn; the executing provider/model is
+      // muted verbatim attribution (spec §27). The author name speaks in the
+      // human voice, the via line in the machine voice (spec §§6-7).
+      const attribution = item.role === 'assistant' ? formatViaAttribution(harness, model) : null
       return (
         <div style={item.role === 'user' ? userBubble : assistantBubble}>
-          <span style={{ ...micro, color: 'var(--z-secondary-ink)' }}>
-            {item.role === 'user' ? 'OPERATOR' : 'ZERO BOT'}
+          <span
+            data-voice="human"
+            style={{ ...humanVoice, fontSize: 12, fontWeight: 700, color: 'var(--z-ink)' }}
+          >
+            {item.role === 'user' ? 'You' : (attribution?.author ?? 'Zero')}
           </span>
+          {attribution?.via != null ? (
+            <span
+              data-voice="machine"
+              style={{ ...machineVoice, ...micro, color: 'var(--z-secondary-ink)' }}
+            >
+              {attribution.via}
+            </span>
+          ) : null}
           <MarkdownText text={item.text} />
         </div>
       )
+    }
     case 'thinking':
       return <ThinkingBlock item={item} />
     case 'exec':
@@ -318,6 +448,7 @@ export const ThreadList = memo(function ThreadList({
             }}
           >
             <span
+              data-voice="human"
               style={{
                 fontFamily: ZERO_TYPE.body,
                 fontSize: 11.5,
@@ -330,7 +461,7 @@ export const ThreadList = memo(function ThreadList({
             >
               {threadTitle(row)}
             </span>
-            <span style={rowLabel}>
+            <span data-voice="machine" style={rowLabel}>
               {threadTime(row)}
               {row.model !== null ? ` · ${row.model}` : ''}
             </span>
