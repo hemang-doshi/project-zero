@@ -1,21 +1,40 @@
-import { memo, useEffect, useMemo, useRef, useState } from 'react'
+/* eslint-disable react/no-unknown-property -- R3F three intrinsics (position, rotation, scale, args, geometry, material, …) that the DOM property allowlist cannot know. Scoped to this scene file only. */
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import * as THREE from 'three'
 import { Canvas, useFrame, useThree, type ThreeEvent } from '@react-three/fiber'
 import { Html, OrbitControls } from '@react-three/drei'
-import { ZERO_TYPE } from '../../../shared/tokens'
+import { ZERO_TOKENS, ZERO_TYPE } from '../../../shared/tokens'
 import {
-  KIND_HEX,
+  BREADBOARD,
+  BREADBOARD_TOP_Y,
+  DESK_CENTER,
+  DESK_LAYOUT,
+  DESK_SIZE,
+  FOCUS_TWEEN_MS,
+  OVERVIEW_CAMERA,
   SCENE_FRAMELOOP,
+  STAND_H,
+  STAND_SIZE,
   TONE_HEX,
-  ZERO_HUB_ID,
+  breadboardDots,
+  buildDeskCables,
+  buildJumperWires,
+  easeInOutCubic,
+  focusCameraFor,
+  focusReduce,
   isWebGL2Available,
+  type DeskCable,
+  type FocusState,
+  type JumperWire,
   type SceneGraph,
   type SceneNode
 } from './topology.model'
 import Esp32DeskDisplay, { MODEL_FOOTPRINT as ESP32_FOOTPRINT } from './models/Esp32DeskDisplay'
 import IPhone, { MODEL_FOOTPRINT as PHONE_FOOTPRINT } from './models/IPhone'
+import Keyboard, { MODEL_FOOTPRINT as KEYBOARD_FOOTPRINT } from './models/Keyboard'
 import MacBookAir, { MODEL_FOOTPRINT as LAPTOP_FOOTPRINT } from './models/MacBookAir'
 import Monitor, { MODEL_FOOTPRINT as MONITOR_FOOTPRINT } from './models/Monitor'
+import MousePad, { MODEL_FOOTPRINT as MOUSEPAD_FOOTPRINT } from './models/MousePad'
 
 // This build targets WebGL2 (three r150+ renders WebGL2 only; the context
 // creation throws when unavailable and the wrapper below renders the honest
@@ -23,7 +42,10 @@ import Monitor, { MODEL_FOOTPRINT as MONITOR_FOOTPRINT } from './models/Monitor'
 // attempted here. Probe lives in topology.model.ts (pure module) so this
 // file exports only the component.
 
-const EDGE_VERTEX = /* glsl */ `
+// Atmospheric runtime ring glow: a slow breathing alpha around the torus.
+// Kept per the earlier explicit owner ask (not rescinded): the ring reads as
+// the ZERO RUNTIME LAYER hovering above the physical desk.
+const RING_VERTEX = /* glsl */ `
   varying vec2 vUv;
   void main() {
     vUv = uv;
@@ -31,177 +53,404 @@ const EDGE_VERTEX = /* glsl */ `
   }
 `
 
-// Shader-driven flow: the pulse position comes from the uTime uniform, which
-// FlowField advances in useFrame by mutating the uniform only — no React
-// state moves per frame. Static edges render as a constant dim line.
-const EDGE_FRAGMENT = /* glsl */ `
+const RING_FRAGMENT = /* glsl */ `
   uniform vec3 uColor;
   uniform float uTime;
-  uniform float uAnimated;
   varying vec2 vUv;
   void main() {
-    float alpha = 0.55;
-    if (uAnimated > 0.5) {
-      float pulse = fract(vUv.y * 2.0 - uTime * 0.35);
-      float band = smoothstep(0.0, 0.12, pulse) * (1.0 - smoothstep(0.12, 0.5, pulse));
-      alpha = 0.35 + 0.65 * band;
-    }
-    gl_FragColor = vec4(uColor, alpha);
+    float breathe = 0.28 + 0.12 * sin(uTime * 1.2 + vUv.x * 6.2831);
+    gl_FragColor = vec4(uColor, breathe);
   }
 `
 
-const INTRO_FROM = new THREE.Vector3(0, 3.4, 12.5)
-const INTRO_TO = new THREE.Vector3(0, 1.6, 8.5)
+// Baked contact shadow: a radial-gradient alpha blob on a plane under each
+// device. Chosen over drei ContactShadows (which costs an extra depth render
+// pass per frame) — this is one transparent quad per device, zero passes.
+const BLOB_VERTEX = /* glsl */ `
+  varying vec2 vUv;
+  void main() {
+    vUv = uv;
+    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+  }
+`
+
+const BLOB_FRAGMENT = /* glsl */ `
+  varying vec2 vUv;
+  void main() {
+    float d = length(vUv - vec2(0.5));
+    float a = smoothstep(0.5, 0.08, d) * 0.32;
+    gl_FragColor = vec4(0.06, 0.045, 0.04, a);
+  }
+`
+
+const RING_RADIUS = 8.8
+const RING_Y = 1.4
+const INTRO_FROM = new THREE.Vector3(0, 4.6, 16.5)
 const INTRO_SECONDS = 1.2
 
 // Eases the camera from the wide establishing shot to the working position.
-// Runs inside invalidated frames only (see Ticker); after the intro it holds
-// still and costs nothing.
-function CameraRig(): null {
+// Runs inside invalidated frames only (see Ticker); suppressed once a focus
+// tween has ever taken over, and holds still otherwise at zero cost.
+function CameraRig({ suppressed }: { suppressed: boolean }): null {
   const camera = useThree((s) => s.camera)
   const start = useRef<number | null>(null)
+  const introTo = useMemo(
+    () =>
+      new THREE.Vector3(
+        OVERVIEW_CAMERA.position[0],
+        OVERVIEW_CAMERA.position[1],
+        OVERVIEW_CAMERA.position[2]
+      ),
+    []
+  )
   useFrame(({ clock }) => {
+    if (suppressed) return
     if (start.current === null) {
       start.current = clock.elapsedTime
       camera.position.copy(INTRO_FROM)
     }
     const t = Math.min(1, (clock.elapsedTime - (start.current ?? 0)) / INTRO_SECONDS)
     const eased = 1 - Math.pow(1 - t, 3)
-    camera.position.lerpVectors(INTRO_FROM, INTRO_TO, eased)
-    camera.lookAt(0, 0.3, 0)
+    camera.position.lerpVectors(INTRO_FROM, introTo, eased)
+    camera.lookAt(0, 0.1, -0.2)
   })
   return null
 }
 
+export type PointerActivity = { lastMove: number }
+
 // Demand-mode pump: with frameloop="demand" nothing renders unless something
-// invalidates. This ticks at ~4fps ONLY while the intro is running or an
-// online edge animates (and the tab is visible); offline/gated-only scenes
-// render strictly on data change or user drag. Cleared on unmount with the
-// window lifecycle.
-function Ticker({ animated }: { animated: boolean }): null {
+// invalidates. This ticks at ~4fps ONLY while the intro is running, the
+// pointer recently moved (ring tilt chase), or a flow animates — and only
+// while the tab is visible. The interval itself is ~free when idle: it
+// returns without invalidating, so no frame renders. onTick lets the runtime
+// ring lerp its pointer tilt on these same ticks — no second loop. Cleared
+// on unmount with the window lifecycle.
+function Ticker({
+  animated,
+  activity,
+  onTick
+}: {
+  animated: boolean
+  activity: { current: PointerActivity }
+  onTick?: () => void
+}): null {
   const invalidate = useThree((s) => s.invalidate)
+  const tickRef = useRef(onTick)
+  useEffect(() => {
+    tickRef.current = onTick
+  })
   useEffect(() => {
     const startedAt = Date.now()
     const id = window.setInterval(() => {
-      if (Date.now() - startedAt >= 1300 && !animated) return
+      const idleMs = Date.now() - activity.current.lastMove
+      if (Date.now() - startedAt >= 1300 && !animated && idleMs >= 1500) return
       if (document.visibilityState !== 'visible') return
+      tickRef.current?.()
       invalidate()
     }, 250)
     return () => window.clearInterval(id)
-  }, [animated, invalidate])
+  }, [animated, activity, invalidate])
   return null
 }
 
-// Re-renders one frame when the typed data or the selection changes.
+// Re-renders one frame when the typed data, the selection, or the focus
+// changes.
 function Invalidator({
   graph,
-  selectedId
+  selectedId,
+  focusedId
 }: {
   graph: SceneGraph
   selectedId: string | null
+  focusedId: string | null
 }): null {
   const invalidate = useThree((s) => s.invalidate)
   const seen = useRef(false)
-  const graphRef = useRef(graph)
-  const selectedRef = useRef(selectedId)
+  const sig = useRef({ graph, selectedId, focusedId })
   useEffect(() => {
     if (!seen.current) {
       seen.current = true
-    } else if (graphRef.current !== graph || selectedRef.current !== selectedId) {
+    } else if (
+      sig.current.graph !== graph ||
+      sig.current.selectedId !== selectedId ||
+      sig.current.focusedId !== focusedId
+    ) {
       invalidate()
     }
-    graphRef.current = graph
-    selectedRef.current = selectedId
-  }, [graph, selectedId, invalidate])
+    sig.current = { graph, selectedId, focusedId }
+  }, [graph, selectedId, focusedId, invalidate])
   return null
 }
 
-const edgePlacement = (
-  from: SceneNode['position'],
-  to: SceneNode['position']
-): { mid: [number, number, number]; quaternion: THREE.Quaternion; length: number } => {
-  const a = new THREE.Vector3(...from)
-  const b = new THREE.Vector3(...to)
-  const dir = b.clone().sub(a)
-  const length = Math.max(0.001, dir.length())
-  const quaternion = new THREE.Quaternion().setFromUnitVectors(
-    new THREE.Vector3(0, 1, 0),
-    dir.normalize()
-  )
-  const mid = a.add(b).multiplyScalar(0.5)
-  return { mid: [mid.x, mid.y, mid.z], quaternion, length }
+// Bounded camera tween for click-to-focus: eases position + controls target
+// over FOCUS_TWEEN_MS, then stops. Frames are driven by a short-lived ~60fps
+// interval that exists ONLY for the tween lifetime (frameloop="demand"
+// stands); the tween restarts when viewKey changes and cancels on unmount.
+type Flight = {
+  fromPos: THREE.Vector3
+  toPos: THREE.Vector3
+  fromTg: THREE.Vector3
+  toTg: THREE.Vector3
+  t0: number
+  interval: number | null
 }
 
-function FlowEdges({ graph }: { graph: SceneGraph }): React.JSX.Element {
-  const byId = useMemo(() => new Map(graph.nodes.map((n) => [n.id, n])), [graph])
-  const hub = byId.get(ZERO_HUB_ID)
-  const items = useMemo(
-    () =>
-      hub === undefined
-        ? []
-        : graph.edges.flatMap((edge) => {
-            const node = byId.get(edge.from)
-            if (node === undefined) return []
-            return [{ edge, ...edgePlacement(node.position, hub.position) }]
-          }),
-    [graph, byId, hub]
-  )
-  const geometry = useMemo(() => new THREE.CylinderGeometry(0.025, 0.025, 1, 8), [])
-  // The shader pulse is imperative GL-side state (uniforms), owned by this
-  // memoized handle behind advance()/dispose(). React state never moves per
-  // frame; useFrame only calls the handle.
-  const flow = useMemo(() => {
-    const mats = items.map(
-      ({ edge }) =>
-        new THREE.ShaderMaterial({
-          uniforms: {
-            uColor: { value: new THREE.Color(TONE_HEX[edge.tone]) },
-            uTime: { value: 0 },
-            uAnimated: { value: edge.animated ? 1 : 0 }
-          },
-          vertexShader: EDGE_VERTEX,
-          fragmentShader: EDGE_FRAGMENT,
-          transparent: true,
-          depthWrite: false
-        })
-    )
-    return {
-      materials: mats,
-      advance: (delta: number): void => {
-        for (const m of mats) {
-          const u = m.uniforms.uTime as THREE.IUniform<number>
-          u.value += delta
-        }
-      },
-      dispose: (): void => {
-        for (const m of mats) m.dispose()
-      }
+// Interval handles are cleared against the captured flight object, never by
+// re-reading the ref: nulling the ref first must not strand the interval
+// (a leaked 16ms invalidator would pin the renderer at 60fps forever).
+function stopFlight(f: Flight | null): void {
+  if (f?.interval !== null && f?.interval !== undefined) {
+    window.clearInterval(f.interval)
+    f.interval = null
+  }
+}
+
+function FocusController({
+  viewKey,
+  view
+}: {
+  viewKey: string
+  view: typeof OVERVIEW_CAMERA
+}): null {
+  const camera = useThree((s) => s.camera)
+  const controls = useThree((s) => s.controls) as unknown as {
+    target: THREE.Vector3
+    update: () => void
+  } | null
+  const invalidate = useThree((s) => s.invalidate)
+  const viewRef = useRef(view)
+  useEffect(() => {
+    viewRef.current = view
+  })
+  const flight = useRef<Flight | null>(null)
+  const mounted = useRef(false)
+  useEffect(() => {
+    // Mount renders the overview camera already (CameraRig owns the intro
+    // sweep); only viewKey CHANGES fly.
+    if (!mounted.current) {
+      mounted.current = true
+      return
     }
-  }, [items])
+    const v = viewRef.current
+    stopFlight(flight.current)
+    const next: Flight = {
+      fromPos: camera.position.clone(),
+      toPos: new THREE.Vector3(v.position[0], v.position[1], v.position[2]),
+      fromTg: controls?.target.clone() ?? new THREE.Vector3(0, 0.1, -0.2),
+      toTg: new THREE.Vector3(v.target[0], v.target[1], v.target[2]),
+      t0: performance.now(),
+      interval: window.setInterval(() => invalidate(), 16)
+    }
+    flight.current = next
+    return () => {
+      stopFlight(next)
+      if (flight.current === next) flight.current = null
+    }
+    // viewKey is the tween trigger; view itself rides viewRef so inline
+    // object identity never restarts the flight.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [viewKey])
   useEffect(
     () => () => {
-      geometry.dispose()
-      flow.dispose()
+      stopFlight(flight.current)
+      flight.current = null
     },
-    [geometry, flow]
+    []
   )
+  useFrame(() => {
+    const f = flight.current
+    if (f === null) return
+    const t = Math.min(1, (performance.now() - f.t0) / FOCUS_TWEEN_MS)
+    const e = easeInOutCubic(t)
+    camera.position.lerpVectors(f.fromPos, f.toPos, e)
+    if (controls !== null && controls !== undefined) {
+      controls.target.lerpVectors(f.fromTg, f.toTg, e)
+      controls.update()
+    } else {
+      camera.lookAt(f.toTg)
+    }
+    if (t >= 1) {
+      stopFlight(f)
+      if (flight.current === f) flight.current = null
+    }
+  })
+  return null
+}
+
+// The Zero runtime layer: a large thin atmospheric torus encircling the whole
+// desk with a breathing shader glow. The damped pointer tilt arrives as a
+// plain rotation prop lerped by the owner on the existing ticker ticks — no
+// new loop, no per-frame React state. The label rides the ring edge.
+function RuntimeRing({ tilt }: { tilt: { x: number; z: number } }): React.JSX.Element {
+  // Breathing glow handle: the only thing advance() mutates is the uniform
+  // object created inside this same memo. React state never moves per frame;
+  // useFrame only calls the handle.
+  const glow = useMemo(() => {
+    const mat = new THREE.ShaderMaterial({
+      uniforms: {
+        uColor: { value: new THREE.Color(ZERO_TOKENS.brandOrange) },
+        uTime: { value: 0 }
+      },
+      vertexShader: RING_VERTEX,
+      fragmentShader: RING_FRAGMENT,
+      transparent: true,
+      depthWrite: false
+    })
+    return {
+      material: mat,
+      advance: (delta: number): void => {
+        const ringTime = mat.uniforms.uTime as THREE.IUniform<number>
+        ringTime.value += delta
+      },
+      dispose: (): void => {
+        mat.dispose()
+      }
+    }
+  }, [])
+  useEffect(() => () => glow.dispose(), [glow])
   useFrame((_, delta) => {
-    flow.advance(delta)
+    glow.advance(delta)
   })
   return (
-    <group>
-      {items.map(({ edge, mid, quaternion, length }, i) => (
-        <mesh
-          key={edge.id}
-          data-testid={`edge-${edge.id}`}
-          position={mid}
-          quaternion={quaternion}
-          scale={[1, length, 1]}
-          geometry={geometry}
-          material={flow.materials[i]}
-        />
-      ))}
+    <group rotation={[tilt.x, 0, tilt.z]} position={[0, RING_Y, 0]} data-testid="runtime-ring">
+      <mesh rotation={[-Math.PI / 2, 0, 0]} material={glow.material}>
+        <torusGeometry args={[RING_RADIUS, 0.03, 8, 128]} />
+      </mesh>
+      <group position={[RING_RADIUS * 0.8, 0.6, 0]}>
+        <Html center distanceFactor={14}>
+          <div style={ringLabelStyle}>ZERO RUNTIME LAYER</div>
+        </Html>
+      </group>
     </group>
+  )
+}
+
+// Desk furniture: wood-tone neutral surface (canvasTan token), legs, the
+// slim laptop stand (furniture, not a device lane), and the white breadboard
+// slab with its perforated-hole hint.
+function DeskFurniture({ dots }: { dots: Array<[number, number]> }): React.JSX.Element {
+  const dotRef = useRef<THREE.InstancedMesh | null>(null)
+  const dummy = useMemo(() => new THREE.Object3D(), [])
+  useLayoutEffect(() => {
+    const m = dotRef.current
+    if (m === null || typeof m.setMatrixAt !== 'function') return
+    dots.forEach(([x, z], i) => {
+      dummy.position.set(x, BREADBOARD_TOP_Y + 0.001, z)
+      dummy.rotation.set(-Math.PI / 2, 0, 0)
+      dummy.updateMatrix()
+      m.setMatrixAt(i, dummy.matrix)
+    })
+    m.instanceMatrix.needsUpdate = true
+  }, [dots, dummy])
+  const legX = DESK_SIZE.w / 2 - 0.55
+  return (
+    <group>
+      <mesh
+        name="desk-surface"
+        data-testid="desk-surface"
+        position={[DESK_CENTER[0], DESK_CENTER[1], DESK_CENTER[2]]}
+      >
+        <boxGeometry args={[DESK_SIZE.w, DESK_SIZE.h, DESK_SIZE.d]} />
+        <meshStandardMaterial color={ZERO_TOKENS.canvasTan} roughness={0.85} metalness={0} />
+      </mesh>
+      {(
+        [
+          [-legX, -3.4],
+          [legX, -3.4],
+          [-legX, 3.0],
+          [legX, 3.0]
+        ] as const
+      ).map(([x, z], i) => (
+        <mesh key={i} name={`desk-leg-${i}`} data-testid="desk-leg" position={[x, -1.15, z]}>
+          <boxGeometry args={[0.3, 1.8, 0.3]} />
+          <meshStandardMaterial color={ZERO_TOKENS.ink} roughness={0.6} metalness={0.3} />
+        </mesh>
+      ))}
+      {/* slim laptop stand: thin top plate on two side rails */}
+      <mesh
+        name="laptop-stand-top"
+        data-testid="laptop-stand"
+        position={[DESK_LAYOUT.macbook[0], STAND_H - 0.03, DESK_LAYOUT.macbook[2]]}
+      >
+        <boxGeometry args={[STAND_SIZE.w, STAND_SIZE.h, STAND_SIZE.d]} />
+        <meshStandardMaterial color={ZERO_TOKENS.ink} roughness={0.4} metalness={0.7} />
+      </mesh>
+      {[-1.25, 1.25].map((dx) => (
+        <mesh
+          key={dx}
+          name="laptop-stand-rail"
+          data-testid="laptop-stand"
+          position={[DESK_LAYOUT.macbook[0] + dx, (STAND_H - 0.06) / 2, DESK_LAYOUT.macbook[2]]}
+        >
+          <boxGeometry args={[0.08, STAND_H - 0.06, STAND_SIZE.d - 0.2]} />
+          <meshStandardMaterial color={ZERO_TOKENS.ink} roughness={0.4} metalness={0.7} />
+        </mesh>
+      ))}
+      {/* white breadboard slab */}
+      <mesh
+        name="breadboard"
+        data-testid="breadboard"
+        position={[BREADBOARD.center[0], BREADBOARD.center[1], BREADBOARD.center[2]]}
+      >
+        <boxGeometry args={[BREADBOARD.w, BREADBOARD.h, BREADBOARD.d]} />
+        <meshStandardMaterial color={ZERO_TOKENS.cardWhite} roughness={0.5} metalness={0} />
+      </mesh>
+      <group data-testid="breadboard-dots">
+        <instancedMesh
+          ref={dotRef}
+          args={[undefined, undefined, dots.length]}
+          frustumCulled={false}
+        >
+          <circleGeometry args={[0.024, 10]} />
+          <meshBasicMaterial color={ZERO_TOKENS.ink} />
+        </instancedMesh>
+      </group>
+    </group>
+  )
+}
+
+// One physical cable: dark TubeGeometry along a CatmullRom curve through the
+// layout-derived points. Geometry is memoized per cable and disposed with it.
+function CableMesh({ cable }: { cable: DeskCable }): React.JSX.Element {
+  const geom = useMemo(
+    () =>
+      new THREE.TubeGeometry(
+        new THREE.CatmullRomCurve3(cable.points.map((p) => new THREE.Vector3(p[0], p[1], p[2]))),
+        48,
+        cable.radius,
+        8,
+        false
+      ),
+    [cable]
+  )
+  useEffect(() => () => geom.dispose(), [geom])
+  return (
+    <mesh name={cable.id} data-testid={`cable-${cable.id}`} geometry={geom}>
+      <meshStandardMaterial color={cable.color} roughness={0.6} metalness={0.2} />
+    </mesh>
+  )
+}
+
+// One colored jumper wire: thinner tube, token signal color, arched from an
+// ESP32 pin side down to a breadboard hole.
+function JumperMesh({ wire }: { wire: JumperWire }): React.JSX.Element {
+  const geom = useMemo(
+    () =>
+      new THREE.TubeGeometry(
+        new THREE.CatmullRomCurve3(wire.points.map((p) => new THREE.Vector3(p[0], p[1], p[2]))),
+        32,
+        0.018,
+        8,
+        false
+      ),
+    [wire]
+  )
+  useEffect(() => () => geom.dispose(), [geom])
+  return (
+    <mesh name={wire.id} data-testid={wire.id} geometry={geom}>
+      <meshStandardMaterial color={wire.color} roughness={0.5} metalness={0.1} />
+    </mesh>
   )
 }
 
@@ -221,6 +470,58 @@ const labelStyle: React.CSSProperties = {
 const gatedStyle: React.CSSProperties = {
   ...labelStyle,
   color: 'var(--z-secondary-ink)'
+}
+
+const ringLabelStyle: React.CSSProperties = {
+  fontFamily: ZERO_TYPE.mono,
+  fontSize: 9,
+  fontWeight: 700,
+  letterSpacing: '0.14em',
+  color: 'var(--z-secondary-ink)',
+  whiteSpace: 'nowrap'
+}
+
+const detailStyle: React.CSSProperties = {
+  position: 'absolute',
+  top: 10,
+  right: 10,
+  width: 218,
+  background: 'var(--z-card-cream)',
+  border: '1px solid var(--z-line)',
+  borderRadius: 8,
+  padding: '10px 12px',
+  display: 'flex',
+  flexDirection: 'column',
+  gap: 6,
+  fontFamily: ZERO_TYPE.mono
+}
+
+const detailName: React.CSSProperties = {
+  fontSize: 12,
+  fontWeight: 700,
+  color: 'var(--z-ink)'
+}
+
+const detailRow: React.CSSProperties = {
+  fontSize: 10,
+  color: 'var(--z-secondary-ink)',
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
+  whiteSpace: 'nowrap'
+}
+
+const backStyle: React.CSSProperties = {
+  marginTop: 4,
+  fontFamily: ZERO_TYPE.mono,
+  fontSize: 10,
+  fontWeight: 700,
+  letterSpacing: '0.08em',
+  color: 'var(--z-ink)',
+  background: 'transparent',
+  border: '1px solid var(--z-line)',
+  borderRadius: 5,
+  padding: '5px 8px',
+  cursor: 'pointer'
 }
 
 function NodeLabel({ node, y }: { node: SceneNode; y: number }): React.JSX.Element {
@@ -253,40 +554,43 @@ const toModelStatus = (node: SceneNode): ModelStatus => {
   }
 }
 
+const FOOTPRINT_FOR: Record<SceneNode['kind'], { w: number; h: number; d: number }> = {
+  macbook: LAPTOP_FOOTPRINT,
+  monitor: MONITOR_FOOTPRINT,
+  esp32: ESP32_FOOTPRINT,
+  keyboard: KEYBOARD_FOOTPRINT,
+  mousepad: MOUSEPAD_FOOTPRINT,
+  phone: PHONE_FOOTPRINT
+}
+
 // Label anchor above each model so the tag clears the tallest mesh.
-const heightFor = (node: SceneNode): number => {
-  switch (node.kind) {
-    case 'hub':
-      return 1.1
-    case 'macbook':
-      return LAPTOP_FOOTPRINT.h
-    case 'monitor':
-      return MONITOR_FOOTPRINT.h
-    case 'esp32':
-      return ESP32_FOOTPRINT.h
-    case 'phone':
-      return PHONE_FOOTPRINT.h
-  }
+const heightFor = (node: SceneNode): number => FOOTPRINT_FOR[node.kind].h
+
+const radiusFor = (node: SceneNode): number => {
+  const f = FOOTPRINT_FOR[node.kind]
+  return Math.max(f.w, f.h, f.d) / 2
 }
 
 type MeshProps = {
   node: SceneNode
   selected: boolean
   hovered: boolean
+  focused: boolean
   onHover: (id: string | null) => void
   onSelect: (id: string) => void
+  onFocus: (id: string) => void
 }
 
 function SceneNodeMesh({
   node,
   selected,
   hovered,
+  focused,
   onHover,
-  onSelect
+  onSelect,
+  onFocus
 }: MeshProps): React.JSX.Element {
   const glow = TONE_HEX[node.tone]
-  const emissiveIntensity = selected || hovered ? 0.9 : node.dimmed ? 0.05 : 0.35
-  const opacity = node.dimmed ? 0.35 : 1
   // Gated nodes own no click handler by construction: they can never emit a
   // semantic select (support lands later per owner direction).
   const click =
@@ -296,6 +600,7 @@ function SceneNodeMesh({
           onClick: (e: ThreeEvent<MouseEvent>): void => {
             e.stopPropagation()
             onSelect(node.id)
+            onFocus(node.id)
           }
         }
   const shared = {
@@ -309,28 +614,32 @@ function SceneNodeMesh({
   }
   const status = toModelStatus(node)
   const top = heightFor(node)
+  const ringR = Math.max(FOOTPRINT_FOR[node.kind].w, FOOTPRINT_FOR[node.kind].d) / 2 + 0.35
   return (
-    <group position={node.position} scale={selected ? 1.15 : 1} {...shared}>
-      {node.kind === 'hub' ? (
-        <mesh>
-          <sphereGeometry args={[0.55, 32, 32]} />
-          <meshStandardMaterial
-            color={KIND_HEX.hub}
-            emissive={glow}
-            emissiveIntensity={emissiveIntensity}
-            transparent={node.dimmed}
-            opacity={opacity}
-          />
-        </mesh>
-      ) : node.kind === 'macbook' ? (
+    <group position={node.position} scale={selected || focused || hovered ? 1.15 : 1} {...shared}>
+      {node.kind === 'macbook' ? (
         <MacBookAir status={status} dimmed={node.dimmed} />
       ) : node.kind === 'monitor' ? (
         <Monitor status={status} dimmed={node.dimmed} />
       ) : node.kind === 'esp32' ? (
         <Esp32DeskDisplay status={status} dimmed={node.dimmed} />
+      ) : node.kind === 'keyboard' ? (
+        <Keyboard status={status} dimmed={node.dimmed} />
+      ) : node.kind === 'mousepad' ? (
+        <MousePad status={status} dimmed={node.dimmed} />
       ) : (
         <IPhone status={status} dimmed={node.dimmed} />
       )}
+      {focused ? (
+        <mesh
+          data-testid={`focus-ring-${node.id}`}
+          position={[0, 0.03, 0]}
+          rotation={[-Math.PI / 2, 0, 0]}
+        >
+          <torusGeometry args={[ringR, 0.03, 8, 64]} />
+          <meshStandardMaterial color={glow} emissive={glow} emissiveIntensity={0.9} />
+        </mesh>
+      ) : null}
       {node.gated ? (
         <group position={[0, top + 0.05, 0]}>
           <Html center distanceFactor={9}>
@@ -382,9 +691,74 @@ export const TopologyScene = memo(function TopologyScene({
   onSelect
 }: TopologySceneProps): React.JSX.Element {
   const [hoveredId, setHoveredId] = useState<string | null>(null)
+  const [focus, setFocus] = useState<FocusState>({ focusedId: null })
+  const [focusNonce, setFocusNonce] = useState(0)
+  const [ringTilt, setRingTilt] = useState({ x: 0, z: 0 })
+  const pointer = useRef({ x: 0, y: 0 })
+  const activity = useRef<PointerActivity>({ lastMove: 0 })
+  const cables = useMemo(() => buildDeskCables(), [])
+  const jumpers = useMemo(() => buildJumperWires(), [])
+  const dots = useMemo(() => breadboardDots(), [])
+  const blobMat = useMemo(
+    () =>
+      new THREE.ShaderMaterial({
+        vertexShader: BLOB_VERTEX,
+        fragmentShader: BLOB_FRAGMENT,
+        transparent: true,
+        depthWrite: false
+      }),
+    []
+  )
+  useEffect(() => () => blobMat.dispose(), [blobMat])
+  // Damped ring tilt toward the pointer, evaluated on the existing 4fps flow
+  // ticker only (see Ticker onTick) — no second loop, no per-frame state.
+  const tickRing = useCallback(() => {
+    const p = pointer.current
+    setRingTilt((t) => {
+      const nx = t.x + (p.y * 0.22 - t.x) * 0.35
+      const nz = t.z + (-p.x * 0.22 - t.z) * 0.35
+      return Math.abs(nx - t.x) < 1e-4 && Math.abs(nz - t.z) < 1e-4 ? t : { x: nx, z: nz }
+    })
+  }, [])
   const available = useMemo(() => isWebGL2Available(), [])
-  const animated = useMemo(() => graph.edges.some((e) => e.animated), [graph])
   const hasGated = useMemo(() => graph.nodes.some((n) => n.gated), [graph])
+  const byId = useMemo(() => new Map(graph.nodes.map((n) => [n.id, n])), [graph])
+  const isSelectable = useMemo(() => {
+    const ids = new Set(graph.nodes.filter((n) => n.selectable).map((n) => n.id))
+    return (id: string): boolean => ids.has(id)
+  }, [graph])
+  const focused = focus.focusedId !== null ? (byId.get(focus.focusedId) ?? null) : null
+  // A focused node that left the snapshot releases focus instead of pointing
+  // at stale data (same honesty rule as the list selection).
+  const activeFocused = focused !== null && focused.selectable ? focused : null
+  const view = useMemo(
+    () =>
+      activeFocused !== null
+        ? focusCameraFor(activeFocused.position, radiusFor(activeFocused))
+        : OVERVIEW_CAMERA,
+    [activeFocused]
+  )
+  const viewKey = activeFocused?.id ?? '__overview__'
+
+  const exitFocus = (): void => {
+    setFocus((s) => focusReduce(s, { type: 'empty' }, isSelectable))
+  }
+  const requestFocus = (id: string): void => {
+    setFocus((s) => focusReduce(s, { type: 'focus', id }, isSelectable))
+    setFocusNonce((n) => n + 1)
+  }
+
+  useEffect(() => {
+    if (activeFocused === null) return
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') exitFocus()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+    // isSelectable is graph-derived; exitFocus is stable logic.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeFocused?.id])
+
   if (!available) {
     return (
       <div data-testid="topology-fallback" style={{ ...sceneWrap, height: 'auto', padding: 14 }}>
@@ -394,56 +768,112 @@ export const TopologyScene = memo(function TopologyScene({
       </div>
     )
   }
+  const footprint = activeFocused !== null ? FOOTPRINT_FOR[activeFocused.kind] : null
   return (
-    <div data-testid="topology-scene" style={sceneWrap}>
+    <div
+      data-testid="topology-scene"
+      style={sceneWrap}
+      onPointerMove={(e) => {
+        activity.current.lastMove = Date.now()
+        const r = e.currentTarget.getBoundingClientRect()
+        if (r.width > 0 && r.height > 0) {
+          pointer.current = {
+            x: ((e.clientX - r.left) / r.width) * 2 - 1,
+            y: -(((e.clientY - r.top) / r.height) * 2 - 1)
+          }
+        }
+      }}
+    >
       <Canvas
         frameloop={SCENE_FRAMELOOP}
         dpr={[1, 2]}
         gl={{ antialias: true, alpha: true, powerPreference: 'high-performance' }}
-        camera={{ position: [INTRO_FROM.x, INTRO_FROM.y, INTRO_FROM.z], fov: 42 }}
+        camera={{
+          position: [
+            OVERVIEW_CAMERA.position[0],
+            OVERVIEW_CAMERA.position[1],
+            OVERVIEW_CAMERA.position[2]
+          ],
+          fov: 42
+        }}
+        onPointerMissed={() => exitFocus()}
       >
-        <ambientLight intensity={0.9} />
+        <ambientLight intensity={0.85} />
         <directionalLight position={[4, 6, 6]} intensity={1.1} />
-        {graph.nodes
-          .filter((n) => n.kind === 'hub')
-          .map((n) => (
-            <pointLight
-              key={`glow-${n.id}`}
-              position={n.position}
-              intensity={6}
-              distance={7}
-              color={KIND_HEX.hub}
-            />
-          ))}
-        <CameraRig />
-        <Ticker animated={animated} />
-        <Invalidator graph={graph} selectedId={selectedId} />
-        <FlowEdges graph={graph} />
+        <directionalLight position={[-5, 3, -2]} intensity={0.25} />
+        <CameraRig suppressed={focusNonce > 0} />
+        <Ticker animated={false} activity={activity} onTick={tickRing} />
+        <Invalidator graph={graph} selectedId={selectedId} focusedId={focus.focusedId} />
+        <FocusController viewKey={viewKey} view={view} />
+        <DeskFurniture dots={dots} />
+        {cables.map((c) => (
+          <CableMesh key={c.id} cable={c} />
+        ))}
+        {jumpers.map((w) => (
+          <JumperMesh key={w.id} wire={w} />
+        ))}
+        <RuntimeRing tilt={ringTilt} />
         {graph.nodes.map((n) => (
-          <SceneNodeMesh
-            key={n.id}
-            node={n}
-            selected={selectedId === n.id}
-            hovered={hoveredId === n.id}
-            onHover={setHoveredId}
-            onSelect={onSelect}
-          />
+          <group key={`shadow-${n.id}`}>
+            <mesh
+              data-testid={`shadow-${n.id}`}
+              position={[n.position[0], 0.006, n.position[2]]}
+              rotation={[-Math.PI / 2, 0, 0]}
+              material={blobMat}
+            >
+              <planeGeometry
+                args={[FOOTPRINT_FOR[n.kind].w * 1.25, FOOTPRINT_FOR[n.kind].d * 1.25]}
+              />
+            </mesh>
+            <SceneNodeMesh
+              node={n}
+              selected={selectedId === n.id}
+              hovered={hoveredId === n.id}
+              focused={activeFocused?.id === n.id}
+              onHover={setHoveredId}
+              onSelect={onSelect}
+              onFocus={requestFocus}
+            />
+          </group>
         ))}
         <OrbitControls
           enableDamping
           dampingFactor={0.12}
           autoRotate={false}
-          enablePan={false}
-          minDistance={4}
-          maxDistance={16}
+          enablePan
+          enableZoom
+          enableRotate
+          minDistance={3}
+          maxDistance={26}
+          maxPolarAngle={Math.PI / 2 - 0.06}
           makeDefault
         />
       </Canvas>
       <div style={vignetteStyle} />
+      {activeFocused !== null && footprint !== null ? (
+        <div data-testid="focus-detail" style={detailStyle}>
+          <span style={detailName}>{activeFocused.label}</span>
+          <span style={{ ...detailRow, color: TONE_HEX[activeFocused.tone] }}>
+            ● {activeFocused.status}
+          </span>
+          <span style={detailRow}>NODE {activeFocused.sublabel}</span>
+          <span style={detailRow}>KIND {activeFocused.kind.toUpperCase()}</span>
+          <span style={detailRow}>
+            SIZE {footprint.w.toFixed(1)} × {footprint.h.toFixed(1)} × {footprint.d.toFixed(1)}
+          </span>
+          <span style={detailRow}>
+            CAPS {activeFocused.caps.length > 0 ? activeFocused.caps.join(' ') : '—'}
+          </span>
+          <span style={detailRow}>SEEN {activeFocused.lastSeen ?? '—'}</span>
+          <button type="button" data-testid="focus-back" style={backStyle} onClick={exitFocus}>
+            ← BACK TO OVERVIEW
+          </button>
+        </div>
+      ) : null}
       <span style={captionStyle}>
         {hasGated
-          ? '3D TOPOLOGY · DRAG TO ORBIT · IPHONE GATED — SUPPORT LATER'
-          : '3D TOPOLOGY · DRAG TO ORBIT · SCROLL TO ZOOM'}
+          ? '3D DESK SETUP · DRAG ORBIT · RIGHT-DRAG PAN · SCROLL ZOOM · IPHONE GATED'
+          : '3D DESK SETUP · DRAG ORBIT · RIGHT-DRAG PAN · SCROLL ZOOM'}
       </span>
     </div>
   )

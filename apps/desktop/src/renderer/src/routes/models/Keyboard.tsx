@@ -288,13 +288,11 @@ function KeyboardInner({
           </mesh>
         ))}
 
-        {/* all 76 keycaps in a single draw call */}
-        <mesh
-          name="keycaps"
-          data-testid="keyboard-keycaps"
-          data-key-count={KEY_COUNT}
-          geometry={capGeometry}
-        >
+        {/* all 76 keycaps in a single draw call (KEY_COUNT exported beside the
+            component; no data-key-count attribute — R3F pierces a second
+            data-* prop on the same object into the first one's expando and
+            throws, so each three object owns at most one data-* prop) */}
+        <mesh name="keycaps" data-testid="keyboard-keycaps" geometry={capGeometry}>
           <meshStandardMaterial
             data-testid="keyboard-keycaps-material"
             color={CAP}
@@ -306,12 +304,7 @@ function KeyboardInner({
         </mesh>
 
         {/* per-key RGB underglow skirts (vertex colors), one draw call */}
-        <mesh
-          name="keyglow"
-          data-testid="keyboard-keyglow"
-          data-key-count={KEY_COUNT}
-          geometry={glowGeometry}
-        >
+        <mesh name="keyglow" data-testid="keyboard-keyglow" geometry={glowGeometry}>
           <meshBasicMaterial
             data-testid="keyboard-keyglow-material"
             vertexColors

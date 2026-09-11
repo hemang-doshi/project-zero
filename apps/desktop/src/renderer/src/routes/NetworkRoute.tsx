@@ -111,11 +111,15 @@ export const NetworkRoute = memo(function NetworkRoute(): React.JSX.Element {
 
   // Shared selection: clicking a 3D node selects exactly as clicking its list
   // row does. The list below stays the honest source; the scene only presents
-  // the same typed snapshot nodes. A selection whose node left the snapshot
-  // clears itself instead of pointing at stale data.
+  // the same typed snapshot nodes plus the always-present local host (which
+  // has no list row). A selection whose node left the scene clears itself
+  // instead of pointing at stale data.
   const [selectedId, setSelectedId] = useState<string | null>(null)
-  const activeSelectedId = nodes.some((n) => n.id === selectedId) ? selectedId : null
   const graph = useMemo(() => buildSceneGraph(nodes, conn), [nodes, conn])
+  const activeSelectedId =
+    selectedId !== null && graph.nodes.some((n) => n.id === selectedId && n.selectable)
+      ? selectedId
+      : null
   const select = (id: string): void => setSelectedId(id)
 
   return (

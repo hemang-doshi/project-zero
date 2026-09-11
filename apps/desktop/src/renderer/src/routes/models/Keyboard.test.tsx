@@ -100,10 +100,13 @@ describe('Keyboard structure', () => {
     expect(KEY_COUNT).toBeLessThanOrEqual(110)
     expect(KEY_COUNT).toBe(76)
     const el = await mount({ status: 'online' })
+    // KEY_COUNT is asserted from the lane export (the merged keycap/keyglow
+    // meshes take no data-key-count attribute: R3F pierces a second data-*
+    // prop on the same three object into the first one's expando and throws,
+    // so each object owns at most one data-* prop — pinned by packaged-app
+    // evidence in Task 27f-3).
     for (const testid of ['keyboard-keycaps', 'keyboard-keyglow']) {
-      const mesh = materialOf(el, testid)
-      expect(mesh, testid).not.toBeNull()
-      expect(mesh?.getAttribute('data-key-count')).toBe(String(KEY_COUNT))
+      expect(materialOf(el, testid), testid).not.toBeNull()
     }
   })
 
