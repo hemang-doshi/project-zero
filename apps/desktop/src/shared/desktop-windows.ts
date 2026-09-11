@@ -36,6 +36,8 @@ export const CANONICAL_ROUTE_ORDER = [
   'skillLab'
 ] as const
 
+export type CanonicalRouteId = (typeof CANONICAL_ROUTE_ORDER)[number]
+
 export function canonicalOrderPositions<T>(
   positions: Record<string, T>,
   canonical: readonly string[]

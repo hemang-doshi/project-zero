@@ -1,7 +1,5 @@
 import { useRef, useState } from 'react'
-import { ICON_H, ICON_W, fileById, iconGridPos, snapIconToGrid, type DesktopIcon } from './items'
-import { FileGlyph, RouteGlyph } from './icons'
-import { ZERO_TOKENS } from '../../../shared/tokens'
+import { ICON_H, ICON_W, fileById, iconGridPos, monogram, type DesktopIcon } from './items'
 
 export type IconLayerProps = {
   icons: DesktopIcon[]
@@ -41,26 +39,21 @@ const tileStyle: React.CSSProperties = {
   userSelect: 'none'
 }
 
-// Inner shade derived from the ink token — never a hardcoded rgb.
-const hexToRgba = (hex: string, alpha: number): string => {
-  const n = parseInt(hex.slice(1), 16)
-  return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${alpha})`
-}
-
-const inkShade = hexToRgba(ZERO_TOKENS.ink, 0.05)
-
 const faceStyle: React.CSSProperties = {
   position: 'relative',
   width: 52,
   height: 52,
   borderRadius: 13,
   border: '1px solid var(--z-line)',
-  background: 'linear-gradient(180deg, var(--z-card-cream) 0%, var(--z-canvas-tan) 100%)',
-  boxShadow: `inset 0 1px 0 var(--z-card-white), inset 0 -6px 10px ${inkShade}, 0 3px 9px rgba(0,0,0,.14)`,
+  background: 'var(--z-card-cream)',
+  boxShadow: '0 2px 6px rgba(0,0,0,.12)',
   display: 'flex',
   alignItems: 'center',
   justifyContent: 'center',
-  color: 'var(--z-ink)'
+  color: 'var(--z-ink)',
+  fontSize: 13,
+  fontWeight: 700,
+  letterSpacing: '0.06em'
 }
 
 const dotStyle: React.CSSProperties = {
@@ -73,18 +66,6 @@ const dotStyle: React.CSSProperties = {
   background: 'var(--z-status-green)'
 }
 
-// Files are documents, not applications: the folded-corner paper glyph draws
-// its own shape, so the face stays transparent — never the sculpted app tile.
-const fileFaceStyle: React.CSSProperties = {
-  position: 'relative',
-  width: 52,
-  height: 52,
-  display: 'flex',
-  alignItems: 'center',
-  justifyContent: 'center',
-  filter: 'drop-shadow(0 3px 4px rgba(0,0,0,.18))'
-}
-
 const labelStyle: React.CSSProperties = {
   fontSize: 11,
   lineHeight: 1.2,
@@ -93,9 +74,7 @@ const labelStyle: React.CSSProperties = {
   maxWidth: ICON_W,
   overflow: 'hidden',
   textOverflow: 'ellipsis',
-  whiteSpace: 'nowrap',
-  // Subtle cream glow keeps labels readable over wallpaper without a box.
-  textShadow: '0 1px 2px var(--z-card-cream), 0 0 8px var(--z-card-cream)'
+  whiteSpace: 'nowrap'
 }
 
 export function IconLayer({
@@ -117,12 +96,10 @@ export function IconLayer({
       {icons.map((icon) => {
         const pos = posOf(icon)
         const running = icon.kind === 'route' && openRoutes.includes(icon.route ?? '')
-        const isFile = icon.kind === 'file'
         return (
           <div
             key={icon.id}
             className="zw-icon"
-            data-kind={icon.kind}
             data-route={icon.route}
             data-file={icon.file}
             data-running={running ? 'true' : undefined}
@@ -140,7 +117,7 @@ export function IconLayer({
                 y: p.y,
                 moved: false
               }
-              e.currentTarget.setPointerCapture?.(e.pointerId)
+              e.currentTarget.setPointerCapture(e.pointerId)
             }}
             onPointerMove={(e) => {
               const d = drag.current
@@ -149,11 +126,8 @@ export function IconLayer({
               const dy = e.clientY - d.py
               if (Math.abs(dx) > 3 || Math.abs(dy) > 3) d.moved = true
               if (d.moved) {
-                // The live preview already shows the snapped slot; the drop
-                // commits exactly what the user sees.
-                const slot = snapIconToGrid({ x: d.ox + dx, y: d.oy + dy })
-                d.x = slot.x
-                d.y = slot.y
+                d.x = d.ox + dx
+                d.y = d.oy + dy
                 setLive((prev) => ({ ...prev, [icon.id]: { x: d.x, y: d.y } }))
               }
             }}
@@ -163,9 +137,7 @@ export function IconLayer({
               drag.current = null
               if (d.moved) {
                 lastDragAt.current = Date.now()
-                // Commit-on-drop only: nothing persists mid-drag.
-                const slot = snapIconToGrid({ x: d.x, y: d.y })
-                onCommitPos(icon.id, slot.x, slot.y)
+                onCommitPos(icon.id, d.x, d.y)
               }
               setLive((prev) => {
                 const next = { ...prev }
@@ -179,16 +151,12 @@ export function IconLayer({
             }}
           >
             <div style={tileStyle}>
-              {isFile ? (
-                <div style={fileFaceStyle}>
-                  <FileGlyph ext={fileById(icon.file ?? '')?.ext ?? 'txt'} size={46} />
-                </div>
-              ) : (
-                <div style={faceStyle}>
-                  <RouteGlyph route={icon.route ?? ''} size={30} />
-                  {running ? <span data-dot="true" style={dotStyle} /> : null}
-                </div>
-              )}
+              <div style={faceStyle}>
+                {icon.kind === 'route'
+                  ? monogram(icon.label)
+                  : (fileById(icon.file ?? '')?.ext ?? 'FILE').toUpperCase()}
+                {running ? <span data-dot="true" style={dotStyle} /> : null}
+              </div>
               <span style={labelStyle}>{icon.label}</span>
             </div>
           </div>

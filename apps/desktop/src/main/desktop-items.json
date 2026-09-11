@@ -27,7 +27,7 @@
       "id": "readme",
       "name": "README.txt",
       "ext": "txt",
-      "content": "PROJECT ZERO — DESKTOP README (DUMMY)\n\nThis desktop is the local recreation of the Zero cockpit: seven route windows over a token-driven wallpaper, with snap-to-grid icons.\n\n- Icons snap to grid slots; positions persist per drop.\n- Double-click an icon to open its route window or this viewer.\n- Viewer windows are read-only and labeled dummy.\n\nNo file system is read by this viewer; every dummy file ships inside the app bundle."
+      "content": "PROJECT ZERO — DESKTOP README (DUMMY)\n\nThis desktop is the local recreation of the Zero cockpit: seven route windows over a token-driven wallpaper, with free-placed icons.\n\n- Icons drag freely; positions persist per drag.\n- Double-click an icon to open its route window or this viewer.\n- Viewer windows are read-only and labeled dummy.\n\nNo file system is read by this viewer; every dummy file ships inside the app bundle."
     },
     {
       "id": "architecture",
@@ -45,7 +45,7 @@
       "id": "notes",
       "name": "notes",
       "ext": "notes",
-      "content": "Desktop notes (dummy)\nIcons snap to the grid; positions persist per drop.\nWallpaper kinds render from tokens.\nViewer windows are read-only.\nSettings lives in the taskbar strip."
+      "content": "Desktop notes (dummy)\nIcons persist per drag.\nWallpaper kinds render from tokens.\nViewer windows are read-only.\nSettings lives in the taskbar strip."
     }
   ]
 }

@@ -34,38 +34,15 @@ export function viewerTitle(file: DesktopFile): string {
 export const ICON_W = 68
 export const ICON_H = 84
 export const GRID_ORIGIN = { x: 24, y: 28 }
-
-// The seed grid must fit the default main window (900x670, see main/index.ts)
-// with the bottom taskbar strip left free: two columns of at most 6 rows,
-// vertical step 96 keeps the tallest column at y=28..508 (bottom 592, which
-// leaves 78px clear of the 670px viewport). Persisted positions always win
-// over these seeds.
-export const SEED_VIEWPORT = { width: 900, height: 670 }
-export const SEED_BOTTOM_RESERVE = 72
-export const SEED_PER_COLUMN = 6
-export const GRID_STEP_Y = 96
-export const GRID_COLUMN_GAP = 20
-
-// Single icon grid: column pitch derives from the tile width plus the seed
-// column gap (68 + 20 = 88), row pitch is the seed vertical step (96).
-// snapIconToGrid is the only slot math — IconLayer (live snapped preview +
-// commit-on-drop), the renderer prefs store and the main-process startup
-// migration all reuse it, so no second grid can drift.
-export const GRID_STEP_X = ICON_W + GRID_COLUMN_GAP
-
-export type IconPoint = { x: number; y: number }
-
-export const snapIconToGrid = (p: IconPoint): IconPoint => ({
-  x: GRID_ORIGIN.x + Math.round((p.x - GRID_ORIGIN.x) / GRID_STEP_X) * GRID_STEP_X,
-  y: GRID_ORIGIN.y + Math.round((p.y - GRID_ORIGIN.y) / GRID_STEP_Y) * GRID_STEP_Y
-})
-
-// One-way migration: free-placed positions from before grid snap round to
-// their nearest slot on load. Already-snapped seeds are fixed points.
-export const migrateIconsToGrid = (icons: Record<string, IconPoint>): Record<string, IconPoint> =>
-  Object.fromEntries(Object.entries(icons).map(([id, pos]) => [id, snapIconToGrid(pos)]))
+export const GRID_STEP = 108
 
 export const iconGridPos = (index: number): { x: number; y: number } => ({
-  x: GRID_ORIGIN.x + Math.floor(index / SEED_PER_COLUMN) * (ICON_W + GRID_COLUMN_GAP),
-  y: GRID_ORIGIN.y + (index % SEED_PER_COLUMN) * GRID_STEP_Y
+  x: GRID_ORIGIN.x,
+  y: GRID_ORIGIN.y + index * GRID_STEP
 })
+
+export const monogram = (label: string): string => {
+  const words = label.split(/\s+/).filter((w) => w.length > 0)
+  if (words.length >= 2) return (words[0][0] + words[1][0]).toUpperCase()
+  return label.slice(0, 2).toUpperCase()
+}

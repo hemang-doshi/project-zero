@@ -7,8 +7,6 @@ import {
 } from './wallpaper'
 
 export type SettingsSheetProps = {
-  theme: 'light' | 'dark'
-  onTheme: (theme: 'light' | 'dark') => void
   wallpaper: WallpaperState
   onKind: (kind: WallpaperKind) => void
   onMode: (mode: WallpaperMode) => void
@@ -98,8 +96,6 @@ const closeStyle: React.CSSProperties = {
 }
 
 export function SettingsSheet({
-  theme,
-  onTheme,
   wallpaper,
   onKind,
   onMode,
@@ -113,20 +109,6 @@ export function SettingsSheet({
         <button type="button" aria-label="Close settings" style={closeStyle} onClick={onClose}>
           ×
         </button>
-      </div>
-      <span style={microStyle}>APPEARANCE</span>
-      <div style={modeRowStyle}>
-        {(['light', 'dark'] as const).map((option) => (
-          <button
-            key={option}
-            type="button"
-            aria-pressed={theme === option}
-            style={modeStyle(theme === option)}
-            onClick={() => onTheme(option)}
-          >
-            {option.toUpperCase()}
-          </button>
-        ))}
       </div>
       <span style={microStyle}>WALLPAPER</span>
       {(Object.keys(WALLPAPER_KIND_LABELS) as WallpaperKind[]).map((kind) => (

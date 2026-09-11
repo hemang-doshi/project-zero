@@ -48,6 +48,7 @@ const lightClick =
 
 export type DesktopWindowProps = {
   route: string
+  title?: string
   rect: Rect
   front: boolean
   onSelect: () => void
@@ -60,6 +61,7 @@ export type DesktopWindowProps = {
 
 export function DesktopWindow({
   route,
+  title: titleOverride,
   rect,
   front,
   onSelect,
@@ -71,7 +73,7 @@ export function DesktopWindow({
 }: DesktopWindowProps): React.JSX.Element {
   const [previewDir, setPreviewDir] = useState<string | null>(null)
   const [preview, setPreview] = useState<{ w: number; h: number } | null>(null)
-  const title = ROUTE_TITLES[route as RouteId] ?? route
+  const title = titleOverride ?? ROUTE_TITLES[route as RouteId] ?? route
   const t = previewTransform(previewDir ?? '', rect, preview)
   return (
     <Rnd
