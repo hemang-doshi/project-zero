@@ -12,23 +12,32 @@ import {
   harnessLockWarning,
   mirrorLabel,
   parseDiscovery,
+  pushBridgeEvent,
   visibleBridgeEvents,
   type BridgeEvent
 } from './runtime.types'
 
 describe('harness lock', () => {
-  it('does not claim a static provider model roster before live discovery', () => {
-    expect(HARNESS_MODELS.codex).toEqual([])
-    expect(HARNESS_MODELS.opencode).toEqual([])
+  it('maps each harness to its pinned model roster', () => {
+    expect(HARNESS_MODELS.codex).toEqual([
+      'gpt-5.6-luna',
+      'gpt-5.6-sol',
+      'gpt-5.6-terra',
+      'gpt-6-astra'
+    ])
+    expect(HARNESS_MODELS.opencode).toEqual(['muse-spark-1.3'])
     expect(HARNESS_DEFAULT_MODEL.codex).toBe('gpt-5.6-luna')
-    expect(HARNESS_DEFAULT_MODEL.opencode).toBe('')
+    expect(HARNESS_DEFAULT_MODEL.opencode).toBe('muse-spark-1.3')
   })
 
-  it('warns when a model has not been advertised by the active harness', () => {
+  it('warns on a foreign model and names the mirror path of the selected harness', () => {
     const warning = harnessLockWarning('muse-spark-1.3', 'codex')
     expect(warning).toContain('muse-spark-1.3')
-    expect(warning).toContain('not been advertised by the active codex session')
-    expect(harnessLockWarning('', 'opencode')).toBeNull()
+    expect(warning).toContain('not allowed in the codex harness')
+    expect(warning).toContain('mirrored, not sent')
+    expect(harnessLockWarning('gpt-5.6-luna', 'codex')).toBeNull()
+    expect(harnessLockWarning('muse-spark-1.3', 'opencode')).toBeNull()
+    expect(harnessLockWarning('gpt-5.6-sol', 'opencode')).toContain('gpt-5.6-sol')
   })
 
   it('labels the jsonl mirror from the bridge identity', () => {
@@ -75,15 +84,17 @@ describe('bridge event surface', () => {
     )
   })
 
-  it('caps retained events at 100 per harness with per-harness drop counters (chat.model)', async () => {
-    const { pushHarnessEvent, EMPTY_HARNESS_LOG, MAX_BRIDGE_EVENTS } = await import('./chat.model')
-    let log = EMPTY_HARNESS_LOG
-    for (let i = 0; i < 102; i++)
-      log = pushHarnessEvent(log, { harness: 'codex', method: `m${i}`, params: undefined })
-    expect(log.codex.events).toHaveLength(MAX_BRIDGE_EVENTS)
-    expect(log.codex.events[0].method).toBe('m2')
-    expect(log.codex.dropped).toBe(2)
-    expect(log.opencode.events).toHaveLength(0)
+  it('caps retained events at 100 and counts the honest drop', () => {
+    let events: BridgeEvent[] = []
+    let dropped = 0
+    for (let i = 0; i < 102; i++) {
+      const r = pushBridgeEvent(events, { harness: 'codex', method: `m${i}`, params: undefined })
+      events = r.events
+      dropped += r.dropped
+    }
+    expect(events).toHaveLength(100)
+    expect(events[0].method).toBe('m2')
+    expect(dropped).toBe(2)
   })
 
   it('shows only the selected harness events under the strict harness lock', () => {
@@ -111,94 +122,24 @@ describe('parseDiscovery', () => {
       harness: 'codex',
       models: [{ id: 'gpt-5.6-luna', label: 'Luna', advertised: true }],
       threads: [{ id: 't1', name: 'One' }],
-      folders: [],
       note: null
     })
   })
 
-  it('parses opencode folder-grouped sessions newest-first and skips malformed rows', () => {
+  it('keeps the opencode honest note and tolerates malformed rows', () => {
     const d = parseDiscovery({
       harness: 'opencode',
       models: [],
       threads: [],
-      folders: [
-        {
-          folder: 'beta',
-          path: '/repo/beta',
-          count: 99,
-          sessions: [{ id: 'b1', title: 'Beta', updatedAt: 200 }]
-        },
-        {
-          folder: 'alpha',
-          path: '/repo/alpha',
-          count: 2,
-          sessions: [
-            { id: 'a-old', title: 'Old', directory: '/repo/alpha', updatedAt: 10 },
-            {
-              id: 'a-new',
-              title: 'New',
-              directory: '/repo/alpha',
-              agent: 'build',
-              model: 'muse-spark-1.3',
-              createdAt: 5,
-              updatedAt: 300
-            },
-            { id: '', title: 'Missing id' },
-            'junk'
-          ]
-        },
-        { folder: 'nodir', sessions: [] },
-        null
-      ],
-      note: null
+      note: 'OpenCode ACP advertises no read-only discovery method in this build; sessions surface from streamed bridge events.'
     })
-    expect(d?.folders.map((f) => f.path)).toEqual(['/repo/alpha', '/repo/beta'])
-    expect(d?.folders[0]).toEqual({
-      folder: 'alpha',
-      path: '/repo/alpha',
-      count: 2,
-      sessions: [
-        {
-          id: 'a-new',
-          title: 'New',
-          directory: '/repo/alpha',
-          agent: 'build',
-          model: 'muse-spark-1.3',
-          createdAt: 5,
-          updatedAt: 300
-        },
-        {
-          id: 'a-old',
-          title: 'Old',
-          directory: '/repo/alpha',
-          agent: null,
-          model: null,
-          createdAt: 0,
-          updatedAt: 10
-        }
-      ]
-    })
-    expect(d?.folders[1]?.sessions.map((s) => s.id)).toEqual(['b1'])
-    expect(d?.note).toBeNull()
-  })
-
-  it('keeps the opencode store note and tolerates malformed rows', () => {
-    const d = parseDiscovery({
-      harness: 'opencode',
-      models: [],
-      threads: [],
-      folders: [],
-      note: 'No OpenCode sessions found (session store unreadable at /nowhere/opencode.db).'
-    })
-    expect(d?.note).toContain('No OpenCode sessions found')
-    expect(d?.folders).toEqual([])
+    expect(d?.note).toContain('read-only discovery')
     expect(parseDiscovery({ harness: 'shell', models: [] })).toBeNull()
     expect(parseDiscovery(null)).toBeNull()
     expect(parseDiscovery({ harness: 'codex', models: [null, 5], threads: ['x'] })).toEqual({
       harness: 'codex',
       models: [],
       threads: [],
-      folders: [],
       note: null
     })
   })
@@ -228,8 +169,8 @@ describe('ZeroBotRoute', () => {
 
   it('renders the read-only discovery and conversation surfaces', () => {
     const html = renderToString(createElement(ZeroBotRoute))
-    expect(html).toContain('REGISTERED PROJECTS')
+    expect(html).toContain('DISCOVERY')
     expect(html).toContain('CONVERSATION')
-    expect(html).toContain('Bridge events')
+    expect(html).toContain('No bridge events in this window yet')
   })
 })
