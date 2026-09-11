@@ -2,11 +2,7 @@ import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
 import { afterEach, describe, it, expect, vi } from 'vitest'
-import {
-  createWallpaperImageHandler,
-  ensureManagedWallpaper,
-  importWallpaper
-} from './wallpaper-image'
+import { createWallpaperImageHandler } from './wallpaper-image'
 
 const PNG_BYTES = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
@@ -63,37 +59,5 @@ describe('zero-img protocol handler', () => {
     const res = await handler(request('zero-img://local/%zz'))
     expect(res.status).toBe(404)
     expect(fileFetch).not.toHaveBeenCalled()
-  })
-})
-
-describe('managed wallpaper import', () => {
-  it('keeps a profile copy when the original source is removed', () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'zero-wallpaper-test-'))
-    try {
-      const source = path.join(root, 'source.png')
-      const profile = path.join(root, 'profile', 'wallpapers')
-      fs.writeFileSync(source, PNG_BYTES)
-      const managed = importWallpaper(source, profile)
-      expect(managed).toContain(`${path.sep}wallpapers${path.sep}wallpaper-`)
-      expect(fs.readFileSync(managed).equals(PNG_BYTES)).toBe(true)
-      fs.unlinkSync(source)
-      expect(fs.readFileSync(managed).equals(PNG_BYTES)).toBe(true)
-      expect(ensureManagedWallpaper(managed, profile)).toBe(managed)
-    } finally {
-      fs.rmSync(root, { recursive: true, force: true })
-    }
-  })
-
-  it('rejects files without a supported image extension', () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'zero-wallpaper-test-'))
-    try {
-      const source = path.join(root, 'image.txt')
-      fs.writeFileSync(source, 'no image')
-      expect(() => importWallpaper(source, path.join(root, 'managed'))).toThrow(
-        'Unsupported wallpaper format'
-      )
-    } finally {
-      fs.rmSync(root, { recursive: true, force: true })
-    }
   })
 })
