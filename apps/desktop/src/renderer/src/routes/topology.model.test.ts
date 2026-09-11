@@ -21,6 +21,8 @@ import {
   MOUSEPAD_NODE_ID,
   MOUSE_STUB_WORLD,
   OVERVIEW_CAMERA,
+  PERIPHERAL_FOOTPRINT,
+  PERIPHERAL_MAX,
   SCENE_FRAMELOOP,
   TONE_HEX,
   FOCUS_TWEEN_MS,
@@ -38,7 +40,6 @@ import { MODEL_FOOTPRINT as KEYBOARD_FOOTPRINT } from './models/Keyboard'
 import { MODEL_FOOTPRINT as LAPTOP_FOOTPRINT } from './models/MacBookAir'
 import { MODEL_FOOTPRINT as MONITOR_FOOTPRINT } from './models/Monitor'
 import { MODEL_FOOTPRINT as MOUSEPAD_FOOTPRINT } from './models/MousePad'
-
 const LIVE: RuntimeConnState = 'live'
 
 const node = (over: Partial<CockpitNode> & { id: string }): CockpitNode => ({
@@ -460,5 +461,103 @@ describe('topology focus camera', () => {
     expect(easeInOutCubic(0.5)).toBeCloseTo(0.5)
     expect(easeInOutCubic(0.25)).toBeLessThan(0.25)
     expect(easeInOutCubic(0.75)).toBeGreaterThan(0.75)
+  })
+})
+
+describe('local device names and peripheral markers', () => {
+  const devices = [
+    {
+      id: 'usb-9610-268-1314816',
+      name: 'Gaming Keyboard',
+      transport: 'usb' as const,
+      kind: 'keyboard' as const,
+      vendor: 'BY Tech'
+    },
+    {
+      id: 'usb-43173-8789-1327104',
+      name: 'USB Receiver',
+      transport: 'usb' as const,
+      kind: 'mouse' as const,
+      vendor: 'YJX-CHIP'
+    },
+    {
+      id: 'usb-6790-29987-1318912',
+      name: 'USB Serial',
+      transport: 'usb' as const,
+      kind: 'serial' as const
+    },
+    {
+      id: 'bt-REDACTED-1',
+      name: 'Spykar Sound',
+      transport: 'bluetooth' as const,
+      kind: 'audio' as const
+    }
+  ]
+
+  it('labels the keyboard and mouse models with the real connected names', () => {
+    const graph = buildSceneGraph([], LIVE, devices)
+    const kb = graph.nodes.find((n) => n.id === KEYBOARD_NODE_ID)
+    expect(kb?.label).toBe('Gaming Keyboard')
+    expect(kb?.sublabel).toContain('usb')
+    expect(kb?.sublabel).toContain('BY Tech')
+    const pad = graph.nodes.find((n) => n.id === MOUSEPAD_NODE_ID)
+    expect(pad?.label).toBe('USB Receiver')
+    expect(pad?.sublabel).toContain('usb')
+  })
+
+  it('falls back to generic labels when no matching device is connected', () => {
+    const graph = buildSceneGraph([], LIVE, [])
+    expect(graph.nodes.find((n) => n.id === KEYBOARD_NODE_ID)?.label).toBe('RGB Keyboard')
+    expect(graph.nodes.find((n) => n.id === MOUSEPAD_NODE_ID)?.label).toBe('Mouse + Desk Mat')
+    const graphBtOnly = buildSceneGraph([], LIVE, [
+      { id: 'bt-1', name: 'BT Keys', transport: 'bluetooth', kind: 'keyboard' }
+    ])
+    // Bluetooth still names the model (honest connected name), USB preferred
+    // when both exist.
+    expect(graphBtOnly.nodes.find((n) => n.id === KEYBOARD_NODE_ID)?.label).toBe('BT Keys')
+    const graphBoth = buildSceneGraph([], LIVE, [
+      { id: 'bt-1', name: 'BT Keys', transport: 'bluetooth', kind: 'keyboard' },
+      { id: 'usb-1', name: 'Gaming Keyboard', transport: 'usb', kind: 'keyboard' }
+    ])
+    expect(graphBoth.nodes.find((n) => n.id === KEYBOARD_NODE_ID)?.label).toBe('Gaming Keyboard')
+  })
+
+  it('renders one small puck per extra device, never for keyboard/mouse matches', () => {
+    const graph = buildSceneGraph([], LIVE, devices)
+    const pucks = graph.nodes.filter((n) => n.kind === 'peripheral')
+    expect(pucks.map((p) => p.id).sort()).toEqual([
+      'peripheral-bt-REDACTED-1',
+      'peripheral-usb-6790-29987-1318912'
+    ])
+    const serial = pucks.find((p) => p.id === 'peripheral-usb-6790-29987-1318912')
+    expect(serial?.label).toBe('USB Serial')
+    expect(serial?.selectable).toBe(false)
+    expect(serial?.gated).toBe(false)
+    // Deterministic back-edge row inside the desk bounds.
+    const xs = pucks.map((p) => p.position[0])
+    expect(new Set(xs).size).toBe(pucks.length)
+    for (const p of pucks) {
+      expect(Math.abs(p.position[0] - DESK_CENTER[0])).toBeLessThanOrEqual(
+        DESK_SIZE.w / 2 - PERIPHERAL_FOOTPRINT.w / 2
+      )
+      expect(Math.abs(p.position[2] - DESK_CENTER[2])).toBeLessThanOrEqual(
+        DESK_SIZE.d / 2 - PERIPHERAL_FOOTPRINT.d / 2
+      )
+    }
+  })
+
+  it('caps markers deterministically and keeps the gated-iPhone rule', () => {
+    const many = Array.from({ length: PERIPHERAL_MAX + 3 }, (_, i) => ({
+      id: `usb-9-9-${i}`,
+      name: `Gadget ${i}`,
+      transport: 'usb' as const,
+      kind: 'other' as const
+    }))
+    const graph = buildSceneGraph([node({ id: 'owner-iphone', status: 'ONLINE' })], LIVE, many)
+    expect(graph.nodes.filter((n) => n.kind === 'peripheral')).toHaveLength(PERIPHERAL_MAX)
+    const phone = graph.nodes.find((n) => n.id === 'owner-iphone')
+    expect(phone?.gated).toBe(true)
+    expect(phone?.status).toBe('GATED')
+    expect(graph.nodes.some((n) => n.id.startsWith('peripheral-') && n.gated)).toBe(false)
   })
 })

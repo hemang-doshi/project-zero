@@ -125,3 +125,98 @@ describe('NetworkRoute topology', () => {
     expect(sceneProps.current?.selectedId).toBe('local-host')
   })
 })
+
+describe('NetworkRoute local devices', () => {
+  const FIXTURE = {
+    devices: [
+      {
+        id: 'usb-kb',
+        name: 'Gaming Keyboard',
+        transport: 'usb',
+        kind: 'keyboard',
+        vendor: 'BY Tech'
+      },
+      { id: 'usb-ms', name: 'USB Receiver', transport: 'usb', kind: 'mouse', vendor: 'YJX-CHIP' },
+      { id: 'usb-ser', name: 'USB Serial', transport: 'usb', kind: 'serial' },
+      { id: 'bt-au', name: 'Spykar Sound', transport: 'bluetooth', kind: 'audio' }
+    ],
+    note: null
+  }
+  const invoke = vi.fn((op: string): Promise<unknown> =>
+    op === 'devices.list'
+      ? Promise.resolve(FIXTURE)
+      : Promise.reject(new Error(`unexpected op ${op}`))
+  )
+
+  beforeEach(() => {
+    invoke.mockClear()
+    invoke.mockImplementation((op: string): Promise<unknown> =>
+      op === 'devices.list'
+        ? Promise.resolve(FIXTURE)
+        : Promise.reject(new Error(`unexpected op ${op}`))
+    )
+    ;(window as unknown as { zero: unknown }).zero = { invoke }
+  })
+
+  afterEach(() => {
+    delete (window as unknown as { zero?: unknown }).zero
+  })
+
+  it('renders a LOCAL DEVICES section with real names, transport chips and kind glyphs', async () => {
+    const el = await mount()
+    await act(async () => {})
+    expect(el.textContent).toContain('LOCAL DEVICES')
+    for (const id of [
+      'device-row-usb-kb',
+      'device-row-usb-ms',
+      'device-row-usb-ser',
+      'device-row-bt-au'
+    ]) {
+      expect(el.querySelector(`[data-testid="${id}"]`)).not.toBeNull()
+    }
+    expect(el.textContent).toContain('Gaming Keyboard')
+    expect(el.textContent).toContain('USB')
+    expect(el.textContent).toContain('BT')
+    expect(el.textContent).toContain('⌨')
+    expect(el.textContent).toContain('♪')
+  })
+
+  it('refreshes on demand with the Bluetooth slow path, polls fast otherwise', async () => {
+    const el = await mount()
+    await act(async () => {})
+    expect(invoke).toHaveBeenCalledWith('devices.list', undefined)
+    await act(async () => {
+      el.querySelector('[data-testid="devices-refresh"]')?.dispatchEvent(
+        new MouseEvent('click', { bubbles: true })
+      )
+    })
+    await act(async () => {})
+    expect(invoke).toHaveBeenCalledWith('devices.list', { refreshBt: true })
+  })
+
+  it('feeds local devices into the scene: real keyboard label plus pucks', async () => {
+    await mount()
+    await act(async () => {})
+    const graph = sceneProps.current?.graph
+    expect(graph?.nodes.find((n) => n.id === 'desk-keyboard')?.label).toBe('Gaming Keyboard')
+    expect(graph?.nodes.find((n) => n.id === 'desk-mousepad')?.label).toBe('USB Receiver')
+    expect(graph?.nodes.some((n) => n.id === 'peripheral-usb-ser')).toBe(true)
+    expect(graph?.nodes.some((n) => n.id === 'peripheral-bt-au')).toBe(true)
+  })
+
+  it('stays honest when the lister sees nothing', async () => {
+    invoke.mockImplementation((op: string): Promise<unknown> =>
+      op === 'devices.list'
+        ? Promise.resolve({ devices: [], note: 'No local USB or Bluetooth devices seen.' })
+        : Promise.reject(new Error(`unexpected op ${op}`))
+    )
+    const el = await mount()
+    await act(async () => {})
+    expect(el.textContent).toContain('LOCAL DEVICES')
+    expect(el.textContent).toContain('No local USB or Bluetooth devices seen.')
+    // No fabricated names: the 3D models keep their generic labels.
+    expect(sceneProps.current?.graph.nodes.find((n) => n.id === 'desk-keyboard')?.label).toBe(
+      'RGB Keyboard'
+    )
+  })
+})

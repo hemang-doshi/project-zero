@@ -18,7 +18,8 @@ export const OPS = {
   'ocp.discover': true,
   'wallpaper.pick': true,
   'telemetry.sample': true,
-  'artwork.fetch': true
+  'artwork.fetch': true,
+  'devices.list': true
 } as const
 
 export type OpName = keyof typeof OPS
@@ -28,6 +29,21 @@ export type ProjectPayload = { id: string }
 export type ArtworkPayload = { id: string }
 export type CodexSendPayload = { method: string; params?: unknown }
 export type ThreadGetPayload = { threadId: string }
+
+// Local-device enumeration (Task 36): real USB + Bluetooth product names
+// from the main process. Transports are exactly 'usb' | 'bluetooth'; kinds
+// are a coarse HID/audio/serial split used for 3D name-matching.
+export type DeviceTransport = 'usb' | 'bluetooth'
+export type DeviceKind = 'keyboard' | 'mouse' | 'audio' | 'serial' | 'other'
+export type DeviceInfo = {
+  id: string
+  name: string
+  transport: DeviceTransport
+  kind: DeviceKind
+  vendor?: string
+}
+export type DevicesListPayload = { refreshBt?: boolean }
+export type DevicesListResult = { devices: DeviceInfo[]; note: string | null }
 
 // Wire payload of the telemetry.sample op, produced by the main-process
 // sampler. Percentages are 0-100; byte counts are raw bytes; rates are deltas

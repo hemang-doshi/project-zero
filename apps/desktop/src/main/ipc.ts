@@ -5,6 +5,8 @@ import {
   validateOp,
   type ArtworkPayload,
   type CommandPayload,
+  type DevicesListPayload,
+  type DevicesListResult,
   type ProjectPayload,
   type TelemetrySample,
   type ThreadGetPayload
@@ -27,6 +29,7 @@ export type SocketDeps = {
   store: PrefsStoreLike
   pickImage: () => Promise<string | null>
   sampleTelemetry: () => Promise<TelemetrySample>
+  listDevices: (refreshBt: boolean) => Promise<DevicesListResult>
   openCodeDbPath?: string
 }
 
@@ -206,6 +209,10 @@ export function createDispatch(
       }
       case 'telemetry.sample':
         return deps.sampleTelemetry()
+      case 'devices.list': {
+        const { refreshBt } = (payload ?? {}) as Partial<DevicesListPayload>
+        return deps.listDevices(refreshBt === true)
+      }
       case 'artwork.fetch':
         return artworkFetch(payload)
     }

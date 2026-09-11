@@ -12,6 +12,7 @@ import {
   DESK_SIZE,
   FOCUS_TWEEN_MS,
   OVERVIEW_CAMERA,
+  PERIPHERAL_FOOTPRINT,
   SCENE_FRAMELOOP,
   STAND_H,
   STAND_SIZE,
@@ -462,7 +463,8 @@ const FOOTPRINT_FOR: Record<SceneNode['kind'], { w: number; h: number; d: number
   esp32: ESP32_FOOTPRINT,
   keyboard: KEYBOARD_FOOTPRINT,
   mousepad: MOUSEPAD_FOOTPRINT,
-  phone: PHONE_FOOTPRINT
+  phone: PHONE_FOOTPRINT,
+  peripheral: PERIPHERAL_FOOTPRINT
 }
 
 // Label anchor above each model so the tag clears the tallest mesh.
@@ -482,6 +484,27 @@ type MeshProps = {
   onHover: (id: string | null) => void
   onSelect: (id: string) => void
   onFocus: (id: string) => void
+}
+
+// One small reused marker for every extra connected local device (audio
+// interfaces, USB-serial adapters, BT peripherals): a dark puck with a
+// tone-lit top disc + the device's real name as its label. Never a full
+// model per device. Inner meshes use `name` only — the wrapping group owns
+// the single data-testid (one data-* per R3F object).
+function PeripheralPuck({ node }: { node: SceneNode }): React.JSX.Element {
+  const glow = TONE_HEX[node.tone]
+  return (
+    <group>
+      <mesh name={`puck-base-${node.id}`} position={[0, 0.06, 0]}>
+        <cylinderGeometry args={[0.22, 0.25, 0.12, 24]} />
+        <meshStandardMaterial color={ZERO_TOKENS.ink} roughness={0.5} metalness={0.4} />
+      </mesh>
+      <mesh name={`puck-glow-${node.id}`} position={[0, 0.13, 0]}>
+        <cylinderGeometry args={[0.14, 0.14, 0.02, 24]} />
+        <meshStandardMaterial color={glow} emissive={glow} emissiveIntensity={0.8} />
+      </mesh>
+    </group>
+  )
 }
 
 function SceneNodeMesh({
@@ -531,6 +554,8 @@ function SceneNodeMesh({
         <Keyboard status={status} dimmed={node.dimmed} />
       ) : node.kind === 'mousepad' ? (
         <MousePad status={status} dimmed={node.dimmed} />
+      ) : node.kind === 'peripheral' ? (
+        <PeripheralPuck node={node} />
       ) : (
         <IPhone status={status} dimmed={node.dimmed} />
       )}
