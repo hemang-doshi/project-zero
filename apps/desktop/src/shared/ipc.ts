@@ -28,12 +28,53 @@ export type CodexSendPayload = { method: string; params?: unknown }
 export type ThreadGetPayload = { threadId: string }
 
 // Wire payload of the telemetry.sample op, produced by the main-process
-// sampler. Percentages are 0-100; byte counts are raw bytes; gpu is always
-// null on macOS (no cheap portable read — see src/main/telemetry.ts).
-export type TelemetryResource = { used: number; total: number; percent: number }
+// sampler. Percentages are 0-100; byte counts are raw bytes; rates are deltas
+// between consecutive samples divided by elapsed seconds. Sources are all
+// fail-soft: a section that cannot be read leaves its family fields null and
+// the route renders the honest '—' placeholder.
+export type TelemetryCpu = {
+  system: number | null
+  user: number | null
+  idle: number | null
+  threads: number | null
+  processes: number | null
+}
+export type TelemetryMemory = {
+  total: number
+  used: number
+  percent: number
+  pressure: number
+  level: 'low' | 'medium' | 'high'
+  app: number | null
+  wired: number | null
+  compressed: number | null
+  cachedFiles: number | null
+  swapUsed: number | null
+}
+export type TelemetryIo = {
+  reads: number | null
+  writes: number | null
+  readsPerSec: number | null
+  writesPerSec: number | null
+  dataRead: number | null
+  dataWritten: number | null
+  dataReadPerSec: number | null
+  dataWrittenPerSec: number | null
+}
+export type TelemetryNet = {
+  packetsIn: number | null
+  packetsOut: number | null
+  packetsInPerSec: number | null
+  packetsOutPerSec: number | null
+  dataReceived: number | null
+  dataSent: number | null
+  dataReceivedPerSec: number | null
+  dataSentPerSec: number | null
+}
 export type TelemetrySample = {
-  cpu: number | null
-  ram: TelemetryResource | null
-  ssd: TelemetryResource | null
+  cpu: TelemetryCpu | null
+  memory: TelemetryMemory | null
+  io: TelemetryIo | null
+  net: TelemetryNet | null
   gpu: number | null
 }

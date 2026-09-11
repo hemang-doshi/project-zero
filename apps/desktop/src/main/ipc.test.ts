@@ -49,9 +49,10 @@ function harnessName(state: string): string {
 }
 
 const TELEMETRY_SAMPLE: TelemetrySample = {
-  cpu: 4.2,
-  ram: { used: 8, total: 16, percent: 50 },
-  ssd: { used: 100, total: 245, percent: 40.8 },
+  cpu: null,
+  memory: null,
+  io: null,
+  net: null,
   gpu: null
 }
 

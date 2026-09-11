@@ -1,5 +1,11 @@
 import type { RuntimeConnState } from '../../../shared/protocol'
-import type { TelemetryResource } from '../../../shared/ipc'
+import type {
+  TelemetryCpu,
+  TelemetryIo,
+  TelemetryMemory,
+  TelemetryNet,
+  TelemetrySample
+} from '../../../shared/ipc'
 
 export type Tone = 'neutral' | 'healthy' | 'attention' | 'error'
 
@@ -79,41 +85,104 @@ export type CockpitSnapshot = {
   firings: number
 }
 
-export type MachineResource = TelemetryResource
-
-export type MachineSample = {
-  cpu: number | null
-  ram: MachineResource | null
-  ssd: MachineResource | null
-  gpu: number | null
-}
+export type MachineSample = TelemetrySample
 
 export const EMPTY_MACHINE_SAMPLE: MachineSample = {
   cpu: null,
-  ram: null,
-  ssd: null,
+  memory: null,
+  io: null,
+  net: null,
   gpu: null
 }
 
 // Lenient parse of the telemetry.sample payload from the main-process
 // sampler: malformed parts collapse to null (honest placeholders) instead of
-// dropping the whole sample.
+// dropping the whole sample. Within a family, each cell collapses
+// independently so one bad counter never blanks its siblings.
 export function parseTelemetry(value: unknown): MachineSample {
   const root = asRecord(value)
-  const resource = (v: unknown): MachineResource | null => {
-    const r = asRecord(v)
-    if (r === null) return null
-    if (!isNum(r.used) || !isNum(r.total) || !isNum(r.percent)) return null
-    if (r.total <= 0) return null
-    return { used: r.used, total: r.total, percent: r.percent }
-  }
-  const gpu = root?.gpu
+  if (root === null) return EMPTY_MACHINE_SAMPLE
+  const cpu = asRecord(root.cpu)
+  const memory = asRecord(root.memory)
+  const io = asRecord(root.io)
+  const net = asRecord(root.net)
+  const cpuFamily: TelemetryCpu | null =
+    cpu === null
+      ? null
+      : {
+          system: optNum(cpu.system),
+          user: optNum(cpu.user),
+          idle: optNum(cpu.idle),
+          threads: optNum(cpu.threads),
+          processes: optNum(cpu.processes)
+        }
+  const memoryFamily: TelemetryMemory | null =
+    memory === null || !isNum(memory.total)
+      ? null
+      : {
+          total: memory.total,
+          used: optNum(memory.used) ?? 0,
+          percent: optNum(memory.percent) ?? 0,
+          pressure: optNum(memory.pressure) ?? 0,
+          level: memoryLevel(memory.level),
+          app: optNum(memory.app),
+          wired: optNum(memory.wired),
+          compressed: optNum(memory.compressed),
+          cachedFiles: optNum(memory.cachedFiles),
+          swapUsed: optNum(memory.swapUsed)
+        }
   return {
-    cpu: isNum(root?.cpu) ? root.cpu : null,
-    ram: root === null ? null : resource(root.ram),
-    ssd: root === null ? null : resource(root.ssd),
-    gpu: gpu === null ? null : isNum(gpu) ? gpu : null
+    cpu: cpuFamily,
+    memory: memoryFamily,
+    io: io === null ? null : ioCell(io),
+    net: net === null ? null : netCell(net),
+    gpu: optNum(root.gpu)
   }
+}
+
+const optNum = (v: unknown): number | null => (isNum(v) ? v : null)
+
+const IO_KEYS = [
+  'reads',
+  'writes',
+  'readsPerSec',
+  'writesPerSec',
+  'dataRead',
+  'dataWritten',
+  'dataReadPerSec',
+  'dataWrittenPerSec'
+] as const
+
+const NET_KEYS = [
+  'packetsIn',
+  'packetsOut',
+  'packetsInPerSec',
+  'packetsOutPerSec',
+  'dataReceived',
+  'dataSent',
+  'dataReceivedPerSec',
+  'dataSentPerSec'
+] as const
+
+const ioCell = (r: Record<string, unknown>): TelemetryIo => {
+  const out = {} as Record<(typeof IO_KEYS)[number], number | null>
+  for (const key of IO_KEYS) out[key] = optNum(r[key])
+  return out
+}
+
+const netCell = (r: Record<string, unknown>): TelemetryNet => {
+  const out = {} as Record<(typeof NET_KEYS)[number], number | null>
+  for (const key of NET_KEYS) out[key] = optNum(r[key])
+  return out
+}
+
+const memoryLevel = (v: unknown): 'low' | 'medium' | 'high' =>
+  v === 'medium' ? 'medium' : v === 'high' ? 'high' : 'low'
+
+export function pressureTone(level: 'low' | 'medium' | 'high'): Tone {
+  if (level === 'low') return 'healthy'
+  if (level === 'medium') return 'attention'
+  return 'error'
 }
 
 const isStr = (v: unknown): v is string => typeof v === 'string'
@@ -371,26 +440,6 @@ export function gitLine(snapshot: unknown): GitLine | null {
   const dirty = isStr(git.data.dirty) && git.data.dirty !== '' ? git.data.dirty : null
   if (branch === null && dirty === null) return null
   return { branch, dirty }
-}
-
-export type LoadedKey = 'cpu' | 'ram' | 'gpu'
-
-export function mostLoaded(sample: MachineSample): LoadedKey | null {
-  let best: LoadedKey | null = null
-  let bestValue = -1
-  const values: Partial<Record<LoadedKey, number | null>> = {
-    cpu: sample.cpu,
-    ram: sample.ram?.percent ?? null,
-    gpu: sample.gpu
-  }
-  for (const key of ['cpu', 'ram', 'gpu'] as const) {
-    const v = values[key]
-    if (typeof v === 'number' && Number.isFinite(v) && v > bestValue) {
-      best = key
-      bestValue = v
-    }
-  }
-  return best
 }
 
 // Flight noise taxonomy pinned from the daemon's actual stream taxonomy
