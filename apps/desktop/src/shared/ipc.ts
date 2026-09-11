@@ -18,7 +18,7 @@ export const OPS = {
 } as const
 
 export type OpName = keyof typeof OPS
-export const validateOp = (op: string): op is OpName => op in OPS
+export const validateOp = (op: string): op is OpName => Object.hasOwn(OPS, op)
 export type CommandPayload = { op: string; body?: Record<string, unknown> }
 export type ProjectPayload = { id: string }
 export type CodexSendPayload = { method: string; params?: unknown }

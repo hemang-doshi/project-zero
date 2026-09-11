@@ -10,6 +10,11 @@ describe('validateOp', () => {
     expect(validateOp('fs.read')).toBe(false)
     expect(validateOp('exec')).toBe(false)
   })
+  it('rejects prototype-inherited keys, not just unknown strings', () => {
+    expect(validateOp('toString')).toBe(false)
+    expect(validateOp('constructor')).toBe(false)
+    expect(validateOp('hasOwnProperty')).toBe(false)
+  })
   it('exposes exactly the planned op set', () => {
     expect(Object.keys(OPS).sort()).toEqual(
       [

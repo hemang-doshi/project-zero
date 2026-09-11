@@ -1,5 +1,12 @@
 import { describe, it, expect } from 'vitest'
+import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 import { ZERO_TOKENS, ZERO_TYPE, toCssVariables } from './tokens'
+
+const THEME_CSS = readFileSync(
+  fileURLToPath(new URL('../renderer/src/theme.css', import.meta.url)),
+  'utf8'
+)
 
 describe('ZERO_TOKENS', () => {
   it('matches the canonical Stitch hex values from Theme.swift/ZeroControls.swift', () => {
@@ -22,7 +29,8 @@ describe('ZERO_TOKENS', () => {
       secondaryInk: '#5C4038',
       line: '#DED7CA',
       orange: '#F54E00',
-      orangePressed: '#A83300'
+      orangePressed: '#A83300',
+      cardWhite: '#FFFFFF'
     })
   })
   it('emits kebab-case CSS variables', () => {
@@ -32,5 +40,20 @@ describe('ZERO_TOKENS', () => {
   })
   it('keeps the mono stack as ui-monospace', () => {
     expect(ZERO_TYPE.mono.startsWith('ui-monospace')).toBe(true)
+  })
+})
+
+describe('theme.css drift-check', () => {
+  it('declares every --z-* variable emitted by toCssVariables()', () => {
+    for (const line of toCssVariables().split('\n')) {
+      const varName = line.slice(0, line.indexOf(':')).trim()
+      expect(varName).toMatch(/^--z-[a-z-]+$/)
+      expect(THEME_CSS).toContain(varName)
+    }
+  })
+  it('carries the same value for every mirrored variable', () => {
+    for (const line of toCssVariables().split('\n')) {
+      expect(THEME_CSS).toContain(line.trim())
+    }
   })
 })

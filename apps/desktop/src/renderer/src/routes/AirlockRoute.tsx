@@ -200,7 +200,7 @@ const approveEnabled: React.CSSProperties = {
   ...actionButton,
   background: 'var(--z-orange)',
   borderColor: 'var(--z-orange)',
-  color: '#FFFFFF'
+  color: 'var(--z-card-white)'
 }
 
 const disabledAction: React.CSSProperties = {

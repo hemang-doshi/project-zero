@@ -17,7 +17,8 @@ export const ZERO_TOKENS: Record<string, string> = {
   secondaryInk: '#5C4038',
   line: '#DED7CA',
   orange: '#F54E00',
-  orangePressed: '#A83300'
+  orangePressed: '#A83300',
+  cardWhite: '#FFFFFF'
 }
 
 export const ZERO_TYPE = {
