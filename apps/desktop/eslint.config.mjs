@@ -28,5 +28,33 @@ export default defineConfig(
       ...eslintPluginReactRefresh.configs.vite.rules
     }
   },
+  {
+    // The 3D scene speaks @react-three/fiber three intrinsics (position,
+    // args, geometry, material, …) that the DOM property allowlist cannot
+    // know. Scoped to the scene file only; every other file keeps the rule.
+    files: ['src/renderer/src/routes/TopologyScene.tsx'],
+    rules: {
+      'react/no-unknown-property': [
+        'error',
+        {
+          ignore: [
+            'position',
+            'quaternion',
+            'scale',
+            'geometry',
+            'material',
+            'args',
+            'color',
+            'emissive',
+            'emissiveIntensity',
+            'transparent',
+            'opacity',
+            'intensity',
+            'distance'
+          ]
+        }
+      ]
+    }
+  },
   eslintConfigPrettier
 )
