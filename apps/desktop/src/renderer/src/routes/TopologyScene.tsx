@@ -74,7 +74,7 @@ function CameraRig(): null {
 }
 
 // Demand-mode pump: with frameloop="demand" nothing renders unless something
-// invalidates. This ticks at ~6fps ONLY while the intro is running or an
+// invalidates. This ticks at ~4fps ONLY while the intro is running or an
 // online edge animates (and the tab is visible); offline/gated-only scenes
 // render strictly on data change or user drag. Cleared on unmount with the
 // window lifecycle.
@@ -86,7 +86,7 @@ function Ticker({ animated }: { animated: boolean }): null {
       if (Date.now() - startedAt >= 1300 && !animated) return
       if (document.visibilityState !== 'visible') return
       invalidate()
-    }, 160)
+    }, 250)
     return () => window.clearInterval(id)
   }, [animated, invalidate])
   return null
