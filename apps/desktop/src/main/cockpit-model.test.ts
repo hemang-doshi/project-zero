@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, type Mock } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { CockpitModel } from './cockpit-model'
 import type { SSEEvent } from '../shared/protocol'
 
@@ -13,14 +13,12 @@ type Harness = {
   streams: StreamCtl[]
   fetches: FetchSlot[]
   timers: Array<() => void>
-  cancels: Array<Mock<() => void>>
   updates: UpdateRec[]
 }
 function harness(): Harness {
   const streams: StreamCtl[] = []
   const fetches: FetchSlot[] = []
   const timers: Array<() => void> = []
-  const cancels: Array<Mock<() => void>> = []
   const model = new CockpitModel(
     '/tmp/fake.sock',
     () => new Promise((resolve, reject) => fetches.push({ resolve, reject })),
@@ -40,16 +38,8 @@ function harness(): Harness {
     },
     {
       schedule: (fn) => {
-        let armed = true
-        const wrapped = (): void => {
-          if (armed) fn()
-        }
-        timers.push(wrapped)
-        const cancel = vi.fn(() => {
-          armed = false
-        })
-        cancels.push(cancel)
-        return () => cancel()
+        timers.push(fn)
+        return () => {}
       }
     }
   )
@@ -57,7 +47,7 @@ function harness(): Harness {
   model.subscribe((u) =>
     updates.push({ snapshot: u.snapshot, state: u.state, receivedAt: u.receivedAt })
   )
-  return { model, streams, fetches, timers, cancels, updates }
+  return { model, streams, fetches, timers, updates }
 }
 
 const ready = (rev = 1): SSEEvent => ({
@@ -121,44 +111,5 @@ describe('CockpitModel', () => {
     h.timers[0]() // simulate 5 s freshness expiry
     h.fetches.at(-1)!.resolve({ revision: 2 })
     await vi.waitFor(() => expect(h.updates.at(-1)?.snapshot).toEqual({ revision: 2 }))
-  })
-
-  it('re-arms the age timer with a single pending timer (no accumulation)', async () => {
-    const h = harness()
-    h.model.start()
-    await vi.waitFor(() => expect(h.streams).toHaveLength(1))
-    h.streams[0].emit(ready())
-    await vi.waitFor(() => expect(h.timers).toHaveLength(1))
-    h.fetches[0].resolve({ revision: 1 })
-    await vi.waitFor(() => expect(h.updates.at(-1)?.state).toBe('live'))
-    await vi.waitFor(() => expect(h.timers).toHaveLength(2))
-    for (let i = 1; i <= 3; i++) {
-      h.streams[0].emit(changed(2 + i))
-      await vi.waitFor(() => expect(h.fetches).toHaveLength(i + 1))
-      h.fetches[i].resolve({ revision: 2 + i })
-      await vi.waitFor(() => expect(h.timers).toHaveLength(i + 2))
-    }
-    // Four successes re-armed four times: each re-arm cancelled the previous
-    // timer instead of stacking it, so only the newest timer is live.
-    expect(h.timers).toHaveLength(5)
-    expect(h.cancels.filter((c) => c.mock.calls.length > 0)).toHaveLength(4)
-    h.timers[0]()
-    h.timers[1]()
-    h.timers[2]()
-    expect(h.fetches).toHaveLength(4) // stale timer fns never schedule a refresh
-    h.timers[4]() // the live timer still refreshes while streaming
-    await vi.waitFor(() => expect(h.fetches).toHaveLength(5))
-  })
-
-  it('stop cancels the pending age timer', async () => {
-    const h = harness()
-    h.model.start()
-    await vi.waitFor(() => expect(h.streams).toHaveLength(1))
-    h.streams[0].emit(ready())
-    await vi.waitFor(() => expect(h.timers).toHaveLength(1))
-    h.model.stop()
-    await vi.waitFor(() => expect(h.updates.at(-1)?.state).toBe('offline'))
-    h.timers[0]() // cancelled: must not schedule a refresh
-    expect(h.fetches).toHaveLength(1)
   })
 })

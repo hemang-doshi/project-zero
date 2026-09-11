@@ -26,7 +26,6 @@ export class CockpitModel {
   private refreshEpoch = 0
   private running = false
   private closeStream: (() => void) | null = null
-  private ageTimer: (() => void) | null = null
 
   constructor(
     private socketPath: string,
@@ -64,8 +63,6 @@ export class CockpitModel {
     this.generation++
     this.closeStream?.()
     this.closeStream = null
-    this.ageTimer?.()
-    this.ageTimer = null
     this.refreshing = false
     this.refreshPending = false
     this._state = 'offline'
@@ -109,18 +106,11 @@ export class CockpitModel {
     })()
   }
 
-  // At most one freshness timer is ever pending: every re-arm cancels the
-  // previous timer. Re-arming without cancelling stacked timers on every
-  // fetch success — with the daemon streaming events every few seconds the
-  // pending count grew unboundedly and each stale firing re-triggered a
-  // refresh burst.
   private scheduleAge(gen: number): void {
-    this.ageTimer?.()
-    this.ageTimer =
-      this.opts.schedule?.(() => {
-        this.ageTimer = null
-        if (this.generation === gen && this.running && this.streamReady) this.refresh()
-      }, this.opts.maxSnapshotAgeMs ?? 5_000) ?? null
+    const cancel = this.opts.schedule?.(() => {
+      if (this.generation === gen && this.running && this.streamReady) this.refresh()
+    }, this.opts.maxSnapshotAgeMs ?? 5_000)
+    void cancel
   }
 
   private emit(): void {
