@@ -583,7 +583,7 @@ export const SkillLabScene = memo(function SkillLabScene({
           </span>
           {groups.length === 0 ? (
             <p data-testid="vial-grid-empty" style={emptyStyle}>
-              No plugin vials — discovery not wired.
+              No plugin vials — discovery returned empty.
             </p>
           ) : (
             groups.map((g) => (
@@ -639,7 +639,7 @@ export const SkillLabScene = memo(function SkillLabScene({
               <group position={[-originX, 0.8, spanMaxZ / 2]}>
                 <Html center distanceFactor={9}>
                   <div data-testid="vial-grid-empty" style={labelStyle}>
-                    No plugin vials — discovery not wired.
+                    No plugin vials — discovery returned empty.
                   </div>
                 </Html>
               </group>
