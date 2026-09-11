@@ -1,7 +1,12 @@
 import { ipcMain, type BrowserWindow } from 'electron'
 import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
-import { validateOp, type CommandPayload, type ProjectPayload } from '../shared/ipc'
+import {
+  validateOp,
+  type CommandPayload,
+  type ProjectPayload,
+  type TelemetrySample
+} from '../shared/ipc'
 import { applyPrefsPatch, type Prefs } from './prefs'
 import { createBridgePair, type BridgeDeps, type HarnessId, type RpcEvent } from './bridges'
 import type { CockpitModel, ModelUpdate } from './cockpit-model'
@@ -17,6 +22,7 @@ export type SocketDeps = {
   postCommand: (socketPath: string, body: unknown) => Promise<unknown>
   store: PrefsStoreLike
   pickImage: () => Promise<string | null>
+  sampleTelemetry: () => Promise<TelemetrySample>
 }
 
 const prefsDir = join(process.env.HOME ?? '', 'Library', 'Application Support', 'ProjectZero')
@@ -141,6 +147,8 @@ export function createDispatch(
         if (typeof id !== 'string') throw new Error('Malformed project payload')
         return deps.fetchSnapshot(deps.socketPath, { path: projectPath(id) })
       }
+      case 'telemetry.sample':
+        return deps.sampleTelemetry()
     }
   }
 }

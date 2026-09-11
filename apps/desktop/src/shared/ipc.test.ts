@@ -7,6 +7,7 @@ describe('validateOp', () => {
   it('accepts whitelisted ops and rejects unknown ones', () => {
     expect(validateOp('command.send')).toBe(true)
     expect(validateOp('prefs.get')).toBe(true)
+    expect(validateOp('telemetry.sample')).toBe(true)
     expect(validateOp('fs.read')).toBe(false)
     expect(validateOp('exec')).toBe(false)
   })
@@ -33,6 +34,7 @@ describe('validateOp', () => {
         'prefs.set',
         'project.get',
         'snapshot.fetch',
+        'telemetry.sample',
         'wallpaper.pick'
       ].sort()
     )

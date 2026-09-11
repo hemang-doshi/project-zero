@@ -1,5 +1,4 @@
-import { memo } from 'react'
-import { byteRate } from '../../../shared/format'
+import { memo, useEffect, useState } from 'react'
 import { ZERO_TYPE } from '../../../shared/tokens'
 import { useCockpit } from '../store/cockpit'
 import { Chip } from './Chip'
@@ -7,8 +6,10 @@ import {
   EMPTY_MACHINE_SAMPLE,
   activeProjectLabel,
   mostLoaded,
+  parseTelemetry,
   selectSession,
   sessionChipTone,
+  type MachineResource,
   type MachineSample
 } from './runtime.types'
 
@@ -102,6 +103,10 @@ const noticeStyle: React.CSSProperties = {
 }
 
 const percent = (v: number, digits: number): string => `${v.toFixed(digits)}%`
+const gb = (bytes: number): string => `${(bytes / 1_000_000_000).toFixed(1)} GB`
+const resourceDetail = (r: MachineResource): string => `${gb(r.used)} of ${gb(r.total)} used`
+
+const TELEMETRY_INTERVAL_MS = 2_000
 
 function Tile({
   label,
@@ -127,8 +132,36 @@ export const RuntimeRoute = memo(function RuntimeRoute(): React.JSX.Element {
   const conn = useCockpit((s) => s.state)
   const project = useCockpit((s) => selectSession(s.snapshot)?.project ?? '')
   const sessionState = useCockpit((s) => selectSession(s.snapshot)?.state ?? null)
+  const [sample, setSample] = useState<MachineSample>(EMPTY_MACHINE_SAMPLE)
+  const hasBridge = typeof window !== 'undefined' && window.zero !== undefined
 
-  const sample: MachineSample = EMPTY_MACHINE_SAMPLE
+  useEffect(() => {
+    if (!hasBridge) return
+    let active = true
+    const pull = (): void => {
+      // Telemetry is local machine data, not daemon-derived: it never gates on
+      // the runtime connection state, but it must not run while hidden so the
+      // Task 18 idle-CPU work stays intact.
+      if (document.visibilityState !== 'visible') return
+      window.zero
+        .invoke('telemetry.sample')
+        .then((raw) => {
+          if (active) setSample(parseTelemetry(raw))
+        })
+        .catch(() => {
+          // Honest cached semantics: keep the last sample on errors.
+        })
+    }
+    pull()
+    const id = window.setInterval(pull, TELEMETRY_INTERVAL_MS)
+    window.addEventListener('focus', pull)
+    return () => {
+      active = false
+      window.clearInterval(id)
+      window.removeEventListener('focus', pull)
+    }
+  }, [hasBridge])
+
   const accent = mostLoaded(sample)
   const tiles: { key: string; label: string; value: string; detail: string }[] = [
     {
@@ -140,20 +173,20 @@ export const RuntimeRoute = memo(function RuntimeRoute(): React.JSX.Element {
     {
       key: 'ram',
       label: 'RAM',
-      value: sample.ram === null ? '—' : percent(sample.ram, 0),
-      detail: sample.ram === null ? 'Unavailable' : 'memory pressure'
+      value: sample.ram === null ? '—' : percent(sample.ram.percent, 0),
+      detail: sample.ram === null ? 'Unavailable' : resourceDetail(sample.ram)
     },
     {
       key: 'ssd',
-      label: 'SSD R+W',
-      value: sample.ssd === null ? '—' : byteRate(sample.ssd),
-      detail: sample.ssd === null ? 'Unavailable' : 'disk throughput'
+      label: 'SSD',
+      value: sample.ssd === null ? '—' : percent(sample.ssd.percent, 0),
+      detail: sample.ssd === null ? 'Unavailable' : resourceDetail(sample.ssd)
     },
     {
       key: 'gpu',
       label: 'GPU',
-      value: sample.gpu === null ? '—' : percent(sample.gpu, 0),
-      detail: sample.gpu === null ? 'Unavailable' : 'graphics load'
+      value: '—',
+      detail: 'Unavailable on macOS'
     }
   ]
 
@@ -176,8 +209,8 @@ export const RuntimeRoute = memo(function RuntimeRoute(): React.JSX.Element {
         ))}
       </div>
       <span style={noticeStyle}>
-        Local-only machine telemetry · host counters not read in this renderer · snapshot projection
-        unchanged
+        Local machine telemetry via the main-process sampler · GPU unavailable on macOS · snapshot
+        projection unchanged
       </span>
     </div>
   )

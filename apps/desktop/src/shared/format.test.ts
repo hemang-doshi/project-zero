@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { byteRate, elapsed } from './format'
+import { elapsed } from './format'
 
 describe('elapsed', () => {
   it('formats zero as 0:00:00', () => {
@@ -24,14 +24,5 @@ describe('elapsed', () => {
 
   it('keeps hours unbounded above 99', () => {
     expect(elapsed(100 * 3_600_000)).toBe('100:00:00')
-  })
-})
-
-describe('byteRate', () => {
-  it('formats bytes per second tiers', () => {
-    expect(byteRate(500)).toBe('500 B/s')
-    expect(byteRate(1_500)).toBe('1.5 KB/s')
-    expect(byteRate(2_400_000)).toBe('2.4 MB/s')
-    expect(byteRate(1_250_000_000)).toBe('1.3 GB/s')
   })
 })

@@ -7,13 +7,22 @@ import {
   gitLine,
   mostLoaded,
   parseSnapshot,
+  parseTelemetry,
   selectSession,
   sessionChipTone,
   sessionTone,
+  EMPTY_MACHINE_SAMPLE,
+  type MachineResource,
   type MachineSample
 } from './runtime.types'
 
 const fixture = (): unknown => fixtureJson as unknown
+
+const resource = (used: number, total: number): MachineResource => ({
+  used,
+  total,
+  percent: (used / total) * 100
+})
 
 describe('selectSession', () => {
   it('reads the session fields the routes render', () => {
@@ -127,16 +136,17 @@ describe('gitLine', () => {
 
 describe('mostLoaded', () => {
   it('picks the highest loaded percent metric', () => {
-    expect(mostLoaded({ cpu: 12.5, ram: 40, ssd: 999, gpu: 3 })).toBe('ram')
-    expect(mostLoaded({ cpu: 90, ram: 10, ssd: 0, gpu: 88 })).toBe('cpu')
+    expect(mostLoaded({ cpu: 12.5, ram: resource(4, 10), ssd: null, gpu: 3 })).toBe('ram')
+    expect(mostLoaded({ cpu: 90, ram: resource(1, 10), ssd: null, gpu: 88 })).toBe('cpu')
+    expect(mostLoaded({ cpu: 3, ram: null, ssd: null, gpu: 88 })).toBe('gpu')
   })
 
   it('returns null without any percent sample', () => {
-    expect(mostLoaded({ cpu: null, ram: null, ssd: 5_000, gpu: null })).toBeNull()
+    expect(mostLoaded({ cpu: null, ram: null, ssd: resource(5, 10), gpu: null })).toBeNull()
   })
 
   it('ignores non-finite values', () => {
-    expect(mostLoaded({ cpu: Number.NaN, ram: 1, ssd: null, gpu: null })).toBe('ram')
+    expect(mostLoaded({ cpu: Number.NaN, ram: resource(0.5, 1), ssd: null, gpu: null })).toBe('ram')
   })
 })
 
@@ -203,6 +213,43 @@ describe('extrapolate', () => {
 describe('machine sample shape', () => {
   it('starts with every tile unavailable', () => {
     const sample: MachineSample = { cpu: null, ram: null, ssd: null, gpu: null }
-    expect([sample.cpu, sample.ram, sample.ssd, sample.gpu]).toEqual([null, null, null, null])
+    expect(sample).toEqual(EMPTY_MACHINE_SAMPLE)
+  })
+})
+
+describe('parseTelemetry', () => {
+  it('parses a well-formed sampler payload into the tile sample', () => {
+    const sample = parseTelemetry({
+      cpu: 4.25,
+      ram: resource(8, 16),
+      ssd: resource(100, 245),
+      gpu: null
+    })
+    expect(sample).toEqual({ cpu: 4.25, ram: resource(8, 16), ssd: resource(100, 245), gpu: null })
+  })
+
+  it('keeps nulls for absent or malformed parts instead of dropping the sample', () => {
+    expect(parseTelemetry({})).toEqual({ cpu: null, ram: null, ssd: null, gpu: null })
+    expect(
+      parseTelemetry({
+        cpu: 'x',
+        ram: { used: 'no' },
+        ssd: { used: 1, total: 0, percent: 50 },
+        gpu: 9
+      })
+    ).toEqual({ cpu: null, ram: null, ssd: null, gpu: 9 })
+    expect(parseTelemetry(null)).toEqual(EMPTY_MACHINE_SAMPLE)
+    expect(parseTelemetry('nonsense')).toEqual(EMPTY_MACHINE_SAMPLE)
+  })
+
+  it('rejects non-finite numbers honestly', () => {
+    const sample = parseTelemetry({
+      cpu: Number.NaN,
+      ram: resource(1, Number.POSITIVE_INFINITY),
+      ssd: null,
+      gpu: null
+    })
+    expect(sample.cpu).toBeNull()
+    expect(sample.ram).toBeNull()
   })
 })

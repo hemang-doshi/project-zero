@@ -6,6 +6,7 @@ import { CockpitModel } from './cockpit-model'
 import { fetchSnapshot, openStream, postCommand } from './socket'
 import { registerIpcHandlers, attachCockpitPush, attachBridgePush, bridgePair } from './ipc'
 import { PrefsStore, startupMigrate } from './prefs'
+import { createTelemetrySampler } from './telemetry'
 import { createTray } from './tray'
 
 const appSupport = join(process.env.HOME ?? '', 'Library', 'Application Support', 'ProjectZero')
@@ -75,7 +76,17 @@ app.whenReady().then(() => {
   protocol.handle('zero-img', serveWallpaperImage)
   const store = new PrefsStore(prefsStoreDir)
   store.save(startupMigrate(store.load()))
-  registerIpcHandlers({ socketPath, fetchSnapshot, postCommand, store, pickImage })
+  // Lazy on-demand machine telemetry: the sampler only reads counters when
+  // the renderer asks (at most 1 Hz), no background loop (Task 18 preserved).
+  const telemetry = createTelemetrySampler()
+  registerIpcHandlers({
+    socketPath,
+    fetchSnapshot,
+    postCommand,
+    store,
+    pickImage,
+    sampleTelemetry: () => telemetry.sample()
+  })
 
   // One app-lifetime CockpitModel shared by window pushes and the tray
   // companion — no second model, no second stream.

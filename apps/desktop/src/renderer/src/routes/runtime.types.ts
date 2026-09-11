@@ -1,4 +1,5 @@
 import type { RuntimeConnState } from '../../../shared/protocol'
+import type { TelemetryResource } from '../../../shared/ipc'
 
 export type Tone = 'neutral' | 'healthy' | 'attention' | 'error'
 
@@ -78,10 +79,12 @@ export type CockpitSnapshot = {
   firings: number
 }
 
+export type MachineResource = TelemetryResource
+
 export type MachineSample = {
   cpu: number | null
-  ram: number | null
-  ssd: number | null
+  ram: MachineResource | null
+  ssd: MachineResource | null
   gpu: number | null
 }
 
@@ -90,6 +93,27 @@ export const EMPTY_MACHINE_SAMPLE: MachineSample = {
   ram: null,
   ssd: null,
   gpu: null
+}
+
+// Lenient parse of the telemetry.sample payload from the main-process
+// sampler: malformed parts collapse to null (honest placeholders) instead of
+// dropping the whole sample.
+export function parseTelemetry(value: unknown): MachineSample {
+  const root = asRecord(value)
+  const resource = (v: unknown): MachineResource | null => {
+    const r = asRecord(v)
+    if (r === null) return null
+    if (!isNum(r.used) || !isNum(r.total) || !isNum(r.percent)) return null
+    if (r.total <= 0) return null
+    return { used: r.used, total: r.total, percent: r.percent }
+  }
+  const gpu = root?.gpu
+  return {
+    cpu: isNum(root?.cpu) ? root.cpu : null,
+    ram: root === null ? null : resource(root.ram),
+    ssd: root === null ? null : resource(root.ssd),
+    gpu: gpu === null ? null : isNum(gpu) ? gpu : null
+  }
 }
 
 const isStr = (v: unknown): v is string => typeof v === 'string'
@@ -354,8 +378,13 @@ export type LoadedKey = 'cpu' | 'ram' | 'gpu'
 export function mostLoaded(sample: MachineSample): LoadedKey | null {
   let best: LoadedKey | null = null
   let bestValue = -1
+  const values: Partial<Record<LoadedKey, number | null>> = {
+    cpu: sample.cpu,
+    ram: sample.ram?.percent ?? null,
+    gpu: sample.gpu
+  }
   for (const key of ['cpu', 'ram', 'gpu'] as const) {
-    const v = sample[key]
+    const v = values[key]
     if (typeof v === 'number' && Number.isFinite(v) && v > bestValue) {
       best = key
       bestValue = v
