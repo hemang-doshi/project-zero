@@ -2,11 +2,15 @@ import { describe, expect, it } from 'vitest'
 import {
   group,
   polyPoints,
+  dotPoint,
   pushWindow,
   windowMax,
   accumulateHistory,
   HISTORY_CAP,
   EMPTY_HISTORY,
+  GRAPH_W,
+  GRAPH_H,
+  GRAPH_MARGIN,
   type TelemetryHistory
 } from './telemetry.model'
 import { EMPTY_MACHINE_SAMPLE, type MachineSample } from './runtime.types'
@@ -67,6 +71,54 @@ describe('polyPoints', () => {
   })
 })
 
+describe('graph geometry constants', () => {
+  it('pins the fixed sparkline box and inner margin (no magic numbers in callers)', () => {
+    expect(GRAPH_W).toBe(240)
+    expect(GRAPH_H).toBe(56)
+    expect(GRAPH_MARGIN).toBe(2)
+  })
+})
+
+describe('dotPoint', () => {
+  it('returns null for empty and multi-point series', () => {
+    expect(dotPoint([], 240, 56, 100)).toBeNull()
+    expect(dotPoint([10, 20], 240, 56, 100)).toBeNull()
+  })
+
+  it('plots a lone observation with the same scale math as the polyline', () => {
+    // y = 56 − 2 − 0.5·52 = 28, x = left inner edge where a line would start.
+    expect(dotPoint([50], 240, 56, 100)).toBe('2,28')
+    expect(dotPoint([0], 240, 56, 100)).toBe('2,54')
+    expect(dotPoint([100], 240, 56, 100)).toBe('2,2')
+  })
+
+  it('guards degenerate domains instead of producing NaN', () => {
+    // Zero/negative max falls back to a unit scale with the same clamp math
+    // as the polyline (values above the scale pin to the top edge).
+    expect(dotPoint([50], 240, 56, 0)).toBe('2,2')
+    expect(dotPoint([50], 240, 56, -10)).toBe('2,2')
+    expect(dotPoint([NaN], 240, 56, 100)).toBe('2,54')
+    expect(dotPoint([Infinity], 240, 56, 100)).toBe('2,54')
+    expect(dotPoint([-5], 240, 56, 100)).toBe('2,54')
+    expect(dotPoint([150], 240, 56, 100)).toBe('2,2')
+  })
+})
+
+describe('polyPoints degenerate domains', () => {
+  it('renders a flat series as a horizontal line (never vanishes)', () => {
+    expect(polyPoints([50, 50, 50], 240, 56, 100)).toBe('2,28 120,28 238,28')
+    expect(polyPoints([0, 0], 240, 56, 100)).toBe('2,54 238,54')
+  })
+
+  it('maps non-finite values to the baseline instead of NaN', () => {
+    expect(polyPoints([NaN, 100], 240, 56, 100)).toBe('2,54 238,2')
+    expect(polyPoints([Infinity, 100], 240, 56, 100)).toBe('2,54 238,2')
+  })
+
+  it('falls back to a unit scale on zero/negative max', () => {
+    expect(polyPoints([0, 1], 240, 56, 0)).toBe('2,54 238,2')
+  })
+})
 describe('group', () => {
   it('inserts thousands separators', () => {
     expect(group(8_348_407)).toBe('8,348,407')
