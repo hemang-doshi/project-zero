@@ -94,13 +94,13 @@ export function applyPrefsPatch(prefs: Prefs, patch: unknown): Prefs {
   const p = patch as Record<string, unknown>
   const next: Prefs = { ...prefs }
   if (isWallpaper(p.wallpaper)) next.wallpaper = { ...p.wallpaper }
-  if (typeof p.icons === 'object' && p.icons !== null) {
+  if (typeof p.icons === 'object' && p.icons !== null && !Array.isArray(p.icons)) {
     const icons: Prefs['icons'] = { ...next.icons }
     for (const [id, pos] of Object.entries(p.icons))
       if (isPoint(pos)) icons[id] = { x: pos.x, y: pos.y }
     next.icons = icons
   }
-  if (typeof p.windows === 'object' && p.windows !== null) {
+  if (typeof p.windows === 'object' && p.windows !== null && !Array.isArray(p.windows)) {
     const windows: Prefs['windows'] = { ...next.windows }
     for (const [route, rect] of Object.entries(p.windows)) {
       if (isRect(rect)) windows[route] = { x: rect.x, y: rect.y, w: rect.w, h: rect.h }
