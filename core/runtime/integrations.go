@@ -261,7 +261,16 @@ func (r *Runtime) SyncIntegration(ctx context.Context, id string) error {
 	// Liveness still advances via a single unpublished row touch so the
 	// ONLINE/STALE derivation keeps reading a fresh timestamp.
 	if sameObservation(stored, v) {
-		return r.touchIntegrationObserved(ctx, id, stamp)
+		if e := r.touchIntegrationObserved(ctx, id, stamp); e != nil {
+			return e
+		}
+		// A steady UNAVAILABLE keeps the old SyncIntegration contract: the
+		// manual sync endpoint still reports the outage even though nothing
+		// new was committed.
+		if v.Status == "UNAVAILABLE" {
+			return fmt.Errorf("UNAVAILABLE: %s", v.Message)
+		}
+		return nil
 	}
 	b, _ := json.Marshal(v)
 	_, e = r.Execute(ctx, "integration:"+id, Request{ID: protocol.ID(), Op: "integration.observed", Body: b})

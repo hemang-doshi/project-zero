@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -216,5 +217,25 @@ func TestRecordGitFiringSkipsRepeatedSuccess(t *testing.T) {
 	r.recordGitFiring(ctx, nil)
 	if n := countKind(t, r, "firings"); n != n1+2 {
 		t.Fatalf("recovery transition not recorded: %d", n)
+	}
+}
+
+// A steady UNAVAILABLE keeps the old SyncIntegration contract: the manual
+// sync endpoint still reports the outage even though nothing new is
+// committed.
+func TestSyncIntegrationSteadyUnavailableKeepsError(t *testing.T) {
+	r := openTest(t, filepath.Join(t.TempDir(), "zero.db"))
+	ctx := context.Background()
+	command(t, r, "connect", "integrations.connect", map[string]string{"id": "spotify"})
+	r.MacObserver = ""
+	if e := r.SyncIntegration(ctx, "spotify"); e == nil || !strings.Contains(e.Error(), "UNAVAILABLE") {
+		t.Fatalf("first outage did not error: %v", e)
+	}
+	rev1 := r.Updates.Revision()
+	if e := r.SyncIntegration(ctx, "spotify"); e == nil || !strings.Contains(e.Error(), "UNAVAILABLE") {
+		t.Fatalf("steady outage stopped erroring: %v", e)
+	}
+	if rev := r.Updates.Revision(); rev != rev1 {
+		t.Fatalf("steady outage committed %d -> %d", rev1, rev)
 	}
 }
