@@ -1,11 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import fixtureJson from './fixtures/cockpit.json'
 import {
+  activeProjectLabel,
   connectivity,
+  extrapolate,
   gitLine,
   mostLoaded,
   parseSnapshot,
   selectSession,
+  sessionChipTone,
   sessionTone,
   type MachineSample
 } from './runtime.types'
@@ -127,6 +130,56 @@ describe('sessionTone', () => {
     expect(sessionTone('IDLE')).toBe('neutral')
     expect(sessionTone('QUEUED')).toBe('error')
     expect(sessionTone(null)).toBe('error')
+  })
+})
+
+describe('sessionChipTone', () => {
+  it('keeps the live tone mapping', () => {
+    expect(sessionChipTone('live', 'RUNNING')).toBe('healthy')
+    expect(sessionChipTone('live', 'PAUSED')).toBe('attention')
+    expect(sessionChipTone('live', 'IDLE')).toBe('neutral')
+  })
+
+  it('grays cached states when the connection is not live', () => {
+    expect(sessionChipTone('offline', 'RUNNING')).toBe('neutral')
+    expect(sessionChipTone('reconnecting', 'RUNNING')).toBe('neutral')
+    expect(sessionChipTone('connecting', 'RUNNING')).toBe('neutral')
+  })
+
+  it('keeps error for a missing snapshot in every connection state', () => {
+    expect(sessionChipTone('live', null)).toBe('error')
+    expect(sessionChipTone('offline', null)).toBe('error')
+  })
+})
+
+describe('activeProjectLabel', () => {
+  it('shows the project name only while live', () => {
+    expect(activeProjectLabel('live', 'Project Zero')).toBe('Project Zero')
+    expect(activeProjectLabel('live', '')).toBe('No active project')
+    expect(activeProjectLabel('offline', 'Project Zero')).toBe('No active project')
+    expect(activeProjectLabel('reconnecting', 'Project Zero')).toBe('No active project')
+  })
+})
+
+describe('extrapolate', () => {
+  it('returns null without a snapshot', () => {
+    expect(extrapolate(null, true, 1_000, 5_000)).toBeNull()
+  })
+
+  it('adds elapsed time while ticking against a receivedAt baseline', () => {
+    expect(extrapolate(1_000, true, 1_000, 4_000)).toBe(4_000)
+  })
+
+  it('freezes the snapshot value when not ticking', () => {
+    expect(extrapolate(1_000, false, 1_000, 9_000)).toBe(1_000)
+  })
+
+  it('freezes when receivedAt is unknown', () => {
+    expect(extrapolate(1_000, true, null, 9_000)).toBe(1_000)
+  })
+
+  it('clamps a stale baseline where now precedes receivedAt', () => {
+    expect(extrapolate(1_000, true, 5_000, 2_000)).toBe(1_000)
   })
 })
 

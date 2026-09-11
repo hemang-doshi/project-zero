@@ -177,6 +177,27 @@ export function sessionTone(state: string | null): Tone {
   }
 }
 
+export function sessionChipTone(conn: RuntimeConnState, state: string | null): Tone {
+  if (state === null) return 'error'
+  if (conn !== 'live') return 'neutral'
+  return sessionTone(state)
+}
+
+export function activeProjectLabel(conn: RuntimeConnState, project: string): string {
+  return conn === 'live' && project !== '' ? project : 'No active project'
+}
+
+export function extrapolate(
+  baseMs: number | null,
+  ticking: boolean,
+  receivedAt: number | null,
+  now: number
+): number | null {
+  if (baseMs === null) return null
+  if (!ticking || receivedAt === null) return baseMs
+  return baseMs + Math.max(0, now - receivedAt)
+}
+
 export type GitLine = { branch: string | null; dirty: string | null }
 
 export function gitLine(snapshot: unknown): GitLine | null {

@@ -5,9 +5,10 @@ import { useCockpit } from '../store/cockpit'
 import { Chip } from './Chip'
 import {
   EMPTY_MACHINE_SAMPLE,
+  activeProjectLabel,
   mostLoaded,
   selectSession,
-  sessionTone,
+  sessionChipTone,
   type MachineSample
 } from './runtime.types'
 
@@ -123,6 +124,7 @@ function Tile({
 }
 
 export const RuntimeRoute = memo(function RuntimeRoute(): React.JSX.Element {
+  const conn = useCockpit((s) => s.state)
   const project = useCockpit((s) => selectSession(s.snapshot)?.project ?? '')
   const sessionState = useCockpit((s) => selectSession(s.snapshot)?.state ?? null)
 
@@ -159,9 +161,9 @@ export const RuntimeRoute = memo(function RuntimeRoute(): React.JSX.Element {
     <div className="zw-route" style={routeStyle}>
       <div style={headerRow}>
         <span style={microStyle}>RUNTIME — MACHINE TELEMETRY</span>
-        <Chip label={sessionState ?? 'UNAVAILABLE'} tone={sessionTone(sessionState)} />
+        <Chip label={sessionState ?? 'UNAVAILABLE'} tone={sessionChipTone(conn, sessionState)} />
       </div>
-      <span style={projectStyle}>{project === '' ? 'No active project' : project}</span>
+      <span style={projectStyle}>{activeProjectLabel(conn, project)}</span>
       <div style={tileGrid}>
         {tiles.map((t) => (
           <Tile
