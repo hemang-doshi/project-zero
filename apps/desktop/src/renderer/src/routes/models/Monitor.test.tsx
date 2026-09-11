@@ -75,6 +75,52 @@ describe('Monitor structure', () => {
     expect(el.querySelector('[data-testid="monitor-status-light"]')).not.toBeNull()
   })
 
+  it('renders the detail pass 2 (OSD, full port array, vents, stand, bezel, badge, glow)', async () => {
+    const el = await mount({ status: 'online' })
+    for (const name of [
+      'osd-buttons',
+      'osd-joystick',
+      'ports-recess',
+      'port-hdmi-tongue',
+      'port-usba',
+      'port-usba-tongues',
+      'port-power',
+      'port-power-pin',
+      'vesa-screws',
+      'vent-slots',
+      'cable-clip',
+      'cable',
+      'stand-seam',
+      'bezel-micro-edge',
+      'screen-glare',
+      'menubar-dots',
+      'screen-window-a-title',
+      'window-dots',
+      'screen-window-b-title',
+      'dock-icons',
+      'chin-badge',
+      'back-glow'
+    ]) {
+      expect(el.querySelector(`[name="${name}"]`), name).not.toBeNull()
+    }
+  })
+
+  it('instances repeated detail at the budgeted counts', async () => {
+    const el = await mount({ status: 'online' })
+    for (const [name, count] of [
+      ['vesa-screws', '4'],
+      ['vent-slots', '12'],
+      ['osd-buttons', '4'],
+      ['port-usba', '2'],
+      ['port-usba-tongues', '2'],
+      ['menubar-dots', '3'],
+      ['window-dots', '3'],
+      ['dock-icons', '6']
+    ] as Array<[string, string]>) {
+      expect(el.querySelector(`[name="${name}"]`)?.getAttribute('data-count'), name).toBe(count)
+    }
+  })
+
   it('stands on the y=0 plane (base foot bottom and shadow at ground level)', async () => {
     const el = await mount({ status: 'online' })
     expect(el.querySelector('[name="base"]')).not.toBeNull()
@@ -124,5 +170,21 @@ describe('Monitor dimmed', () => {
     const dimPanel = materialOf(dim, 'monitor-panel-material')
     expect(dimScreen?.getAttribute('emissiveintensity')).toBe('0.05')
     expect(dimPanel?.getAttribute('opacity')).toBe('0.35')
+  })
+
+  it('dims the bias back-glow strip when dimmed', async () => {
+    const lit = await mount({ status: 'online' })
+    expect(materialOf(lit, 'monitor-back-glow-material')?.getAttribute('emissiveintensity')).toBe(
+      '0.35'
+    )
+
+    await act(async () => {
+      root?.unmount()
+    })
+    host?.remove()
+    const dim = await mount({ status: 'online', dimmed: true })
+    expect(materialOf(dim, 'monitor-back-glow-material')?.getAttribute('emissiveintensity')).toBe(
+      '0.03'
+    )
   })
 })
