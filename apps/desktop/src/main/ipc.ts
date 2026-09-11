@@ -2,13 +2,21 @@ import { ipcMain, type BrowserWindow } from 'electron'
 import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 import { validateOp, type CommandPayload, type ProjectPayload } from '../shared/ipc'
+import { applyPrefsPatch, type Prefs } from './prefs'
 import { createBridgePair, type BridgeDeps, type HarnessId, type RpcEvent } from './bridges'
 import type { CockpitModel, ModelUpdate } from './cockpit-model'
+
+export type PrefsStoreLike = {
+  load(): Prefs
+  save(prefs: Prefs): void
+}
 
 export type SocketDeps = {
   socketPath: string
   fetchSnapshot: (socketPath: string, opts?: { path?: string }) => Promise<unknown>
   postCommand: (socketPath: string, body: unknown) => Promise<unknown>
+  store: PrefsStoreLike
+  pickImage: () => Promise<string | null>
 }
 
 const prefsDir = join(process.env.HOME ?? '', 'Library', 'Application Support', 'ProjectZero')
@@ -93,9 +101,14 @@ export function createDispatch(
     if (typeof op !== 'string' || !validateOp(op)) throw new Error('Unknown op')
     switch (op) {
       case 'prefs.get':
-      case 'prefs.set':
+        return deps.store.load()
+      case 'prefs.set': {
+        const next = applyPrefsPatch(deps.store.load(), payload)
+        deps.store.save(next)
+        return next
+      }
       case 'wallpaper.pick':
-        throw new Error('Not yet implemented')
+        return deps.pickImage()
       case 'codex.connect':
         return getBridgePair().codex.connect()
       case 'codex.disconnect':

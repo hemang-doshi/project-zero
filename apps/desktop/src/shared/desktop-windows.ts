@@ -26,6 +26,28 @@ export const fallbackSelection = (
 export const DEFAULT_SIZE: Rect = { x: 0, y: 0, w: 560, h: 480 }
 export const LAYOUT_VERSION = 2
 
+export const CANONICAL_ROUTE_ORDER = [
+  'desk',
+  'runtime',
+  'network',
+  'flightRecorder',
+  'airlock',
+  'zeroBot',
+  'skillLab'
+] as const
+
+export function canonicalOrderPositions<T>(
+  positions: Record<string, T>,
+  canonical: readonly string[]
+): Record<string, T> {
+  const out: Record<string, T> = {}
+  for (const key of canonical) if (key in positions) out[key] = positions[key]
+  for (const [key, value] of Object.entries(positions)) {
+    if (!canonical.includes(key)) out[key] = value
+  }
+  return out
+}
+
 export function migrateStackedOrigins(
   positions: Record<string, Point>,
   layoutVersion: number

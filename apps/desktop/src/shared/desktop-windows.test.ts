@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
+  CANONICAL_ROUTE_ORDER,
+  canonicalOrderPositions,
   clampSize,
   cascadeOffset,
   initialOrigin,
@@ -56,5 +58,29 @@ describe('migrateStackedOrigins', () => {
   it('is idempotent once version >= 2', () => {
     const positions = { desk: { x: 28, y: 28 }, runtime: { x: 28, y: 28 } }
     expect(migrateStackedOrigins(positions, 2)).toEqual({ positions, layoutVersion: 2 })
+  })
+})
+
+describe('canonical route order', () => {
+  it('pins the canonical seeding order for every route', () => {
+    expect(CANONICAL_ROUTE_ORDER).toEqual([
+      'desk',
+      'runtime',
+      'network',
+      'flightRecorder',
+      'airlock',
+      'zeroBot',
+      'skillLab'
+    ])
+  })
+  it('orders positions canonically and keeps unknown keys after', () => {
+    const out = canonicalOrderPositions(
+      { zz: { x: 1, y: 1 }, runtime: { x: 2, y: 2 }, desk: { x: 3, y: 3 } },
+      CANONICAL_ROUTE_ORDER
+    )
+    expect(Object.keys(out)).toEqual(['desk', 'runtime', 'zz'])
+    expect(out.desk).toEqual({ x: 3, y: 3 })
+    expect(out.runtime).toEqual({ x: 2, y: 2 })
+    expect(out.zz).toEqual({ x: 1, y: 1 })
   })
 })
