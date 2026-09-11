@@ -1,9 +1,9 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import { electronAPI } from '@electron-toolkit/preload'
 
-// Custom APIs for renderer
-const api = {}
-
+// The `zero` contextBridge is this app's only preload surface (Task 1
+// ruling): no @electron-toolkit/preload (its externalized import cannot be
+// resolved by a sandboxed preload inside app.asar), no template `electron`
+// or `api` globals.
 const zero = {
   invoke: (op: string, payload?: unknown): Promise<unknown> =>
     ipcRenderer.invoke('zero:invoke', op, payload),
@@ -15,22 +15,13 @@ const zero = {
   }
 }
 
-// Use `contextBridge` APIs to expose Electron APIs to
-// renderer only if context isolation is enabled, otherwise
-// just add to the DOM global.
 if (process.contextIsolated) {
   try {
-    contextBridge.exposeInMainWorld('electron', electronAPI)
-    contextBridge.exposeInMainWorld('api', api)
     contextBridge.exposeInMainWorld('zero', zero)
   } catch (error) {
     console.error(error)
   }
 } else {
-  // @ts-ignore (define in dts)
-  window.electron = electronAPI
-  // @ts-ignore (define in dts)
-  window.api = api
   // @ts-ignore (define in dts)
   window.zero = zero
 }
