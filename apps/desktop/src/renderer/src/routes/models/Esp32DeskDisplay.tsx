@@ -112,7 +112,7 @@ function Esp32DeskDisplayInner({
             opacity={bodyOpacity}
           />
         </mesh>
-        <mesh name="stand" position={[0, 0.32, -0.045]} rotation-x={-TILT}>
+        <mesh name="stand-arm" position={[0, 0.32, -0.045]} rotation-x={-TILT}>
           <boxGeometry args={[0.34, 0.6, 0.045]} />
           <meshStandardMaterial
             color={PLASTIC}
