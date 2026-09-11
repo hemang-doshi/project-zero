@@ -4,6 +4,7 @@ export const OPS = {
   'snapshot.fetch': true,
   'command.send': true,
   'project.get': true,
+  'skills.discover': true,
   'codex.connect': true,
   'codex.disconnect': true,
   'codex.send': true,
@@ -29,6 +30,35 @@ export type ProjectPayload = { id: string }
 export type ArtworkPayload = { id: string }
 export type CodexSendPayload = { method: string; params?: unknown }
 export type ThreadGetPayload = { threadId: string }
+export type SkillsDiscoverPayload = { refresh?: boolean }
+
+// Wire result of the skills.discover op, produced by the main-process skill
+// discoverer (Task 37D) over lane B's pure discovery layer. Shapes mirror
+// renderer skillPlugins' PluginGroup/SkillSummary structurally; the route
+// parses them leniently and renders honest-empty states on failure. `ok` is
+// false only when no skill root was readable — an empty-but-readable scan is
+// ok:true with empty groups (honest absence, not failure).
+export type DiscoveredSkill = {
+  id: string
+  name: string
+  source: 'installed' | 'self-learnt'
+  pluginId: string | null
+  description?: string
+  icon?: string
+}
+export type DiscoveredPluginGroup = {
+  id: string
+  name: string
+  color: string
+  glyph: 'flask' | 'masks' | 'stack' | 'bolt' | 'orb'
+  skills: DiscoveredSkill[]
+}
+export type SkillsDiscoverResult = {
+  ok: boolean
+  groups: DiscoveredPluginGroup[]
+  selfLearnt: DiscoveredSkill[]
+  note: string | null
+}
 
 // Local-device enumeration (Task 36): real USB + Bluetooth product names
 // from the main process. Transports are exactly 'usb' | 'bluetooth'; kinds

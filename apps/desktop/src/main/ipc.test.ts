@@ -65,7 +65,8 @@ const deps = (): SocketDeps => ({
   sampleTelemetry: vi.fn(() => Promise.resolve(TELEMETRY_SAMPLE)),
   listDevices: vi.fn((): Promise<DevicesListResult> =>
     Promise.resolve({ devices: [], note: 'No local USB or Bluetooth devices seen.' })
-  )
+  ),
+  discoverSkills: vi.fn(() => Promise.resolve({ ok: true, groups: [], selfLearnt: [], note: null }))
 })
 
 function fakePair(codex: FakeBridge, ocp: FakeBridge): BridgeDeps {
@@ -301,7 +302,10 @@ describe('prefs ops', () => {
       store,
       pickImage: vi.fn(() => Promise.resolve(null)),
       sampleTelemetry: vi.fn(() => Promise.resolve(TELEMETRY_SAMPLE)),
-      listDevices: vi.fn(() => Promise.resolve({ devices: [], note: null }))
+      listDevices: vi.fn(() => Promise.resolve({ devices: [], note: null })),
+      discoverSkills: vi.fn(() =>
+        Promise.resolve({ ok: true, groups: [], selfLearnt: [], note: null })
+      )
     }
     const invoke = createDispatch(d, () => fakePair(fakeBridge('live'), fakeBridge('live')))
     await expect(invoke('prefs.set', 'nonsense')).rejects.toThrow('Malformed prefs payload')
@@ -432,6 +436,66 @@ describe('artwork.fetch', () => {
     )
     await expect(invoke('artwork.fetch', {})).rejects.toThrow('Malformed artwork payload')
     expect(d.fetchSnapshot).not.toHaveBeenCalled()
+  })
+})
+
+describe('skills.discover', () => {
+  const payload = {
+    ok: true,
+    groups: [
+      {
+        id: 'gstack',
+        name: 'Gstack',
+        color: '#10B981',
+        glyph: 'flask' as const,
+        skills: [{ id: 'browse', name: 'Browse', source: 'installed' as const, pluginId: 'gstack' }]
+      }
+    ],
+    selfLearnt: [],
+    note: null
+  }
+  const withDiscoverer = (
+    discoverSkills: (refresh: boolean) => Promise<typeof payload>
+  ): SocketDeps => {
+    const d = deps()
+    d.discoverSkills = discoverSkills
+    return d
+  }
+  it('answers with the injected discoverer payload without daemon contact', async () => {
+    const discoverSkills = vi.fn(() => Promise.resolve(payload))
+    const d = withDiscoverer(discoverSkills)
+    const invoke = createDispatch(d, () => fakePair(fakeBridge('live'), fakeBridge('live')))
+    await expect(invoke('skills.discover')).resolves.toBe(payload)
+    expect(discoverSkills).toHaveBeenCalledWith(false)
+    expect(d.fetchSnapshot).not.toHaveBeenCalled()
+  })
+  it('passes an explicit refresh through, defaults to cached', async () => {
+    const discoverSkills = vi.fn(() => Promise.resolve(payload))
+    const invoke = createDispatch(withDiscoverer(discoverSkills), () =>
+      fakePair(fakeBridge('live'), fakeBridge('live'))
+    )
+    await invoke('skills.discover', { refresh: true })
+    await invoke('skills.discover', {})
+    await invoke('skills.discover', { refresh: 'yes' })
+    expect(discoverSkills).toHaveBeenNthCalledWith(1, true)
+    expect(discoverSkills).toHaveBeenNthCalledWith(2, false)
+    expect(discoverSkills).toHaveBeenNthCalledWith(3, false)
+  })
+  it('fail-softs to honest empty when the discoverer rejects, never throws', async () => {
+    const invoke = createDispatch(
+      withDiscoverer(() => Promise.reject(new Error('disk gone'))),
+      () => fakePair(fakeBridge('live'), fakeBridge('live'))
+    )
+    const result = (await invoke('skills.discover')) as {
+      ok: boolean
+      groups: unknown[]
+      selfLearnt: unknown[]
+      note: unknown
+    }
+    expect(result.ok).toBe(false)
+    expect(result.groups).toEqual([])
+    expect(result.selfLearnt).toEqual([])
+    expect(typeof result.note).toBe('string')
   })
 })
 

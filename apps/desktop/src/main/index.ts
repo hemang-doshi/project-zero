@@ -6,6 +6,7 @@ import { fetchSnapshot, openStream, postCommand } from './socket'
 import { registerIpcHandlers, attachCockpitPush, attachBridgePush, bridgePair } from './ipc'
 import { PrefsStore, startupMigrate } from './prefs'
 import { createWallpaperImageHandler, IMAGE_EXTENSIONS } from './wallpaper-image'
+import { createSkillDiscoverer } from './skills'
 import { createDeviceLister } from './devices'
 import { createTelemetrySampler } from './telemetry'
 import { createTray } from './tray'
@@ -71,6 +72,9 @@ app.whenReady().then(() => {
   // via the slow system_profiler path once per launch + explicit refresh
   // (cached inside the lister).
   const deviceLister = createDeviceLister()
+  // Skill grid: one app-lifetime discoverer over the real skill roots, cached
+  // per launch; the route rescans explicitly via { refresh: true }.
+  const skillDiscoverer = createSkillDiscoverer()
   registerIpcHandlers({
     socketPath,
     fetchSnapshot,
@@ -78,7 +82,8 @@ app.whenReady().then(() => {
     store,
     pickImage,
     sampleTelemetry: () => telemetry.sample(),
-    listDevices: (refreshBt: boolean) => deviceLister.list(refreshBt)
+    listDevices: (refreshBt: boolean) => deviceLister.list(refreshBt),
+    discoverSkills: (refresh: boolean) => Promise.resolve(skillDiscoverer.discover(refresh))
   })
 
   // One app-lifetime CockpitModel shared by window pushes and the tray

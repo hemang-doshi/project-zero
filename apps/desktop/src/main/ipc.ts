@@ -8,6 +8,8 @@ import {
   type DevicesListPayload,
   type DevicesListResult,
   type ProjectPayload,
+  type SkillsDiscoverPayload,
+  type SkillsDiscoverResult,
   type TelemetrySample,
   type ThreadGetPayload
 } from '../shared/ipc'
@@ -30,6 +32,7 @@ export type SocketDeps = {
   pickImage: () => Promise<string | null>
   sampleTelemetry: () => Promise<TelemetrySample>
   listDevices: (refreshBt: boolean) => Promise<DevicesListResult>
+  discoverSkills: (refresh: boolean) => Promise<SkillsDiscoverResult>
   openCodeDbPath?: string
 }
 
@@ -215,6 +218,22 @@ export function createDispatch(
       }
       case 'artwork.fetch':
         return artworkFetch(payload)
+      case 'skills.discover': {
+        // Live skill grid: a local filesystem scan, never the daemon. The
+        // discoverer itself fail-softs, but the IPC boundary double-guards so
+        // a throwing injection can never surface as an IPC rejection.
+        const { refresh } = (payload ?? {}) as Partial<SkillsDiscoverPayload>
+        try {
+          return await deps.discoverSkills(refresh === true)
+        } catch {
+          return {
+            ok: false,
+            groups: [],
+            selfLearnt: [],
+            note: 'Skill discovery failed; the vial grid is honestly empty.'
+          } satisfies SkillsDiscoverResult
+        }
+      }
     }
   }
 }
