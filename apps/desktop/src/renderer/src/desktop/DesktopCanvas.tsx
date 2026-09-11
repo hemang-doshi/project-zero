@@ -1,8 +1,8 @@
-import type { FC } from 'react'
-import { ROUTE_TITLES, type RouteId } from './canvas'
+import { type RouteId } from './canvas'
 import { type Rect } from '../../../shared/desktop-windows'
 import { DesktopWindow } from './DesktopWindow'
 import { Taskbar } from './Taskbar'
+import { ROUTES } from '../routes/registry'
 
 export type DesktopCanvasProps = {
   open: string[]
@@ -14,21 +14,6 @@ export type DesktopCanvasProps = {
   onMinimize: (route: string) => void
   onMaximize: (route: string) => void
   onCommit: (route: string, rect: Rect) => void
-}
-
-const placeholder = (id: RouteId): FC => {
-  const Route = (): React.JSX.Element => <div className="zw-route">{ROUTE_TITLES[id]}</div>
-  return Route
-}
-
-const ROUTES: Record<RouteId, FC> = {
-  desk: placeholder('desk'),
-  runtime: placeholder('runtime'),
-  network: placeholder('network'),
-  flightRecorder: placeholder('flightRecorder'),
-  airlock: placeholder('airlock'),
-  zeroBot: placeholder('zeroBot'),
-  skillLab: placeholder('skillLab')
 }
 
 export function DesktopCanvas({
