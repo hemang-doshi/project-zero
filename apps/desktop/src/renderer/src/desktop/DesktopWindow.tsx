@@ -34,8 +34,40 @@ const lightStyle = (color: string): React.CSSProperties => ({
   padding: 0,
   cursor: 'pointer',
   flexShrink: 0,
-  background: color
+  background: color,
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'center'
 })
+
+const glyphStyle: React.CSSProperties = {
+  color: 'rgba(0,0,0,.55)'
+}
+
+const TrafficGlyph = ({ d }: { d: string }): React.JSX.Element => (
+  <svg
+    className="zw-glyph"
+    width={10}
+    height={10}
+    viewBox="0 0 10 10"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth={1.2}
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    style={glyphStyle}
+    aria-hidden="true"
+  >
+    <path d={d} />
+  </svg>
+)
+
+const GLYPHS = {
+  close: 'M2.2,2.2 L7.8,7.8 M7.8,2.2 L2.2,7.8',
+  minimize: 'M2.5,5 L7.5,5',
+  maximize:
+    'M4.3,5.7 L7.6,2.4 M7.6,2.4 L5.4,2.4 M7.6,2.4 L7.6,4.6 M5.7,4.3 L2.4,7.6 M2.4,7.6 L4.6,7.6 M2.4,7.6 L2.4,5.4'
+}
 
 export type DesktopWindowProps = {
   route: string
@@ -111,21 +143,27 @@ export function DesktopWindow({
           style={lightStyle('var(--z-error-red)')}
           onClick={onClose}
           aria-label="Close"
-        />
+        >
+          <TrafficGlyph d={GLYPHS.close} />
+        </button>
         <button
           type="button"
           className="zw-light"
           style={lightStyle('var(--z-marker-yellow)')}
           onClick={onMinimize}
           aria-label="Minimize"
-        />
+        >
+          <TrafficGlyph d={GLYPHS.minimize} />
+        </button>
         <button
           type="button"
           className="zw-light"
           style={lightStyle('var(--z-status-green)')}
           onClick={onMaximize}
           aria-label="Maximize"
-        />
+        >
+          <TrafficGlyph d={GLYPHS.maximize} />
+        </button>
         <span style={{ pointerEvents: 'none', fontSize: 13, color: 'var(--z-ink)' }}>{title}</span>
       </div>
       <div

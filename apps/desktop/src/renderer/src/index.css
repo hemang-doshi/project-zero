@@ -6,3 +6,13 @@
   box-sizing: border-box;
   margin: 0;
 }
+
+.zw-header .zw-glyph {
+  opacity: 0;
+  transition: opacity 0.12s ease;
+  pointer-events: none;
+}
+
+.zw-header:hover .zw-glyph {
+  opacity: 1;
+}

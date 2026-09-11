@@ -138,11 +138,11 @@ export function DesktopCanvas({
         <SettingsSheet
           wallpaper={wallpaper}
           onKind={(kind) =>
-            setWallpaper({
-              kind,
-              path: wallpaper.kind === 'custom' ? wallpaper.path : undefined,
-              mode: wallpaper.mode
-            })
+            setWallpaper(
+              kind === 'custom' && wallpaper.kind === 'custom'
+                ? { kind, path: wallpaper.path, mode: wallpaper.mode }
+                : { kind, mode: 'cover' }
+            )
           }
           onMode={(mode) => setWallpaper({ ...wallpaper, mode })}
           onPick={() => {

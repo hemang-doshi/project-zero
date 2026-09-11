@@ -113,13 +113,15 @@ describe('DesktopCanvas wallpaper pick flow', () => {
     })
   }
 
-  const mountWithZero = async (): Promise<HTMLElement> => {
+  const mountWithZero = async (
+    initialWallpaper: Record<string, unknown> = { kind: 'dotted-green', mode: 'cover' }
+  ): Promise<HTMLElement> => {
     resetStores()
     setPatches = []
     invoke = vi.fn((op: string, payload?: unknown) => {
       if (op === 'prefs.get') {
         return Promise.resolve({
-          wallpaper: { kind: 'dotted-green', mode: 'cover' },
+          wallpaper: initialWallpaper,
           icons: {},
           windows: {}
         })
@@ -193,5 +195,36 @@ describe('DesktopCanvas wallpaper pick flow', () => {
     for (const patch of setPatches) {
       expect((patch as { wallpaper?: { path?: string } }).wallpaper?.path).toBeUndefined()
     }
+  })
+
+  it('a fresh pick from a bundled kind defaults to cover even when a stale tile mode is stored', async () => {
+    const el = await mountWithZero({ kind: 'dotted-green', mode: 'tile' })
+    openPickDialog(el)
+    await act(async () => {
+      resolvePick('/tmp/picked.png')
+      await Promise.resolve()
+    })
+    expect(useDesktopPrefs.getState().wallpaper).toEqual({
+      kind: 'custom',
+      path: '/tmp/picked.png',
+      mode: 'cover'
+    })
+    expect(invoke).toHaveBeenCalledWith('prefs.set', {
+      wallpaper: { kind: 'custom', path: '/tmp/picked.png', mode: 'cover' }
+    })
+  })
+
+  it('leaving custom resets the mode so a stale tile never persists', async () => {
+    const el = await mountWithZero({ kind: 'custom', path: '/w.png', mode: 'tile' })
+    click(el.querySelector('button[data-settings="true"]') as HTMLElement)
+    const dotted = [...(el.querySelectorAll('#settings button') ?? [])].find((b) =>
+      (b.textContent ?? '').includes('Dotted Green')
+    )
+    expect(dotted).toBeDefined()
+    click(dotted as HTMLElement)
+    expect(useDesktopPrefs.getState().wallpaper).toEqual({ kind: 'dotted-green', mode: 'cover' })
+    expect(invoke).toHaveBeenCalledWith('prefs.set', {
+      wallpaper: { kind: 'dotted-green', mode: 'cover' }
+    })
   })
 })

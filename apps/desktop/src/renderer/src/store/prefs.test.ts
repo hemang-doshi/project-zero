@@ -56,6 +56,25 @@ describe('hydrateDesktopPrefs', () => {
     expect(useDesktopPrefs.getState().wallpaper).toEqual({ kind: 'dotted-green', mode: 'cover' })
   })
 
+  it('a stored custom wallpaper with no explicit mode hydrates to cover', async () => {
+    const zero = stubZero(
+      vi.fn(() =>
+        Promise.resolve({
+          wallpaper: { kind: 'custom', path: '/w.png' },
+          icons: {},
+          windows: {}
+        })
+      )
+    )
+    await hydrateDesktopPrefs()
+    expect(zero.invoke).toHaveBeenCalledWith('prefs.get')
+    expect(useDesktopPrefs.getState().wallpaper).toEqual({
+      kind: 'custom',
+      path: '/w.png',
+      mode: 'cover'
+    })
+  })
+
   it('stays on the seeded defaults when the invoke rejects (fail-soft)', async () => {
     stubZero(vi.fn(() => Promise.reject(new Error('handler error'))))
     await expect(hydrateDesktopPrefs()).resolves.toBeUndefined()
