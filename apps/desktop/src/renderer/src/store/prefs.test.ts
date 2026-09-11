@@ -32,12 +32,12 @@ afterEach(() => {
 })
 
 describe('hydrateDesktopPrefs', () => {
-  it('loads wallpaper, icon positions and window rects via prefs.get', async () => {
+  it('loads wallpaper, icon slots and window rects via prefs.get', async () => {
     const zero = stubZero(
       vi.fn(() =>
         Promise.resolve({
           wallpaper: { kind: 'canvas-tan', mode: 'cover' },
-          icons: { 'icon-desk': { x: 120, y: 60 } },
+          icons: { 'icon-desk': { x: 112, y: 28 } },
           windows: { desk: { x: 5, y: 6, w: 560, h: 480 } }
         })
       )
@@ -45,9 +45,23 @@ describe('hydrateDesktopPrefs', () => {
     await hydrateDesktopPrefs()
     expect(zero.invoke).toHaveBeenCalledWith('prefs.get')
     expect(useDesktopPrefs.getState().wallpaper).toEqual({ kind: 'canvas-tan', mode: 'cover' })
-    expect(useDesktopPrefs.getState().icons['icon-desk']).toEqual({ x: 120, y: 60 })
+    expect(useDesktopPrefs.getState().icons['icon-desk']).toEqual({ x: 112, y: 28 })
     expect(useDesktopPrefs.getState().loaded).toBe(true)
     expect(useWindows.getState().rects.desk).toEqual({ x: 5, y: 6, w: 560, h: 480 })
+  })
+
+  it('rounds free-placed icon positions to their grid slot on load (one-way)', async () => {
+    stubZero(
+      vi.fn(() =>
+        Promise.resolve({
+          wallpaper: { kind: 'dotted-green', mode: 'cover' },
+          icons: { 'icon-desk': { x: 200, y: 90 } },
+          windows: {}
+        })
+      )
+    )
+    await hydrateDesktopPrefs()
+    expect(useDesktopPrefs.getState().icons['icon-desk']).toEqual({ x: 200, y: 124 })
   })
 
   it('keeps the seeded defaults when prefs.get resolves an empty shell', async () => {
@@ -103,12 +117,12 @@ describe('persisting actions', () => {
       wallpaper: { kind: 'cream', mode: 'cover' }
     })
   })
-  it('setIconPosition merges the icon and persists just that entry', () => {
+  it('setIconPosition snaps to the slot and persists just that entry', () => {
     const zero = stubZero(vi.fn(() => Promise.resolve({})))
     setIconPosition('icon-desk', 40, 80)
-    expect(useDesktopPrefs.getState().icons['icon-desk']).toEqual({ x: 40, y: 80 })
+    expect(useDesktopPrefs.getState().icons['icon-desk']).toEqual({ x: 24, y: 124 })
     expect(zero.invoke).toHaveBeenCalledWith('prefs.set', {
-      icons: { 'icon-desk': { x: 40, y: 80 } }
+      icons: { 'icon-desk': { x: 24, y: 124 } }
     })
   })
   it('setWindowRect remembers the rect and persists it per commit', () => {

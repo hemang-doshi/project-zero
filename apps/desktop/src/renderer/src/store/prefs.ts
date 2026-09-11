@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import type { Rect } from '../../../shared/desktop-windows'
 import type { WallpaperState } from '../desktop/wallpaper'
+import { migrateIconsToGrid, snapIconToGrid } from '../desktop/items'
 import { useWindows } from './windows'
 
 type DesktopPrefsData = {
@@ -33,7 +34,9 @@ export async function hydrateDesktopPrefs(): Promise<void> {
     return
   }
   const wallpaper = p?.wallpaper ?? {}
-  const icons = p?.icons ?? {}
+  // One-way migration: free-placed positions from before grid snap round to
+  // their nearest slot on load.
+  const icons = migrateIconsToGrid(p?.icons ?? {})
   const windows = p?.windows ?? {}
   useDesktopPrefs.setState({
     wallpaper: {
@@ -58,8 +61,11 @@ export function setWallpaper(next: WallpaperState): void {
 }
 
 export function setIconPosition(id: string, x: number, y: number): void {
-  useDesktopPrefs.setState((prev) => ({ icons: { ...prev.icons, [id]: { x, y } } }))
-  void window.zero.invoke('prefs.set', { icons: { [id]: { x, y } } }).catch(() => {})
+  // Persisted positions are always grid slots — snap at the store boundary so
+  // even a free-placed caller can never write a free position.
+  const slot = snapIconToGrid({ x, y })
+  useDesktopPrefs.setState((prev) => ({ icons: { ...prev.icons, [id]: slot } }))
+  void window.zero.invoke('prefs.set', { icons: { [id]: slot } }).catch(() => {})
 }
 
 export function setWindowRect(route: string, rect: Rect): void {

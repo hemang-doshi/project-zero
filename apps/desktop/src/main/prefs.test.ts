@@ -1,5 +1,13 @@
 import { it, expect, describe } from 'vitest'
-import { PrefsStore, applyPrefsPatch, defaultPrefs, startupMigrate, type Prefs } from './prefs'
+import {
+  PrefsStore,
+  applyPrefsPatch,
+  defaultPrefs,
+  snapIconToGrid as snapMain,
+  startupMigrate,
+  type Prefs
+} from './prefs'
+import { snapIconToGrid as snapRenderer } from '../renderer/src/desktop/items'
 import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
@@ -99,5 +107,27 @@ describe('startupMigrate', () => {
       layoutVersion: 1
     }
     expect(startupMigrate(scrambled)).toEqual(startupMigrate(canonical))
+  })
+  it('rounds free-placed icon positions to their grid slot on load (one-way)', () => {
+    const p = defaultPrefs()
+    p.icons = { 'icon-desk': { x: 200, y: 90 }, 'icon-runtime': { x: 112, y: 28 } }
+    const out = startupMigrate(p)
+    expect(out.icons).toEqual({
+      'icon-desk': { x: 200, y: 124 },
+      'icon-runtime': { x: 112, y: 28 }
+    })
+  })
+  it('uses the same slot math as the renderer seed grid (no second grid)', () => {
+    const samples = [
+      { x: 0, y: 0 },
+      { x: 24, y: 28 },
+      { x: 200, y: 90 },
+      { x: 150, y: 200 },
+      { x: 40, y: 44 },
+      { x: 500, y: 600 }
+    ]
+    for (const s of samples) {
+      expect(snapMain(s)).toEqual(snapRenderer(s))
+    }
   })
 })
