@@ -105,7 +105,7 @@ const pickerSelected: React.CSSProperties = {
   ...pickerButton,
   background: 'var(--z-orange)',
   borderColor: 'var(--z-orange)',
-  color: '#FFFFFF'
+  color: 'var(--z-card-white)'
 }
 
 const actionButton: React.CSSProperties = {
@@ -123,7 +123,7 @@ const sendButton: React.CSSProperties = {
   ...actionButton,
   background: 'var(--z-orange)',
   borderColor: 'var(--z-orange)',
-  color: '#FFFFFF'
+  color: 'var(--z-card-white)'
 }
 
 const disabledSend: React.CSSProperties = {
