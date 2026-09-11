@@ -258,6 +258,34 @@ export function mergeChatItem(items: ChatItem[], next: ChatItem): ChatItem[] {
   return merged.slice(merged.length - MAX_CHAT_ITEMS)
 }
 
+// Merge a thread/read transcript under items that arrived live while the read
+// was in flight. Newest state per item id wins: a lane item with the same id
+// is kept as-is (the live event is newer evidence than the read snapshot) and
+// the read fills only the ids the lane does not have, in read order. Lane-only
+// items append after the read transcript (they arrived later). Bounded.
+export function mergeTranscript(
+  lane: ChatItem[],
+  read: ChatItem[]
+): { items: ChatItem[]; dropped: number } {
+  if (lane.length === 0) return { items: read, dropped: 0 }
+  const laneById = new Map<string, ChatItem>()
+  for (const item of lane) if (item.id !== '') laneById.set(item.id, item)
+  const readIds = new Set<string>()
+  const merged: ChatItem[] = []
+  for (const item of read) {
+    if (item.id !== '') readIds.add(item.id)
+    merged.push(laneById.get(item.id) ?? item)
+  }
+  for (const item of lane) {
+    if (item.id === '' || !readIds.has(item.id)) merged.push(item)
+  }
+  if (merged.length <= MAX_CHAT_ITEMS) return { items: merged, dropped: 0 }
+  return {
+    items: merged.slice(merged.length - MAX_CHAT_ITEMS),
+    dropped: merged.length - MAX_CHAT_ITEMS
+  }
+}
+
 const appendDelta = (current: string | null, delta: string): string =>
   current === null ? delta : current + delta
 

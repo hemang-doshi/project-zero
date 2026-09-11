@@ -4,11 +4,12 @@ import { Chip } from './Chip'
 import { ChatRow, ThreadList } from './ZeroBotChat'
 import type { Tone } from './runtime.types'
 import {
+  applyBridgeEvent,
   EMPTY_HARNESS_LOG,
+  mergeTranscript,
   parseThreadRows,
   parseTranscript,
   pushHarnessEvent,
-  applyBridgeEvent,
   threadTitle,
   type ChatItem,
   type HarnessEventLog,
@@ -352,8 +353,11 @@ export const ZeroBotRoute = memo(function ZeroBotRoute(): React.JSX.Element {
   const shownEvents = useMemo(() => visibleBridgeEvents(log.events, harness), [log.events, harness])
   const live = info.state === 'live'
 
-  const loadThreads = (h: Harness): Promise<void> =>
-    window.zero
+  const loadThreads = (h: Harness): Promise<void> => {
+    // Guard to codex explicitly: OpenCode has no read-only list method, so a
+    // caller passing a foreign harness must be a no-op, never a codex probe.
+    if (h !== 'codex') return Promise.resolve()
+    return window.zero
       .invoke('codex.threads')
       .then((v) => {
         const rows = parseThreadRows(v)
@@ -363,6 +367,7 @@ export const ZeroBotRoute = memo(function ZeroBotRoute(): React.JSX.Element {
         setLanes(next)
       })
       .catch((err: unknown) => setError(err instanceof Error ? err.message : String(err)))
+  }
 
   const openThread = (threadId: string): void => {
     if (harness !== 'codex') return
@@ -381,13 +386,16 @@ export const ZeroBotRoute = memo(function ZeroBotRoute(): React.JSX.Element {
       .then((v) => {
         const parsed = parseTranscript(v)
         const laneNext = lanesRef.current.codex
+        // Merge (never replace): live events that landed while the read was
+        // in flight are the newest evidence per item id and must survive.
+        const merged = mergeTranscript(laneNext.items, parsed.items)
         const next: HarnessState = {
           ...lanesRef.current,
-          codex: { ...laneNext, items: parsed.items, dropped: parsed.dropped }
+          codex: { ...laneNext, items: merged.items, dropped: merged.dropped }
         }
         lanesRef.current = next
         setLanes(next)
-        if (parsed.items.length === 0) setNotice('The thread transcript read returned no items.')
+        if (merged.items.length === 0) setNotice('The thread transcript read returned no items.')
       })
       .catch((err: unknown) => setError(err instanceof Error ? err.message : String(err)))
   }
@@ -419,7 +427,9 @@ export const ZeroBotRoute = memo(function ZeroBotRoute(): React.JSX.Element {
               ? `${harness} bridge connected; no thread, session, prompt or turn was started.`
               : `${harness} bridge disconnected.`
           )
-          if (action === 'connect' && harness === 'codex') void loadThreads('codex')
+          // The codex-only guard lives inside loadThreads itself, so the
+          // call site can delegate without duplicating the harness check.
+          if (action === 'connect') void loadThreads(harness)
         }
       })
       .catch((err: unknown) => setError(err instanceof Error ? err.message : String(err)))
