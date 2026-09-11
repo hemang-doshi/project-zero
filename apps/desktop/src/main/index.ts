@@ -1,6 +1,17 @@
 import { app, shell, BrowserWindow } from 'electron'
 import { join } from 'path'
 import { is } from '@electron-toolkit/utils'
+import { CockpitModel } from './cockpit-model'
+import { fetchSnapshot, openStream, postCommand } from './socket'
+import { registerIpcHandlers, attachCockpitPush } from './ipc'
+
+const socketPath = join(
+  process.env.HOME ?? '',
+  'Library',
+  'Application Support',
+  'ProjectZero',
+  'zero.sock'
+)
 
 function createWindow(): void {
   const mainWindow = new BrowserWindow({
@@ -13,6 +24,18 @@ function createWindow(): void {
       sandbox: true
     }
   })
+
+  const model = new CockpitModel(socketPath, fetchSnapshot, openStream, {
+    reconnectDelayMs: 1_000,
+    maxSnapshotAgeMs: 5_000,
+    schedule: (fn, ms) => {
+      const id = setTimeout(fn, ms)
+      return () => clearTimeout(id)
+    }
+  })
+  attachCockpitPush(model, mainWindow)
+  model.start()
+  mainWindow.on('closed', () => model.stop())
 
   mainWindow.on('ready-to-show', () => {
     mainWindow.show()
@@ -31,6 +54,7 @@ function createWindow(): void {
 }
 
 app.whenReady().then(() => {
+  registerIpcHandlers({ socketPath, fetchSnapshot, postCommand })
   createWindow()
 
   app.on('activate', function () {
