@@ -1,12 +1,17 @@
 /* eslint-disable react/no-unknown-property -- R3F three intrinsics (position, rotation, scale, args, geometry, material, color, emissive, …) that the DOM property allowlist cannot know. Scoped to this model file only. */
-/* eslint-disable react-refresh/only-export-components -- binding scene-lane contract: MODEL_FOOTPRINT lives beside the component. */
+/* eslint-disable react-refresh/only-export-components -- binding scene-lane contract: MODEL_FOOTPRINT + PLUGIN_GLYPHS must live beside the component. */
 import { memo } from 'react'
 import * as THREE from 'three'
+
+export const PLUGIN_GLYPHS = ['flask', 'masks', 'stack', 'bolt', 'orb'] as const
+
+export type SkillGlyph = (typeof PLUGIN_GLYPHS)[number]
 
 export type SkillVialPlugin = {
   id: string
   name: string
   color: string
+  glyph: SkillGlyph
 }
 
 export type SkillVialProps = {
@@ -83,6 +88,88 @@ const RUNGS: Array<{ y: number; rotY: number }> = [0.1, 0.3, 0.5, 0.7, 0.9].map(
 )
 
 const RUNG_LEN = HELIX_R * 2
+
+function GlyphMark({ glyph }: { glyph: SkillGlyph }): React.JSX.Element | null {
+  switch (glyph) {
+    case 'flask':
+      return (
+        <group name="glyph-flask" data-testid="skillvial-glyph-flask">
+          {/* conical flask body */}
+          <mesh name="glyph-flask-body" position={[0, -0.02, 0]}>
+            <coneGeometry args={[0.07, 0.12, 16]} />
+            <meshStandardMaterial color="#FFFFFF" roughness={0.4} metalness={0.1} />
+          </mesh>
+          {/* narrow flask neck */}
+          <mesh name="glyph-flask-neck" position={[0, 0.065, 0]}>
+            <boxGeometry args={[0.05, 0.05, 0.03]} />
+            <meshStandardMaterial color="#FFFFFF" roughness={0.4} metalness={0.1} />
+          </mesh>
+        </group>
+      )
+    case 'masks':
+      return (
+        <group name="glyph-masks" data-testid="skillvial-glyph-masks">
+          {/* theater-mask pair: two rounded faces side by side */}
+          <mesh name="glyph-masks-left" position={[-0.055, 0, 0]}>
+            <sphereGeometry args={[0.05, 16, 12]} />
+            <meshStandardMaterial color="#FFFFFF" roughness={0.4} metalness={0.1} />
+          </mesh>
+          <mesh name="glyph-masks-right" position={[0.055, 0, 0]}>
+            <sphereGeometry args={[0.05, 16, 12]} />
+            <meshStandardMaterial color="#FFFFFF" roughness={0.4} metalness={0.1} />
+          </mesh>
+        </group>
+      )
+    case 'stack':
+      return (
+        <group name="glyph-stack" data-testid="skillvial-glyph-stack">
+          {/* three tapering stacked layers */}
+          <mesh name="glyph-stack-0" position={[0, -0.05, 0]}>
+            <boxGeometry args={[0.14, 0.035, 0.03]} />
+            <meshStandardMaterial color="#FFFFFF" roughness={0.4} metalness={0.1} />
+          </mesh>
+          <mesh name="glyph-stack-1" position={[0, 0, 0]}>
+            <boxGeometry args={[0.11, 0.035, 0.03]} />
+            <meshStandardMaterial color="#FFFFFF" roughness={0.4} metalness={0.1} />
+          </mesh>
+          <mesh name="glyph-stack-2" position={[0, 0.05, 0]}>
+            <boxGeometry args={[0.08, 0.035, 0.03]} />
+            <meshStandardMaterial color="#FFFFFF" roughness={0.4} metalness={0.1} />
+          </mesh>
+        </group>
+      )
+    case 'bolt':
+      return (
+        <group name="glyph-bolt" data-testid="skillvial-glyph-bolt">
+          {/* lightning shard: stretched diamond */}
+          <mesh
+            name="glyph-bolt-shard"
+            position={[0, 0, 0]}
+            scale={[0.7, 1.3, 0.5]}
+          >
+            <octahedronGeometry args={[0.075]} />
+            <meshStandardMaterial color="#FFFFFF" roughness={0.4} metalness={0.1} />
+          </mesh>
+        </group>
+      )
+    case 'orb':
+      return (
+        <group name="glyph-orb" data-testid="skillvial-glyph-orb">
+          {/* planet orb with a tilted ring */}
+          <mesh name="glyph-orb-core" position={[0, 0, 0]}>
+            <sphereGeometry args={[0.06, 20, 14]} />
+            <meshStandardMaterial color="#FFFFFF" roughness={0.4} metalness={0.1} />
+          </mesh>
+          <mesh name="glyph-orb-ring" position={[0, 0, 0]} rotation-x={1.1}>
+            <torusGeometry args={[0.09, 0.012, 8, 28]} />
+            <meshStandardMaterial color="#FFFFFF" roughness={0.4} metalness={0.1} />
+          </mesh>
+        </group>
+      )
+    default:
+      return null
+  }
+}
 
 function SkillVialInner({
   plugin,
@@ -241,6 +328,10 @@ function SkillVialInner({
         />
       </mesh>
 
+      {/* plugin mark floating on the chip face (pure geometry, never text) */}
+      <group name="chip-glyph" data-testid="skillvial-chip-glyph" position={[0, 1.45, 0.035]}>
+        <GlyphMark glyph={plugin.glyph} />
+      </group>
     </group>
   )
 }
