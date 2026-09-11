@@ -29,6 +29,7 @@ describe('validateOp', () => {
         'codex.thread.get',
         'codex.threads',
         'command.send',
+        'devices.list',
         'ocp.connect',
         'ocp.disconnect',
         'ocp.discover',

@@ -6,7 +6,7 @@ import type { BridgeDeps, HarnessId, RpcEvent } from './bridges'
 import { attachBridgePush, createDispatch, type SocketDeps } from './ipc'
 import { defaultPrefs, type Prefs } from './prefs'
 import { PrefsStore } from './prefs'
-import type { TelemetrySample } from '../shared/ipc'
+import type { DevicesListResult, TelemetrySample } from '../shared/ipc'
 
 type FakeBridge = {
   state: 'disconnected' | 'connecting' | 'live'
@@ -62,7 +62,10 @@ const deps = (): SocketDeps => ({
   postCommand: vi.fn(() => Promise.resolve({})),
   store: new PrefsStore(fs.mkdtempSync(path.join(os.tmpdir(), 'zero-ipc-prefs-'))),
   pickImage: vi.fn(() => Promise.resolve(null)),
-  sampleTelemetry: vi.fn(() => Promise.resolve(TELEMETRY_SAMPLE))
+  sampleTelemetry: vi.fn(() => Promise.resolve(TELEMETRY_SAMPLE)),
+  listDevices: vi.fn((): Promise<DevicesListResult> =>
+    Promise.resolve({ devices: [], note: 'No local USB or Bluetooth devices seen.' })
+  )
 })
 
 function fakePair(codex: FakeBridge, ocp: FakeBridge): BridgeDeps {
@@ -297,7 +300,8 @@ describe('prefs ops', () => {
       postCommand: vi.fn(() => Promise.resolve({})),
       store,
       pickImage: vi.fn(() => Promise.resolve(null)),
-      sampleTelemetry: vi.fn(() => Promise.resolve(TELEMETRY_SAMPLE))
+      sampleTelemetry: vi.fn(() => Promise.resolve(TELEMETRY_SAMPLE)),
+      listDevices: vi.fn(() => Promise.resolve({ devices: [], note: null }))
     }
     const invoke = createDispatch(d, () => fakePair(fakeBridge('live'), fakeBridge('live')))
     await expect(invoke('prefs.set', 'nonsense')).rejects.toThrow('Malformed prefs payload')
@@ -340,6 +344,41 @@ describe('telemetry.sample', () => {
     await expect(invoke('telemetry.sample')).resolves.toBe(TELEMETRY_SAMPLE)
     expect(d.sampleTelemetry).toHaveBeenCalledOnce()
     expect(d.fetchSnapshot).not.toHaveBeenCalled()
+  })
+})
+
+describe('devices.list', () => {
+  it('answers with the injected lister payload without daemon contact', async () => {
+    const d = deps()
+    const payload: DevicesListResult = {
+      devices: [
+        {
+          id: 'usb-1-2-3',
+          name: 'Gaming Keyboard',
+          transport: 'usb',
+          kind: 'keyboard',
+          vendor: 'BY Tech'
+        }
+      ],
+      note: null
+    }
+    d.listDevices = vi.fn(() => Promise.resolve(payload))
+    const invoke = createDispatch(d, () => fakePair(fakeBridge('live'), fakeBridge('live')))
+    await expect(invoke('devices.list')).resolves.toBe(payload)
+    expect(d.listDevices).toHaveBeenCalledWith(false)
+    expect(d.fetchSnapshot).not.toHaveBeenCalled()
+  })
+
+  it('passes an explicit Bluetooth refresh through, defaults to cached', async () => {
+    const d = deps()
+    d.listDevices = vi.fn(() => Promise.resolve({ devices: [], note: null }))
+    const invoke = createDispatch(d, () => fakePair(fakeBridge('live'), fakeBridge('live')))
+    await invoke('devices.list', { refreshBt: true })
+    await invoke('devices.list', {})
+    await invoke('devices.list', { refreshBt: 'yes' })
+    expect(d.listDevices).toHaveBeenNthCalledWith(1, true)
+    expect(d.listDevices).toHaveBeenNthCalledWith(2, false)
+    expect(d.listDevices).toHaveBeenNthCalledWith(3, false)
   })
 })
 

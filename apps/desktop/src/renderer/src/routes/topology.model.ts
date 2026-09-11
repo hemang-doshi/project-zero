@@ -1,6 +1,8 @@
 import type { RuntimeConnState } from '../../../shared/protocol'
+import type { DeviceInfo } from '../../../shared/ipc'
 import { ZERO_TOKENS } from '../../../shared/tokens'
 import { nodeTone, type CockpitNode, type Tone } from './runtime.types'
+import { matchDeviceByKind } from './devices.model'
 
 // Pinned render mode for the 3D scene: R3F renders one frame per
 // invalidation (data change, camera move, focus tick) instead of spinning an
@@ -27,7 +29,8 @@ export function isWebGL2Available(): boolean {
 // Desk-scene device kinds. There is no hub/router kind: the owner killed the
 // router design (Task 27f-3) and the green data-beam connectors with it —
 // this scene is the owner's physical desk, not a network topology diagram.
-export type SceneNodeKind = 'macbook' | 'monitor' | 'esp32' | 'keyboard' | 'mousepad' | 'phone'
+export type SceneNodeKind =
+  'macbook' | 'monitor' | 'esp32' | 'keyboard' | 'mousepad' | 'phone' | 'peripheral'
 
 export type SceneNode = {
   id: string
@@ -286,7 +289,26 @@ export function breadboardDots(): Array<[number, number]> {
   return dots.slice(0, BREADBOARD_DOT_CAP)
 }
 
-export function buildSceneGraph(snapshotNodes: CockpitNode[], conn: RuntimeConnState): SceneGraph {
+// Small generic markers for connected local devices beyond the keyboard
+// and mouse (audio interfaces, USB-serial adapters, BT peripherals): one
+// reused puck, never a full model per device.
+export const PERIPHERAL_FOOTPRINT = { w: 0.5, h: 0.18, d: 0.5 }
+export const PERIPHERAL_MAX = 8
+// Markers sit along the desk back edge, clear of the monitor station and
+// the cable rest points behind the MacBook.
+export const PERIPHERAL_ROW = { x0: -4.5, dx: 1.2, z: -3.35 }
+
+export const peripheralPosition = (i: number): [number, number, number] => [
+  PERIPHERAL_ROW.x0 + i * PERIPHERAL_ROW.dx,
+  0,
+  PERIPHERAL_ROW.z
+]
+
+export function buildSceneGraph(
+  snapshotNodes: CockpitNode[],
+  conn: RuntimeConnState,
+  localDevices: DeviceInfo[] = []
+): SceneGraph {
   // The list route stays the honest source: revoked registrations remain in
   // the list but leave the spatial scene (lifecycle evidence, not topology).
   const live = snapshotNodes.filter((n) => !n.revoked)
@@ -358,12 +380,20 @@ export function buildSceneGraph(snapshotNodes: CockpitNode[], conn: RuntimeConnS
 
   // Desk peripherals mirror the runtime: lit while live, dark when the
   // daemon is unreachable. They are furniture, not nodes (no caps/seen).
+  // The keyboard/mouse models take the REAL connected product names when a
+  // matching local device exists (match by kind); otherwise the generic
+  // labels stand — a name is never fabricated.
   const peripheralTone: Tone = online ? 'healthy' : 'error'
+  const keyboardMatch = matchDeviceByKind(localDevices, 'keyboard')
+  const mouseMatch = matchDeviceByKind(localDevices, 'mouse')
   const keyboard: SceneNode = {
     id: KEYBOARD_NODE_ID,
     kind: 'keyboard',
-    label: 'RGB Keyboard',
-    sublabel: 'desk peripheral · always present',
+    label: keyboardMatch !== null ? keyboardMatch.name : 'RGB Keyboard',
+    sublabel:
+      keyboardMatch !== null
+        ? `desk keyboard · ${keyboardMatch.transport}${keyboardMatch.vendor !== undefined ? ` · ${keyboardMatch.vendor}` : ''}`
+        : 'desk peripheral · always present',
     status: online ? 'ONLINE' : 'OFFLINE',
     tone: peripheralTone,
     gated: false,
@@ -376,8 +406,11 @@ export function buildSceneGraph(snapshotNodes: CockpitNode[], conn: RuntimeConnS
   const mousepad: SceneNode = {
     id: MOUSEPAD_NODE_ID,
     kind: 'mousepad',
-    label: 'Mouse + Desk Mat',
-    sublabel: 'desk peripheral · always present',
+    label: mouseMatch !== null ? mouseMatch.name : 'Mouse + Desk Mat',
+    sublabel:
+      mouseMatch !== null
+        ? `mouse + desk mat · ${mouseMatch.transport}${mouseMatch.vendor !== undefined ? ` · ${mouseMatch.vendor}` : ''}`
+        : 'desk peripheral · always present',
     status: online ? 'ONLINE' : 'OFFLINE',
     tone: peripheralTone,
     gated: false,
@@ -387,6 +420,31 @@ export function buildSceneGraph(snapshotNodes: CockpitNode[], conn: RuntimeConnS
     caps: [],
     lastSeen: null
   }
+
+  // Every other connected local device becomes one small labelled puck on
+  // the desk back edge (deterministic id order, capped). Gated-iPhone rule
+  // unchanged: phones never become pucks.
+  const matchedIds = new Set(
+    [keyboardMatch?.id, mouseMatch?.id].filter((id): id is string => id !== undefined)
+  )
+  const extras = localDevices
+    .filter((d) => !matchedIds.has(d.id))
+    .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
+    .slice(0, PERIPHERAL_MAX)
+  const peripherals: SceneNode[] = extras.map((d, i) => ({
+    id: `peripheral-${d.id}`,
+    kind: 'peripheral',
+    label: d.name,
+    sublabel: `${d.transport} · ${d.vendor ?? d.kind}`,
+    status: online ? 'ONLINE' : 'OFFLINE',
+    tone: peripheralTone,
+    gated: false,
+    dimmed: !online,
+    selectable: false,
+    position: peripheralPosition(i),
+    caps: [],
+    lastSeen: null
+  }))
 
   const hasPhone = devices.some((d) => d.kind === 'phone')
   const phone: SceneNode = hasPhone
@@ -407,21 +465,23 @@ export function buildSceneGraph(snapshotNodes: CockpitNode[], conn: RuntimeConnS
       }
   const rest = devices.filter((d) => d.kind !== 'phone')
   // Canonical photo order left→right: monitor, ESP32, MacBook, keyboard,
-  // mousepad, iPhone gated aside.
+  // mousepad, iPhone gated aside, peripheral markers along the back edge.
   const order: Record<SceneNodeKind, number> = {
     monitor: 0,
     esp32: 1,
     macbook: 2,
     keyboard: 3,
     mousepad: 4,
-    phone: 5
+    phone: 5,
+    peripheral: 6
   }
   const nodes = [
     host,
     ...rest.filter((d) => d.id !== HOST_NODE_ID),
     keyboard,
     mousepad,
-    phone
+    phone,
+    ...peripherals
   ].sort((a, b) => order[a.kind] - order[b.kind] || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
   return { nodes }
 }

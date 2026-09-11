@@ -6,6 +6,7 @@ import { fetchSnapshot, openStream, postCommand } from './socket'
 import { registerIpcHandlers, attachCockpitPush, attachBridgePush, bridgePair } from './ipc'
 import { PrefsStore, startupMigrate } from './prefs'
 import { createWallpaperImageHandler, IMAGE_EXTENSIONS } from './wallpaper-image'
+import { createDeviceLister } from './devices'
 import { createTelemetrySampler } from './telemetry'
 import { createTray } from './tray'
 
@@ -66,13 +67,18 @@ app.whenReady().then(() => {
   // Lazy on-demand machine telemetry: the sampler only reads counters when
   // the renderer asks (at most 1 Hz), no background loop (Task 18 preserved).
   const telemetry = createTelemetrySampler()
+  // Local devices: USB via fast ioreg on every list call; Bluetooth names
+  // via the slow system_profiler path once per launch + explicit refresh
+  // (cached inside the lister).
+  const deviceLister = createDeviceLister()
   registerIpcHandlers({
     socketPath,
     fetchSnapshot,
     postCommand,
     store,
     pickImage,
-    sampleTelemetry: () => telemetry.sample()
+    sampleTelemetry: () => telemetry.sample(),
+    listDevices: (refreshBt: boolean) => deviceLister.list(refreshBt)
   })
 
   // One app-lifetime CockpitModel shared by window pushes and the tray

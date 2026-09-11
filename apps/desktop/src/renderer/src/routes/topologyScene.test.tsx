@@ -5,7 +5,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { RuntimeConnState } from '../../../shared/protocol'
 import { BREADBOARD_DOT_CAP } from './topology.model'
-import { buildSceneGraph } from './topology.model'
+import { buildSceneGraph, type SceneGraph } from './topology.model'
 import { TopologyScene } from './TopologyScene'
 
 const canvasProps: { current: Record<string, unknown> | null } = { current: null }
@@ -74,12 +74,15 @@ const graph = buildSceneGraph(
 let root: Root | null = null
 let host: HTMLElement | null = null
 
-const mount = async (onSelect: (id: string) => void): Promise<HTMLElement> => {
+const mount = async (
+  onSelect: (id: string) => void,
+  g: SceneGraph = graph
+): Promise<HTMLElement> => {
   host = document.createElement('div')
   document.body.appendChild(host)
   root = createRoot(host)
   await act(async () => {
-    root?.render(createElement(TopologyScene, { graph, selectedId: null, onSelect }))
+    root?.render(createElement(TopologyScene, { graph: g, selectedId: null, onSelect }))
   })
   return host
 }
@@ -279,6 +282,27 @@ describe('TopologyScene', () => {
     expect(detail).not.toBeNull()
     expect(detail?.textContent).toContain('RGB Keyboard')
     expect(detail?.textContent).toContain('2.8 × 0.4 × 1.2')
+  })
+
+  it('renders one labelled puck per extra local device with the real names', async () => {
+    const g = buildSceneGraph([], LIVE, [
+      { id: 'usb-kb', name: 'Gaming Keyboard', transport: 'usb', kind: 'keyboard' },
+      { id: 'usb-ser', name: 'USB Serial', transport: 'usb', kind: 'serial' },
+      { id: 'bt-au', name: 'Spykar Sound', transport: 'bluetooth', kind: 'audio' }
+    ])
+    const el = await mount(() => {}, g)
+    // The keyboard model takes the real connected name, not the generic one.
+    expect(el.textContent).toContain('Gaming Keyboard · ONLINE')
+    expect(el.textContent).not.toContain('RGB Keyboard')
+    // One small puck node per extra device, labelled with the real name.
+    expect(el.querySelector('[data-testid="node-peripheral-usb-ser"]')).not.toBeNull()
+    expect(el.querySelector('[data-testid="node-peripheral-bt-au"]')).not.toBeNull()
+    expect(el.textContent).toContain('USB Serial · ONLINE')
+    expect(el.textContent).toContain('Spykar Sound · ONLINE')
+    // Pucks are markers, not models: no new full-model testids appear.
+    expect(el.querySelectorAll('[data-testid="macbook-air"]').length).toBe(1)
+    // The gated-iPhone rule is untouched by local devices.
+    expect(el.textContent).toContain('GATED')
   })
 
   it('returns to overview from the Back control', async () => {
