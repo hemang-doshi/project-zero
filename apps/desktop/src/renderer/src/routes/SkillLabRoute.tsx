@@ -1,6 +1,9 @@
-import { memo } from 'react'
+import { memo, useEffect, useMemo, useState } from 'react'
 import { ZERO_TYPE } from '../../../shared/tokens'
+import { OPS, type OpName } from '../../../shared/ipc'
 import { Chip } from './Chip'
+import { SkillLabScene } from './SkillLabScene'
+import type { PluginGroup, SkillSummary } from './skillPlugins'
 import {
   SKILL_FIXTURES,
   SKILL_INJECTION_CONTRACT,
@@ -87,6 +90,126 @@ const skillDetail: React.CSSProperties = {
   margin: 0
 }
 
+// Live plugin discovery rides the skills.discover IPC op, which lands in a
+// follow-up lane (main/ipc are owned elsewhere). Until shared OPS carries it,
+// the route renders the fixture-derived fallback honestly and the 3D grid
+// stays empty — the scene itself renders fully from props either way.
+const SKILLS_DISCOVER_OP = 'skills.discover'
+
+const hasSkillsOp = Object.hasOwn(OPS, SKILLS_DISCOVER_OP)
+
+type SkillDiscovery = { groups: PluginGroup[]; selfLearnt: SkillSummary[] }
+
+const isRecord = (v: unknown): v is Record<string, unknown> =>
+  typeof v === 'object' && v !== null
+
+const asTrimmedString = (v: unknown): string | null =>
+  typeof v === 'string' && v.trim().length > 0 ? v.trim() : null
+
+const parseSkillSummary = (v: unknown): SkillSummary | null => {
+  if (!isRecord(v)) return null
+  const id = asTrimmedString(v.id)
+  const name = asTrimmedString(v.name)
+  if (id === null || name === null) return null
+  if (v.source !== 'installed' && v.source !== 'self-learnt') return null
+  const pluginId =
+    v.pluginId === null || v.pluginId === undefined ? null : asTrimmedString(v.pluginId)
+  const description = asTrimmedString(v.description)
+  const icon = asTrimmedString(v.icon)
+  return {
+    id,
+    name,
+    source: v.source,
+    pluginId,
+    ...(description !== null ? { description } : {}),
+    ...(icon !== null ? { icon } : {})
+  }
+}
+
+const GLYPHS = ['flask', 'masks', 'stack', 'bolt', 'orb'] as const
+
+const parsePluginGroup = (v: unknown): PluginGroup | null => {
+  if (!isRecord(v)) return null
+  const id = asTrimmedString(v.id)
+  const name = asTrimmedString(v.name)
+  const color = asTrimmedString(v.color)
+  if (id === null || name === null || color === null) return null
+  if (!GLYPHS.includes(v.glyph as (typeof GLYPHS)[number])) return null
+  if (!Array.isArray(v.skills)) return null
+  const skills: SkillSummary[] = []
+  for (const s of v.skills) {
+    const parsed = parseSkillSummary(s)
+    if (parsed !== null) skills.push(parsed)
+  }
+  return { id, name, color, glyph: v.glyph as (typeof GLYPHS)[number], skills }
+}
+
+const parseDiscovery = (raw: unknown): SkillDiscovery | null => {
+  if (!isRecord(raw)) return null
+  if (!Array.isArray(raw.groups) && !Array.isArray(raw.selfLearnt)) return null
+  const groups: PluginGroup[] = []
+  if (Array.isArray(raw.groups)) {
+    for (const g of raw.groups) {
+      const parsed = parsePluginGroup(g)
+      if (parsed !== null) groups.push(parsed)
+    }
+  }
+  const selfLearnt: SkillSummary[] = []
+  if (Array.isArray(raw.selfLearnt)) {
+    for (const s of raw.selfLearnt) {
+      const parsed = parseSkillSummary(s)
+      if (parsed !== null) selfLearnt.push(parsed)
+    }
+  }
+  return { groups, selfLearnt }
+}
+
+// Fixture-derived fallback: the learned-in-* fixtures are the self-learnt
+// evidence in this build; authored fixtures stay in the existing list only.
+const fixtureSelfLearnt = (fixtures: SkillFixture[]): SkillSummary[] =>
+  fixtures
+    .filter((s) => s.isUsable && s.source !== 'authored')
+    .map((s) => ({
+      id: s.id,
+      name: s.name,
+      source: 'self-learnt' as const,
+      pluginId: null as string | null,
+      description: s.summary
+    }))
+
+const initialChipStyle: React.CSSProperties = {
+  width: 20,
+  height: 20,
+  borderRadius: 10,
+  flexShrink: 0,
+  display: 'inline-flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  fontFamily: ZERO_TYPE.mono,
+  fontSize: 11,
+  fontWeight: 700,
+  color: '#FFFFFF',
+  background: 'var(--z-secondary-ink)'
+}
+
+function SelfLearntRow({ skill }: { skill: SkillSummary }): React.JSX.Element {
+  const initial = skill.name.trim().charAt(0).toUpperCase() || '?'
+  return (
+    <div data-testid={`selflearn-row-${skill.id}`} style={{ ...cardStyle, padding: '9px 12px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        <span title={skill.icon ?? 'initial'} style={initialChipStyle}>
+          {initial}
+        </span>
+        <span style={skillName}>{skill.name}</span>
+        <Chip label={skill.source.toUpperCase()} tone="neutral" />
+      </div>
+      <span style={skillDetail}>
+        {skill.description?.trim() ? skill.description : 'No description.'}
+      </span>
+    </div>
+  )
+}
+
 function SkillRow({ skill }: { skill: SkillFixture }): React.JSX.Element {
   return (
     <div style={{ ...cardStyle, padding: '9px 12px' }}>
@@ -109,6 +232,33 @@ function SkillRow({ skill }: { skill: SkillFixture }): React.JSX.Element {
 
 export const SkillLabRoute = memo(function SkillLabRoute(): React.JSX.Element {
   const enabled = SKILL_FIXTURES.filter((s) => s.enabled && s.isUsable).length
+  const hasBridge = typeof window !== 'undefined' && window.zero !== undefined
+  const fallbackSelfLearnt = useMemo(() => fixtureSelfLearnt(SKILL_FIXTURES), [])
+  const [groups, setGroups] = useState<PluginGroup[]>([])
+  const [selfLearnt, setSelfLearnt] = useState<SkillSummary[]>(fallbackSelfLearnt)
+  const [liveDiscovery, setLiveDiscovery] = useState(false)
+
+  useEffect(() => {
+    if (!hasBridge || !hasSkillsOp) return
+    let active = true
+    window.zero
+      .invoke(SKILLS_DISCOVER_OP as OpName)
+      .then((raw) => {
+        if (!active) return
+        const parsed = parseDiscovery(raw)
+        if (parsed === null) return
+        setGroups(parsed.groups)
+        setSelfLearnt(parsed.selfLearnt)
+        setLiveDiscovery(true)
+      })
+      .catch(() => {
+        // Honest fallback: keep the fixture-derived rows and the empty grid.
+      })
+    return () => {
+      active = false
+    }
+  }, [hasBridge])
+
   return (
     <div className="zw-route" style={routeStyle}>
       <div style={headerRow}>
@@ -125,6 +275,28 @@ export const SkillLabRoute = memo(function SkillLabRoute(): React.JSX.Element {
       <div style={headerRow}>
         <Chip label="SHARED BY BOTH PROVIDERS" tone="neutral" />
         <Chip label={`${enabled} ENABLED`} tone={enabled === 0 ? 'neutral' : 'healthy'} />
+      </div>
+      <div style={headerRow}>
+        <span style={microStyle}>SELF-LEARNING</span>
+        <Chip label={`${selfLearnt.length} SELF-LEARNT`} tone="neutral" />
+      </div>
+      {selfLearnt.length > 0 ? (
+        selfLearnt.map((s) => <SelfLearntRow key={s.id} skill={s} />)
+      ) : (
+        <span style={noticeStyle}>No self-learnt skills yet.</span>
+      )}
+      <div style={headerRow}>
+        <span style={microStyle}>INSTALLED BY PLUGIN</span>
+        <Chip label={`${groups.length} PLUGINS`} tone={groups.length === 0 ? 'neutral' : 'healthy'} />
+      </div>
+      <SkillLabScene groups={groups} selfLearnt={selfLearnt} />
+      <span style={noticeStyle}>
+        {liveDiscovery
+          ? 'Live plugin discovery via skills.discover.'
+          : 'skills.discover is not wired in this build — the vial grid is honestly empty and self-learnt rows are fixture-derived.'}
+      </span>
+      <div style={headerRow}>
+        <span style={microStyle}>ALL SKILLS (SHARED FIXTURES)</span>
       </div>
       {SKILL_FIXTURES.map((s) => (
         <SkillRow key={s.id} skill={s} />
