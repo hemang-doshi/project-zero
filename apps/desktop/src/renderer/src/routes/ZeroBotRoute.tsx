@@ -29,7 +29,8 @@ import {
   type BridgeConnState,
   type BridgeEvent,
   type DiscoveryResult,
-  type Harness
+  type Harness,
+  type OpenCodeFolderGroup
 } from './runtime.types'
 
 const routeStyle: React.CSSProperties = {
@@ -173,6 +174,24 @@ const eventRow: React.CSSProperties = {
   minWidth: 0
 }
 
+const folderHead: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'baseline',
+  justifyContent: 'space-between',
+  gap: 8,
+  minWidth: 0
+}
+
+const sessionRow: React.CSSProperties = {
+  display: 'grid',
+  gridTemplateColumns: '1fr auto',
+  gap: 10,
+  alignItems: 'baseline',
+  padding: '4px 0',
+  borderBottom: '1px solid color-mix(in srgb, var(--z-line) 70%, transparent)',
+  minWidth: 0
+}
+
 const transcriptColumn: React.CSSProperties = {
   display: 'flex',
   flexDirection: 'column',
@@ -216,6 +235,41 @@ export function BridgeEventRow({ event }: { event: BridgeEvent }): React.JSX.Ele
       <span style={eventCell}>{classifyBridgeEvent(event.method)}</span>
       <span style={{ ...eventCell, color: 'var(--z-secondary-ink)' }}>{event.method}</span>
       <span style={eventCell}>{bridgeEventSummary(event)}</span>
+    </div>
+  )
+}
+
+const sessionTime = (ms: number): string => {
+  if (!Number.isFinite(ms) || ms <= 0) return '—'
+  const d = new Date(ms)
+  return Number.isNaN(d.getTime()) ? '—' : d.toISOString().slice(0, 16).replace('T', ' ')
+}
+
+export function FolderGroupList({ groups }: { groups: OpenCodeFolderGroup[] }): React.JSX.Element {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 10, minWidth: 0 }}>
+      {groups.map((g) => (
+        <div key={g.path} style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}>
+          <div style={folderHead}>
+            <span style={microStyle}>
+              {g.folder.toUpperCase()} · {g.count}
+            </span>
+            <span style={{ ...eventCell, color: 'var(--z-secondary-ink)', textAlign: 'right' }}>
+              {g.path}
+            </span>
+          </div>
+          {g.sessions.map((s) => (
+            <div key={s.id} style={sessionRow}>
+              <span style={eventCell}>{s.title === '' ? s.id : s.title}</span>
+              <span style={{ ...eventCell, color: 'var(--z-secondary-ink)', textAlign: 'right' }}>
+                {sessionTime(s.updatedAt)}
+                {s.model !== null ? ` · ${s.model}` : ''}
+                {s.agent !== null ? ` · ${s.agent}` : ''}
+              </span>
+            </div>
+          ))}
+        </div>
+      ))}
     </div>
   )
 }
@@ -288,6 +342,21 @@ export const ZeroBotRoute = memo(function ZeroBotRoute(): React.JSX.Element {
                 /* fail-soft: the state card still shows the live bridge */
               })
           }
+          // OpenCode discovery is a local read-only store scan, not a bridge
+          // probe: it runs on mount with no connection and never sends.
+          if (h === 'opencode' && aliveRef.current) {
+            void window.zero
+              .invoke('ocp.discover')
+              .then((discovered) => {
+                if (!aliveRef.current) return
+                const parsed = parseDiscovery(discovered)
+                if (parsed === null) return
+                setDiscovery((d) => ({ ...d, opencode: parsed }))
+              })
+              .catch(() => {
+                /* fail-soft: the discovery card keeps its honest empty state */
+              })
+          }
         })
         .catch((err: unknown) => {
           setStates((m) => ({ ...m, [h]: { state: 'disconnected', lastDiagnostic: null } }))
@@ -352,6 +421,9 @@ export const ZeroBotRoute = memo(function ZeroBotRoute(): React.JSX.Element {
   const log = logs[harness]
   const shownEvents = useMemo(() => visibleBridgeEvents(log.events, harness), [log.events, harness])
   const live = info.state === 'live'
+  // OpenCode discovery reads the local session store directly, so it needs no
+  // bridge connection; codex discovery still probes the live bridge.
+  const canDiscover = harness === 'opencode' ? !inFlight : live && !inFlight
 
   const loadThreads = (h: Harness): Promise<void> => {
     // Guard to codex explicitly: OpenCode has no read-only list method, so a
@@ -498,8 +570,8 @@ export const ZeroBotRoute = memo(function ZeroBotRoute(): React.JSX.Element {
           )}
           <button
             type="button"
-            style={live && !inFlight ? actionButton : disabledAction}
-            disabled={!live || inFlight}
+            style={canDiscover ? actionButton : disabledAction}
+            disabled={!canDiscover}
             onClick={() => run('discover')}
           >
             Discover
@@ -513,14 +585,19 @@ export const ZeroBotRoute = memo(function ZeroBotRoute(): React.JSX.Element {
         <div style={headerRow}>
           <span style={datumLabel}>DISCOVERY · THREADS + MODELS</span>
           <span style={datumLabel}>
-            {harness === 'codex' ? 'THREAD/LIST · READ-ONLY' : 'HONEST ABSENCE'}
+            {harness === 'codex' ? 'THREAD/LIST · READ-ONLY' : 'LOCAL STORE · READ-ONLY'}
           </span>
         </div>
         {harness === 'opencode' ? (
-          <span style={noticeStyle}>
-            OpenCode ACP advertises no read-only discovery method in this build; sessions surface
-            from streamed bridge events.
-          </span>
+          result !== null && result.folders.length > 0 ? (
+            <FolderGroupList groups={result.folders} />
+          ) : (
+            <span style={noticeStyle}>
+              {result === null
+                ? 'Reading the local OpenCode session store…'
+                : (result.note ?? 'No OpenCode sessions in the local store yet.')}
+            </span>
+          )
         ) : lane.rows.length === 0 ? (
           <span style={noticeStyle}>
             {live
@@ -553,7 +630,7 @@ export const ZeroBotRoute = memo(function ZeroBotRoute(): React.JSX.Element {
         {lane.threadId === null ? (
           <span style={noticeStyle}>
             {harness === 'opencode'
-              ? 'OpenCode sessions surface from streamed bridge events; no read-only transcript read exists in this build.'
+              ? 'OpenCode sessions list above from the local session store; no read-only transcript read exists in this build.'
               : 'Select a thread above to render its transcript. Live events append to the open thread.'}
           </span>
         ) : (
