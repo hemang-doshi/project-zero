@@ -3,7 +3,14 @@ import { elapsed } from '../../../shared/format'
 import { ZERO_TYPE } from '../../../shared/tokens'
 import { useCockpit } from '../store/cockpit'
 import { Chip } from './Chip'
-import { connectivity, gitLine, selectSession, sessionTone } from './runtime.types'
+import {
+  activeProjectLabel,
+  connectivity,
+  extrapolate,
+  gitLine,
+  selectSession,
+  sessionChipTone
+} from './runtime.types'
 
 const routeStyle: React.CSSProperties = {
   height: '100%',
@@ -73,10 +80,7 @@ function ElapsedClock({
     const t = window.setInterval(() => setNow(Date.now()), 1_000)
     return () => window.clearInterval(t)
   }, [])
-  const ms =
-    baseMs === null
-      ? null
-      : baseMs + (ticking && receivedAt !== null ? Math.max(0, now - receivedAt) : 0)
+  const ms = extrapolate(baseMs, ticking, receivedAt, now)
   return <span style={elapsedStyle}>{ms === null ? '—' : elapsed(ms)}</span>
 }
 
@@ -92,7 +96,7 @@ export const DeskRoute = memo(function DeskRoute(): React.JSX.Element {
   const branch = useCockpit((s) => gitLine(s.snapshot)?.branch ?? null)
   const dirty = useCockpit((s) => gitLine(s.snapshot)?.dirty ?? null)
 
-  const activeProject = conn === 'live' && project !== '' ? project : 'No active project'
+  const activeProject = activeProjectLabel(conn, project)
   const gitParts: string[] = []
   if (branch !== null) gitParts.push(`branch ${branch}`)
   if (dirty !== null) gitParts.push(`dirty ${dirty === 'true' ? 'yes' : 'no'}`)
@@ -103,7 +107,7 @@ export const DeskRoute = memo(function DeskRoute(): React.JSX.Element {
       <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
         <div style={headerRow}>
           <span style={projectStyle}>{activeProject}</span>
-          <Chip label={sessionState ?? 'UNAVAILABLE'} tone={sessionTone(sessionState)} />
+          <Chip label={sessionState ?? 'UNAVAILABLE'} tone={sessionChipTone(conn, sessionState)} />
         </div>
         <ElapsedClock
           baseMs={elapsedMs}
