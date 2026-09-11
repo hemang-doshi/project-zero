@@ -1,9 +1,10 @@
 {
   "name": "desktop",
   "version": "1.0.0",
-  "description": "Project Zero desktop cockpit",
+  "description": "An Electron application with React and TypeScript",
   "main": "./out/main/index.js",
-  "author": "Project Zero",
+  "author": "example.com",
+  "homepage": "https://electron-vite.org",
   "scripts": {
     "format": "prettier --write .",
     "lint": "eslint --cache .",
@@ -11,10 +12,8 @@
     "typecheck:web": "tsc --noEmit -p tsconfig.web.json --composite false",
     "typecheck": "npm run typecheck:node && npm run typecheck:web",
     "start": "electron-vite preview",
-    "dev": "ZERO_DESKTOP_DEV_PROFILE=1 electron-vite dev",
-    "dev:watch": "ZERO_DESKTOP_DEV_PROFILE=1 electron-vite dev --watch",
+    "dev": "electron-vite dev",
     "build": "electron-vite build",
-    "dist": "./tools/make-icon.sh && electron-vite build && electron-builder --mac",
     "test": "vitest run --passWithNoTests",
     "e2e": "playwright test",
     "postinstall": "electron-builder install-app-deps",
@@ -26,15 +25,9 @@
   "dependencies": {
     "@electron-toolkit/preload": "^3.0.2",
     "@electron-toolkit/utils": "^4.0.0",
-    "@react-three/drei": "10.7.8",
-    "@react-three/fiber": "9.4.1",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
-    "react-markdown": "10.1.0",
     "react-rnd": "^10.5.3",
-    "remark-gfm": "4.0.1",
-    "skills": "1.7.0",
-    "three": "0.186.0",
     "zustand": "^5.0.15"
   },
   "devDependencies": {
@@ -53,7 +46,6 @@
     "eslint-plugin-react": "^7.37.5",
     "eslint-plugin-react-hooks": "^7.0.1",
     "eslint-plugin-react-refresh": "^0.4.24",
-    "jsdom": "26.1.0",
     "playwright": "^1.63.0",
     "prettier": "^3.7.4",
     "typescript": "^5.9.3",
