@@ -17,18 +17,46 @@ import {
   accumulateHistory,
   group,
   polyPoints,
+  dotPoint,
   windowMax,
   EMPTY_HISTORY,
+  GRAPH_W,
+  GRAPH_H,
+  GRAPH_MARGIN,
+  DOT_R,
   type TelemetryHistory
 } from './telemetry.model'
+
+// Dense-but-clean panel spacing (Task 31): stat columns size to their
+// content so label/value air collapses to rowInnerGap and long counters
+// never ellipsize at normal widths. Graph columns stay flexible: the svg
+// scales through its viewBox, so it must NOT size its track from its
+// 240px aspect-ratio content (that squeeze truncated the memory rows).
+// Two recipes because the memory panel graphs on the left while the other
+// three graph in the center. The graph track keeps a floor (120/140px) so
+// it always has a measured box (no zero-size vanish); the route scrolls
+// horizontally before anything truncates or spills.
+export const TELEMETRY_DENSITY = {
+  routePad: '14px 16px',
+  routeGap: 10,
+  panelPad: '8px 10px 10px',
+  panelGap: 6,
+  bodyColsGraphCenter: 'max-content minmax(140px, 1fr) max-content',
+  bodyColsGraphLeft: 'minmax(120px, 1fr) max-content max-content',
+  bodyGap: 10,
+  rowGap: 2,
+  rowInnerGap: 6,
+  graphGap: 2
+} as const
 
 const routeStyle: React.CSSProperties = {
   height: '100%',
   overflowY: 'auto',
-  padding: '20px 22px',
+  overflowX: 'auto',
+  padding: TELEMETRY_DENSITY.routePad,
   display: 'flex',
   flexDirection: 'column',
-  gap: 14
+  gap: TELEMETRY_DENSITY.routeGap
 }
 
 const microStyle: React.CSSProperties = {
@@ -56,10 +84,10 @@ const panelStyle: React.CSSProperties = {
   background: 'var(--z-card-cream)',
   border: '1px solid var(--z-line)',
   borderRadius: 8,
-  padding: '10px 14px 12px',
+  padding: TELEMETRY_DENSITY.panelPad,
   display: 'flex',
   flexDirection: 'column',
-  gap: 8,
+  gap: TELEMETRY_DENSITY.panelGap,
   minWidth: 0
 }
 
@@ -88,17 +116,17 @@ const legendSwatch = (color: string): React.CSSProperties => ({
   background: color
 })
 
-const panelBody: React.CSSProperties = {
+const panelBody = (cols: string): React.CSSProperties => ({
   display: 'grid',
-  gridTemplateColumns: '132px minmax(0, 1fr) 148px',
-  gap: 16,
+  gridTemplateColumns: cols,
+  gap: TELEMETRY_DENSITY.bodyGap,
   alignItems: 'start'
-}
+})
 
 const statRows: React.CSSProperties = {
   display: 'flex',
   flexDirection: 'column',
-  gap: 4,
+  gap: TELEMETRY_DENSITY.rowGap,
   minWidth: 0
 }
 
@@ -106,7 +134,7 @@ const statRow: React.CSSProperties = {
   display: 'flex',
   alignItems: 'baseline',
   justifyContent: 'space-between',
-  gap: 8
+  gap: TELEMETRY_DENSITY.rowInnerGap
 }
 
 const statLabel: React.CSSProperties = {
@@ -130,7 +158,7 @@ const statValue: React.CSSProperties = {
 const graphBox: React.CSSProperties = {
   display: 'flex',
   flexDirection: 'column',
-  gap: 3,
+  gap: TELEMETRY_DENSITY.graphGap,
   minWidth: 0
 }
 
@@ -153,12 +181,11 @@ const noticeStyle: React.CSSProperties = {
   fontSize: 10.5,
   color: 'var(--z-secondary-ink)',
   borderTop: '1px solid var(--z-line)',
-  paddingTop: 12,
+  paddingTop: 10,
   lineHeight: 1.6
 }
 
-const GRAPH_W = 240
-const GRAPH_H = 56
+const TELEMETRY_INTERVAL_MS = 2_000
 
 // Activity-Monitor color coding from tokens: system red / user blue /
 // pressure by kernel level / plain ink.
@@ -193,6 +220,10 @@ function Sparkline({
   fill?: boolean
 }): React.JSX.Element {
   const points = polyPoints(values, GRAPH_W, GRAPH_H, max)
+  const dot = dotPoint(values, GRAPH_W, GRAPH_H, max)
+  const [dotX, dotY] = dot === null ? [] : dot.split(',')
+  const base = GRAPH_H - GRAPH_MARGIN
+  const edge = GRAPH_W - GRAPH_MARGIN
   return (
     <svg
       viewBox={`0 0 ${GRAPH_W} ${GRAPH_H}`}
@@ -201,13 +232,15 @@ function Sparkline({
     >
       {fill && points !== '' ? (
         <polygon
-          points={`${points} 2,${GRAPH_H - 2} 238,${GRAPH_H - 2}`}
+          points={`${points} ${GRAPH_MARGIN},${base} ${edge},${base}`}
           fill={color}
           opacity={0.14}
         />
       ) : null}
       {points !== '' ? (
         <polyline points={points} fill="none" stroke={color} strokeWidth={2} />
+      ) : dotX !== undefined && dotY !== undefined ? (
+        <circle cx={dotX} cy={dotY} r={DOT_R} fill={color} />
       ) : null}
     </svg>
   )
@@ -218,13 +251,15 @@ function Panel({
   legend,
   left,
   center,
-  right
+  right,
+  cols = TELEMETRY_DENSITY.bodyColsGraphCenter
 }: {
   title: string
   legend: Array<{ label: string; color: string }> | null
   left: React.JSX.Element
   center: React.JSX.Element
   right: React.JSX.Element
+  cols?: string
 }): React.JSX.Element {
   return (
     <section style={panelStyle}>
@@ -241,7 +276,7 @@ function Panel({
           </span>
         )}
       </div>
-      <div style={panelBody}>
+      <div style={panelBody(cols)}>
         {left}
         {center}
         {right}
@@ -249,8 +284,6 @@ function Panel({
     </section>
   )
 }
-
-const TELEMETRY_INTERVAL_MS = 2_000
 
 function CpuPanel({
   sample,
@@ -315,6 +348,7 @@ function MemoryPanel({
     <Panel
       title="MEMORY PRESSURE"
       legend={[{ label: 'PRESSURE', color: pressureColor }]}
+      cols={TELEMETRY_DENSITY.bodyColsGraphLeft}
       left={
         <div style={graphBox}>
           <span style={graphTitle}>PRESSURE</span>
