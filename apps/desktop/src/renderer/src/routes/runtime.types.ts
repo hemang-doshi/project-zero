@@ -27,6 +27,25 @@ export type CockpitNode = {
   status: string
 }
 
+export type CockpitEvent = {
+  seq: number
+  id: string
+  kind: string
+  time: string
+}
+
+export type CockpitAudit = {
+  seq: number
+  time: string
+  action: string
+  decision: string
+  principal: string | null
+  target: string | null
+  correlation: string | null
+}
+
+export type CockpitTruncated = Record<string, boolean>
+
 export type CockpitSnapshot = {
   version: string
   revision: number
@@ -34,6 +53,9 @@ export type CockpitSnapshot = {
   session: CockpitSession
   integrations: CockpitIntegration[]
   nodes: CockpitNode[]
+  events: CockpitEvent[]
+  audit: CockpitAudit[]
+  truncated: CockpitTruncated
 }
 
 export type MachineSample = {
@@ -85,6 +107,46 @@ const parseNode = (v: unknown): CockpitNode | null => {
   }
 }
 
+const parseEvents = (v: unknown): CockpitEvent[] => {
+  if (!Array.isArray(v)) return []
+  const events: CockpitEvent[] = []
+  for (const item of v) {
+    const r = asRecord(item)
+    if (r === null || !isNum(r.seq) || !isStr(r.id) || !isStr(r.kind) || !isStr(r.time)) continue
+    events.push({ seq: r.seq, id: r.id, kind: r.kind, time: r.time })
+  }
+  return events
+}
+
+const parseAudit = (v: unknown): CockpitAudit[] => {
+  if (!Array.isArray(v)) return []
+  const audit: CockpitAudit[] = []
+  for (const item of v) {
+    const r = asRecord(item)
+    if (r === null || !isNum(r.seq) || !isStr(r.time) || !isStr(r.action) || !isStr(r.decision)) {
+      continue
+    }
+    audit.push({
+      seq: r.seq,
+      time: r.time,
+      action: r.action,
+      decision: r.decision,
+      principal: isStr(r.principal) ? r.principal : null,
+      target: isStr(r.target) ? r.target : null,
+      correlation: isStr(r.correlation) ? r.correlation : null
+    })
+  }
+  return audit
+}
+
+const parseTruncated = (v: unknown): CockpitTruncated => {
+  const r = asRecord(v)
+  const flags: CockpitTruncated = {}
+  if (r === null) return flags
+  for (const [k, value] of Object.entries(r)) if (typeof value === 'boolean') flags[k] = value
+  return flags
+}
+
 const parseIntegration = (v: unknown): CockpitIntegration | null => {
   const r = asRecord(v)
   if (r === null || !isStr(r.id) || !isStr(r.status)) return null
@@ -122,7 +184,10 @@ export function parseSnapshot(value: unknown): CockpitSnapshot | null {
     timestamp: root.timestamp,
     session,
     integrations,
-    nodes
+    nodes,
+    events: parseEvents(root.events),
+    audit: parseAudit(root.audit),
+    truncated: parseTruncated(root.truncated)
   }
 }
 
@@ -224,4 +289,125 @@ export function mostLoaded(sample: MachineSample): LoadedKey | null {
     }
   }
   return best
+}
+
+// Flight noise taxonomy pinned from the daemon's actual stream taxonomy
+// (core/runtime events-table kinds and audit actions; SSE-level names included
+// as a guard): render/clock/keepalive rows are hidden by default.
+export function isFlightNoise(channel: string): boolean {
+  const kind = channel.toLowerCase()
+  return (
+    kind.startsWith('display.') ||
+    kind === 'clock.tick' ||
+    kind === 'sse.keepalive' ||
+    kind === 'ready'
+  )
+}
+
+export type FlightRow = {
+  id: string
+  source: 'event' | 'audit'
+  seq: number
+  time: string
+  channel: string
+  actor: string
+  outcome: string
+  tone: Tone
+  noise: boolean
+}
+
+const FLIGHT_OUTCOME_WORDS: Record<string, Tone> = {
+  ALLOW: 'healthy',
+  ALLOWED: 'healthy',
+  APPROVED: 'healthy',
+  APPROVED_EXECUTION: 'healthy',
+  SUCCEEDED: 'healthy',
+  SUCCESS: 'healthy',
+  PASS: 'healthy',
+  PASSED: 'healthy',
+  COMPLETED: 'healthy',
+  DENY: 'attention',
+  DENIED: 'attention',
+  REJECTED: 'attention',
+  FAILED: 'attention',
+  CANCELLED: 'attention',
+  EXPIRED: 'attention',
+  TIMED_OUT: 'attention',
+  QUEUED: 'attention',
+  DISPATCHED: 'attention',
+  WAITING: 'attention',
+  WAITING_APPROVAL: 'attention',
+  QUARANTINE: 'attention',
+  QUARANTINED: 'attention'
+}
+
+export function flightOutcomeTone(outcome: string): Tone {
+  return FLIGHT_OUTCOME_WORDS[outcome.toUpperCase()] ?? 'neutral'
+}
+
+export function flightRows(snapshot: unknown): FlightRow[] {
+  const parsed = parseSnapshot(snapshot)
+  if (parsed === null) return []
+  const events: FlightRow[] = parsed.events.map((e) => ({
+    id: `event-${e.seq}-${e.id}`,
+    source: 'event',
+    seq: e.seq,
+    time: e.time,
+    channel: e.kind,
+    actor: 'zerod',
+    outcome: 'RECORDED',
+    tone: 'neutral',
+    noise: isFlightNoise(e.kind)
+  }))
+  const audit: FlightRow[] = parsed.audit.map((a) => ({
+    id: `audit-${a.seq}`,
+    source: 'audit',
+    seq: a.seq,
+    time: a.time,
+    channel: a.action,
+    actor: a.principal ?? '—',
+    outcome: a.decision,
+    tone: flightOutcomeTone(a.decision),
+    noise: isFlightNoise(a.action)
+  }))
+  return [...events, ...audit]
+}
+
+export function visibleFlightRows(rows: FlightRow[], showAll: boolean): FlightRow[] {
+  return showAll ? rows : rows.filter((r) => !r.noise)
+}
+
+export function flightNotice(snapshot: unknown): string {
+  const parsed = parseSnapshot(snapshot)
+  if (parsed === null) return 'No runtime snapshot is available.'
+  const bounded = ['events', 'audit'].filter((k) => parsed.truncated[k] === true)
+  if (bounded.length === 0) {
+    return 'Runtime rows are the complete current bounded projection.'
+  }
+  return `Runtime ${bounded.join(', ')} history is truncated; visible counts are a lower bound.`
+}
+
+export function freshnessChip(
+  conn: RuntimeConnState,
+  snapshot: unknown
+): { label: string; tone: Tone } {
+  const parsed = parseSnapshot(snapshot)
+  if (parsed === null) return { label: 'NO SNAPSHOT', tone: 'neutral' }
+  if (conn !== 'live') return { label: 'CACHED', tone: 'neutral' }
+  return { label: `LIVE · REV ${parsed.revision}`, tone: 'healthy' }
+}
+
+export function nodeTone(conn: RuntimeConnState, status: string): Tone {
+  if (conn !== 'live') return 'neutral'
+  switch (status.toUpperCase()) {
+    case 'ONLINE':
+      return 'healthy'
+    case 'OFFLINE':
+    case 'REVOKED':
+      return 'error'
+    case 'SUSPECT':
+      return 'attention'
+    default:
+      return 'neutral'
+  }
 }
