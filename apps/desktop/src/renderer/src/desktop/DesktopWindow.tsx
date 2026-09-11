@@ -78,8 +78,10 @@ export function DesktopWindow({
       enableResizing={ALL_EIGHT}
       minWidth={320}
       minHeight={240}
-      maxWidth={1100}
-      maxHeight={900}
+      // The 1100×900 ceiling is a USER-resize bound; a maximized window must
+      // render its full geometric span without being width/height-clamped.
+      maxWidth={maximized ? undefined : 1100}
+      maxHeight={maximized ? undefined : 900}
       onResizeStart={(_e, dir) => setPreviewDir(dir)}
       onResize={(_e, _dir, _ref, delta) =>
         setPreview({ w: rect.w + delta.width, h: rect.h + delta.height })

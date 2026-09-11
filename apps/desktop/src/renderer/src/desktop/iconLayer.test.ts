@@ -57,6 +57,8 @@ describe('IconLayer render', () => {
       'linear-gradient(180deg, var(--z-card-cream) 0%, var(--z-canvas-tan) 100%)'
     )
     expect(html).toContain('inset 0 1px 0 var(--z-card-white)')
+    expect(html).toContain('inset 0 -6px 10px rgba(25, 28, 32, 0.05)')
+    expect(html).not.toContain('rgba(25,28,32,.05)')
     expect(html).toContain('0 3px 9px rgba(0,0,0,.14)')
     expect(html).not.toContain('>DE<')
     expect(html).not.toContain('>TXT<')

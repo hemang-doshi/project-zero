@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react'
 import { ICON_H, ICON_W, iconGridPos, type DesktopIcon } from './items'
 import { DesktopGlyph } from './icons'
+import { ZERO_TOKENS } from '../../../shared/tokens'
 
 export type IconLayerProps = {
   icons: DesktopIcon[]
@@ -40,6 +41,14 @@ const tileStyle: React.CSSProperties = {
   userSelect: 'none'
 }
 
+// Inner shade derived from the ink token — never a hardcoded rgb.
+const hexToRgba = (hex: string, alpha: number): string => {
+  const n = parseInt(hex.slice(1), 16)
+  return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${alpha})`
+}
+
+const inkShade = hexToRgba(ZERO_TOKENS.ink, 0.05)
+
 const faceStyle: React.CSSProperties = {
   position: 'relative',
   width: 52,
@@ -47,8 +56,7 @@ const faceStyle: React.CSSProperties = {
   borderRadius: 13,
   border: '1px solid var(--z-line)',
   background: 'linear-gradient(180deg, var(--z-card-cream) 0%, var(--z-canvas-tan) 100%)',
-  boxShadow:
-    'inset 0 1px 0 var(--z-card-white), inset 0 -6px 10px rgba(25,28,32,.05), 0 3px 9px rgba(0,0,0,.14)',
+  boxShadow: `inset 0 1px 0 var(--z-card-white), inset 0 -6px 10px ${inkShade}, 0 3px 9px rgba(0,0,0,.14)`,
   display: 'flex',
   alignItems: 'center',
   justifyContent: 'center',

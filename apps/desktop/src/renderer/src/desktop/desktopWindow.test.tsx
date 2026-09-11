@@ -89,4 +89,22 @@ describe('DesktopWindow click-to-front', () => {
     })
     expect(props.onSelect).toHaveBeenCalledTimes(1)
   })
+
+  it('a maximized window is not clamped by the user-resize ceiling', () => {
+    const el = mount(
+      base({
+        maximized: true,
+        rect: { x: 0, y: 0, w: 1400, h: 932 }
+      })
+    )
+    const root = el.firstElementChild as HTMLElement
+    expect(root.style.width).toBe('1400px')
+    expect(root.style.maxWidth).not.toBe('1100px')
+  })
+
+  it('a normal window keeps the user-resize ceiling', () => {
+    const el = mount(base())
+    const root = el.firstElementChild as HTMLElement
+    expect(root.style.maxWidth).toBe('1100px')
+  })
 })
