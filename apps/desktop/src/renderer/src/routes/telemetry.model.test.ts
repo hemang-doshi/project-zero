@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import {
   group,
+  shortCount,
+  shortLabel,
+  TELEMETRY_LABEL_SHORT,
   polyPoints,
   dotPoint,
   pushWindow,
@@ -132,6 +135,111 @@ describe('group', () => {
 
   it('keeps the sign', () => {
     expect(group(-1234)).toBe('-1,234')
+  })
+})
+
+describe('shortCount', () => {
+  it('passes small values through exactly (no suffix, integer-rounded like group)', () => {
+    expect(shortCount(999)).toBe('999')
+    expect(shortCount(780)).toBe('780')
+    expect(shortCount(0)).toBe('0')
+    expect(shortCount(12.5)).toBe('13')
+  })
+
+  it('abbreviates thousands with one decimal and no trailing .0', () => {
+    expect(shortCount(1_000)).toBe('1K')
+    expect(shortCount(1_500)).toBe('1.5K')
+    expect(shortCount(3_185)).toBe('3.2K')
+    expect(shortCount(883_011)).toBe('883K')
+  })
+
+  it('abbreviates millions (owner finding: 13,303,724 reads → 13.3M)', () => {
+    expect(shortCount(13_303_724)).toBe('13.3M')
+    expect(shortCount(8_348_407)).toBe('8.3M')
+    expect(shortCount(2_515_963)).toBe('2.5M')
+    expect(shortCount(1_000_000)).toBe('1M')
+  })
+
+  it('rolls 999.95K-style rounding overflow up a tier instead of printing 1000K', () => {
+    expect(shortCount(999_999)).toBe('1M')
+    expect(shortCount(999_499)).toBe('999.5K')
+  })
+
+  it('abbreviates billions and keeps the sign', () => {
+    expect(shortCount(2_340_000_000)).toBe('2.3B')
+    expect(shortCount(-1_234)).toBe('-1.2K')
+  })
+
+  it('treats non-finite input like group (never NaN/Infinity on screen)', () => {
+    expect(shortCount(Number.NaN)).toBe('0')
+    expect(shortCount(Number.POSITIVE_INFINITY)).toBe('0')
+  })
+})
+
+describe('shortLabel', () => {
+  it('shortens the documented long row labels', () => {
+    expect(shortLabel('PHYSICAL MEMORY')).toBe('PHYS MEM')
+    expect(shortLabel('APP MEMORY')).toBe('APP MEM')
+    expect(shortLabel('WIRED MEMORY')).toBe('WIRED MEM')
+    expect(shortLabel('CACHED FILES')).toBe('CACHED')
+    expect(shortLabel('READS IN')).toBe('READS')
+    expect(shortLabel('WRITES OUT')).toBe('WRITES')
+    expect(shortLabel('READS IN/SEC')).toBe('READS/S')
+    expect(shortLabel('WRITES OUT/SEC')).toBe('WRITES/S')
+    expect(shortLabel('DATA READ/SEC')).toBe('DATA READ/S')
+    expect(shortLabel('DATA WRITTEN/SEC')).toBe('DATA WRITTEN/S')
+    expect(shortLabel('PACKETS IN')).toBe('PKTS IN')
+    expect(shortLabel('PACKETS OUT')).toBe('PKTS OUT')
+    expect(shortLabel('PACKETS IN/SEC')).toBe('PKTS IN/S')
+    expect(shortLabel('PACKETS OUT/SEC')).toBe('PKTS OUT/S')
+    expect(shortLabel('DATA RECEIVED')).toBe('RX DATA')
+    expect(shortLabel('DATA SENT')).toBe('TX DATA')
+    expect(shortLabel('DATA RECEIVED/SEC')).toBe('RX DATA/S')
+    expect(shortLabel('DATA SENT/SEC')).toBe('TX DATA/S')
+  })
+
+  it('keeps already-short labels verbatim (SYSTEM, MEMORY USED, COMPRESSED, …)', () => {
+    for (const label of [
+      'SYSTEM',
+      'USER',
+      'IDLE',
+      'THREADS',
+      'PROCESSES',
+      'MEMORY USED',
+      'SWAP USED',
+      'COMPRESSED',
+      'DATA READ',
+      'DATA WRITTEN'
+    ]) {
+      expect(shortLabel(label)).toBe(label)
+    }
+  })
+
+  it('passes unknown labels through (no silent drops)', () => {
+    expect(shortLabel('SOMETHING NEW')).toBe('SOMETHING NEW')
+  })
+
+  it('pins the full mapping table (additive changes only)', () => {
+    expect(TELEMETRY_LABEL_SHORT).toEqual({
+      'PHYSICAL MEMORY': 'PHYS MEM',
+      'APP MEMORY': 'APP MEM',
+      'WIRED MEMORY': 'WIRED MEM',
+      'CACHED FILES': 'CACHED',
+      'READS IN': 'READS',
+      'WRITES OUT': 'WRITES',
+      'READS IN/SEC': 'READS/S',
+      'WRITES OUT/SEC': 'WRITES/S',
+      'DATA READ/SEC': 'DATA READ/S',
+      'DATA WRITTEN/SEC': 'DATA WRITTEN/S',
+      'PACKETS IN': 'PKTS IN',
+      'PACKETS OUT': 'PKTS OUT',
+      'PACKETS IN/SEC': 'PKTS IN/S',
+      'PACKETS OUT/SEC': 'PKTS OUT/S',
+      'DATA RECEIVED': 'RX DATA',
+      'DATA SENT': 'TX DATA',
+      'DATA RECEIVED/SEC': 'RX DATA/S',
+      'DATA SENT/SEC': 'TX DATA/S'
+    })
   })
 })
 

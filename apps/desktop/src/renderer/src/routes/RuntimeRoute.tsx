@@ -16,6 +16,8 @@ import {
 import {
   accumulateHistory,
   group,
+  shortCount,
+  shortLabel,
   polyPoints,
   dotPoint,
   windowMax,
@@ -150,8 +152,12 @@ const statValue: React.CSSProperties = {
   fontSize: 12.5,
   fontWeight: 700,
   fontVariantNumeric: 'tabular-nums',
+  // No ellipsis here (Task 34): every value is bounded to ~10 chars by
+  // construction — shortCount ('999.9M'), binary bytes ('145.64 GB'),
+  // percentages ('100.0%') — so the … glyph is never needed. overflow:hidden
+  // stays as the absurd-width backstop; the route scrolls horizontally
+  // before any supported width can reach it.
   overflow: 'hidden',
-  textOverflow: 'ellipsis',
   whiteSpace: 'nowrap'
 }
 
@@ -193,15 +199,79 @@ const INK = 'var(--z-ink)'
 const SYSTEM_RED = 'var(--z-error-red)'
 const USER_BLUE = 'var(--z-highlight-blue)'
 
-type RowSpec = { label: string; value: string; color?: string }
+type RowSpec = {
+  label: string
+  // Full label form for the title tooltip; omitted when the display label
+  // is already the full form (no redundant tooltip).
+  fullLabel?: string
+  value: string
+  // Exact value for the title tooltip; omitted when the display value is
+  // already exact (no redundant tooltip).
+  exactValue?: string
+  color?: string
+}
+
+type Cell = { value: string; exact?: string }
+
+// A display cell: the short default plus the exact form for the tooltip.
+// The tooltip is omitted when the display is already exact.
+const cell = (value: string, exact: string): Cell =>
+  exact === value ? { value } : { value, exact }
+
+// Build a row from its FULL label: the short display form comes from the
+// shared TELEMETRY_LABEL_SHORT map, the full form rides the tooltip.
+const row = (full: string, cellValue: Cell, color?: string): RowSpec => {
+  const label = shortLabel(full)
+  return {
+    label,
+    fullLabel: label === full ? undefined : full,
+    value: cellValue.value,
+    exactValue: cellValue.exact,
+    color
+  }
+}
+
+const countCell = (v: number | null | undefined): Cell =>
+  typeof v === 'number' && Number.isFinite(v) ? cell(shortCount(v), group(v)) : { value: '—' }
+
+const byteCell = (v: number | null | undefined): Cell =>
+  typeof v === 'number' && Number.isFinite(v)
+    ? cell(formatBytes(v), `${group(Math.round(v))} B`)
+    : { value: '—' }
+
+const byteRateCell = (v: number | null | undefined): Cell =>
+  // Display stays Task-31-exact (formatBytes, no '/s' suffix): the row label
+  // already carries the rate ('DATA READ/S'), so a suffixed value would
+  // stutter ('…/S …/s') and grow the value column. The per-second truth
+  // lives in the tooltip's exact form.
+  typeof v === 'number' && Number.isFinite(v)
+    ? cell(formatBytes(v), `${group(Math.round(v))} B/s`)
+    : { value: '—' }
+
+const gibCell = (v: number | null | undefined): Cell =>
+  typeof v === 'number' && Number.isFinite(v)
+    ? cell(formatGib(v), `${group(Math.round(v))} B`)
+    : { value: '—' }
+
+const pctCell = (v: number | null): Cell => {
+  if (v === null) return { value: '—' }
+  const display = `${v.toFixed(1)}%`
+  // The one-decimal display is already exact for whole/tenth values; only
+  // rounded values (4.25 → '4.3%') earn a tooltip.
+  return Number(v.toFixed(1)) === v ? { value: display } : { value: display, exact: `${v}%` }
+}
 
 function StatRows({ rows }: { rows: RowSpec[] }): React.JSX.Element {
   return (
     <div style={statRows}>
       {rows.map((r) => (
-        <div key={r.label} style={statRow}>
-          <span style={statLabel}>{r.label}</span>
-          <span style={{ ...statValue, color: r.color ?? INK }}>{r.value}</span>
+        <div key={r.fullLabel ?? r.label} style={statRow}>
+          <span style={statLabel} title={r.fullLabel}>
+            {r.label}
+          </span>
+          <span style={{ ...statValue, color: r.color ?? INK }} title={r.exactValue}>
+            {r.value}
+          </span>
         </div>
       ))}
     </div>
@@ -293,7 +363,6 @@ function CpuPanel({
   history: TelemetryHistory
 }): React.JSX.Element {
   const c = sample.cpu
-  const pct = (v: number | null): string => (v === null ? '—' : `${v.toFixed(1)}%`)
   return (
     <Panel
       title="CPU LOAD"
@@ -304,9 +373,9 @@ function CpuPanel({
       left={
         <StatRows
           rows={[
-            { label: 'SYSTEM', value: pct(c?.system ?? null), color: SYSTEM_RED },
-            { label: 'USER', value: pct(c?.user ?? null), color: USER_BLUE },
-            { label: 'IDLE', value: pct(c?.idle ?? null) }
+            row('SYSTEM', pctCell(c?.system ?? null), SYSTEM_RED),
+            row('USER', pctCell(c?.user ?? null), USER_BLUE),
+            row('IDLE', pctCell(c?.idle ?? null))
           ]}
         />
       }
@@ -320,10 +389,7 @@ function CpuPanel({
       }
       right={
         <StatRows
-          rows={[
-            { label: 'THREADS', value: c?.threads == null ? '—' : group(c.threads) },
-            { label: 'PROCESSES', value: c?.processes == null ? '—' : group(c.processes) }
-          ]}
+          rows={[row('THREADS', countCell(c?.threads)), row('PROCESSES', countCell(c?.processes))]}
         />
       }
     />
@@ -338,12 +404,16 @@ function MemoryPanel({
   history: TelemetryHistory
 }): React.JSX.Element {
   const m = sample.memory
-  const gb = (v: number | null | undefined): string =>
-    typeof v === 'number' && Number.isFinite(v) ? formatGib(v) : '—'
   const level = m?.level ?? 'low'
   // Color-by-level: the kernel pressure level picks the tone, and the tone
   // picks the token color for the graph, its legend chip, and the caption word.
   const pressureColor = TONE_COLOR[pressureTone(level)]
+  const pressure = m?.pressure ?? null
+  const pressureDisplay = pressure == null ? '—' : pressure.toFixed(1)
+  const pressureTitle =
+    pressure == null || Number(pressure.toFixed(1)) === pressure
+      ? undefined
+      : `pressure ${pressure}`
   return (
     <Panel
       title="MEMORY PRESSURE"
@@ -353,8 +423,8 @@ function MemoryPanel({
         <div style={graphBox}>
           <span style={graphTitle}>PRESSURE</span>
           <Sparkline values={history.pressure} color={pressureColor} max={100} fill />
-          <span style={graphCaption}>
-            {`${m?.pressure == null ? '—' : m.pressure.toFixed(1)} · `}
+          <span style={graphCaption} title={pressureTitle}>
+            {`${pressureDisplay} · `}
             <span style={{ color: pressureColor }}>{level}</span>
           </span>
         </div>
@@ -362,19 +432,19 @@ function MemoryPanel({
       center={
         <StatRows
           rows={[
-            { label: 'PHYSICAL MEMORY', value: gb(m?.total) },
-            { label: 'MEMORY USED', value: gb(m?.used) },
-            { label: 'CACHED FILES', value: gb(m?.cachedFiles) },
-            { label: 'SWAP USED', value: gb(m?.swapUsed) }
+            row('PHYSICAL MEMORY', gibCell(m?.total)),
+            row('MEMORY USED', gibCell(m?.used)),
+            row('CACHED FILES', gibCell(m?.cachedFiles)),
+            row('SWAP USED', gibCell(m?.swapUsed))
           ]}
         />
       }
       right={
         <StatRows
           rows={[
-            { label: 'APP MEMORY', value: gb(m?.app) },
-            { label: 'WIRED MEMORY', value: gb(m?.wired) },
-            { label: 'COMPRESSED', value: gb(m?.compressed) }
+            row('APP MEMORY', gibCell(m?.app)),
+            row('WIRED MEMORY', gibCell(m?.wired)),
+            row('COMPRESSED', gibCell(m?.compressed))
           ]}
         />
       }
@@ -390,11 +460,9 @@ function IoPanel({
   history: TelemetryHistory
 }): React.JSX.Element {
   const io = sample.io
-  const ops = (v: number | null | undefined): string =>
-    typeof v === 'number' && Number.isFinite(v) ? group(v) : '—'
-  const bytes = (v: number | null | undefined): string =>
-    typeof v === 'number' && Number.isFinite(v) ? formatBytes(v) : '—'
   const peak = Math.max(1, windowMax(history.ioRead), windowMax(history.ioWrite))
+  const peakDisplay = formatBytesPerSec(peak)
+  const peakExact = `${group(Math.round(peak))} B/s`
   return (
     <Panel
       title="DISK I/O"
@@ -405,10 +473,10 @@ function IoPanel({
       left={
         <StatRows
           rows={[
-            { label: 'READS IN', value: ops(io?.reads) },
-            { label: 'WRITES OUT', value: ops(io?.writes) },
-            { label: 'READS IN/SEC', value: ops(io?.readsPerSec) },
-            { label: 'WRITES OUT/SEC', value: ops(io?.writesPerSec) }
+            row('READS IN', countCell(io?.reads)),
+            row('WRITES OUT', countCell(io?.writes)),
+            row('READS IN/SEC', countCell(io?.readsPerSec)),
+            row('WRITES OUT/SEC', countCell(io?.writesPerSec))
           ]}
         />
       }
@@ -417,16 +485,19 @@ function IoPanel({
           <span style={graphTitle}>I/O HISTORY</span>
           <Sparkline values={history.ioRead} color={USER_BLUE} max={peak} />
           <Sparkline values={history.ioWrite} color={SYSTEM_RED} max={peak} />
-          <span style={graphCaption}>{`peak ${formatBytesPerSec(peak)} · autoscaled`}</span>
+          <span
+            style={graphCaption}
+            title={peakExact === peakDisplay ? undefined : `peak ${peakExact} · autoscaled`}
+          >{`peak ${peakDisplay} · autoscaled`}</span>
         </div>
       }
       right={
         <StatRows
           rows={[
-            { label: 'DATA READ', value: bytes(io?.dataRead) },
-            { label: 'DATA WRITTEN', value: bytes(io?.dataWritten) },
-            { label: 'DATA READ/SEC', value: bytes(io?.dataReadPerSec) },
-            { label: 'DATA WRITTEN/SEC', value: bytes(io?.dataWrittenPerSec) }
+            row('DATA READ', byteCell(io?.dataRead)),
+            row('DATA WRITTEN', byteCell(io?.dataWritten)),
+            row('DATA READ/SEC', byteRateCell(io?.dataReadPerSec)),
+            row('DATA WRITTEN/SEC', byteRateCell(io?.dataWrittenPerSec))
           ]}
         />
       }
@@ -442,11 +513,9 @@ function NetPanel({
   history: TelemetryHistory
 }): React.JSX.Element {
   const net = sample.net
-  const count = (v: number | null | undefined): string =>
-    typeof v === 'number' && Number.isFinite(v) ? group(v) : '—'
-  const bytes = (v: number | null | undefined): string =>
-    typeof v === 'number' && Number.isFinite(v) ? formatBytes(v) : '—'
   const peak = Math.max(1, windowMax(history.netIn), windowMax(history.netOut))
+  const peakShort = shortCount(peak)
+  const peakExact = group(Math.round(peak))
   return (
     <Panel
       title="NETWORK"
@@ -457,10 +526,10 @@ function NetPanel({
       left={
         <StatRows
           rows={[
-            { label: 'PACKETS IN', value: count(net?.packetsIn) },
-            { label: 'PACKETS OUT', value: count(net?.packetsOut) },
-            { label: 'PACKETS IN/SEC', value: count(net?.packetsInPerSec) },
-            { label: 'PACKETS OUT/SEC', value: count(net?.packetsOutPerSec) }
+            row('PACKETS IN', countCell(net?.packetsIn)),
+            row('PACKETS OUT', countCell(net?.packetsOut)),
+            row('PACKETS IN/SEC', countCell(net?.packetsInPerSec)),
+            row('PACKETS OUT/SEC', countCell(net?.packetsOutPerSec))
           ]}
         />
       }
@@ -469,16 +538,19 @@ function NetPanel({
           <span style={graphTitle}>PACKETS HISTORY</span>
           <Sparkline values={history.netIn} color={USER_BLUE} max={peak} />
           <Sparkline values={history.netOut} color={SYSTEM_RED} max={peak} />
-          <span style={graphCaption}>{`peak ${group(Math.round(peak))} pk/s · autoscaled`}</span>
+          <span
+            style={graphCaption}
+            title={peakExact === peakShort ? undefined : `peak ${peakExact} pk/s · autoscaled`}
+          >{`peak ${peakShort} pk/s · autoscaled`}</span>
         </div>
       }
       right={
         <StatRows
           rows={[
-            { label: 'DATA RECEIVED', value: bytes(net?.dataReceived) },
-            { label: 'DATA SENT', value: bytes(net?.dataSent) },
-            { label: 'DATA RECEIVED/SEC', value: bytes(net?.dataReceivedPerSec) },
-            { label: 'DATA SENT/SEC', value: bytes(net?.dataSentPerSec) }
+            row('DATA RECEIVED', byteCell(net?.dataReceived)),
+            row('DATA SENT', byteCell(net?.dataSent)),
+            row('DATA RECEIVED/SEC', byteRateCell(net?.dataReceivedPerSec)),
+            row('DATA SENT/SEC', byteRateCell(net?.dataSentPerSec))
           ]}
         />
       }

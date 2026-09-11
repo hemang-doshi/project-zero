@@ -78,13 +78,79 @@ const trim = (v: number): string => v.toFixed(1).replace(/\.0$/, '')
 const clampedRatio = (v: number, scale: number): number => Math.max(0, Math.min(1, v / scale))
 
 // Thousands-separated grouping without locale dependence (jsdom/node ICU
-// variance): 8348407 → '8,348,407'.
+// variance): 8348407 → '8,348,407'. Retained as the EXACT form: abbreviated
+// counters (shortCount) always carry their grouped value in the row's
+// `title` tooltip, so the full number stays one hover away.
 export const group = (n: number): string => {
   if (!Number.isFinite(n)) return '0'
   const sign = n < 0 ? '-' : ''
   const digits = Math.abs(Math.round(n)).toString()
   return sign + digits.replace(/\B(?=(\d{3})+(?!\d))/g, ',')
 }
+
+// Compact counter forms (Task 34, owner finding: telemetry numbers overflow
+// out of their boxes — e.g. '13,303,724 reads'). Values below 1_000 render
+// exactly (integer-rounded, matching group); at and above 1_000 they render
+// with one decimal and a K/M/B/T suffix, trailing .0 stripped. GB/byte
+// values are NOT abbreviated (formatGib/formatBytes stay verbatim); only
+// decimal counters shorten. Boundaries: 999 → '999', 1_000 → '1K',
+// 1_500 → '1.5K', 13_303_724 → '13.3M'.
+export const shortCount = (n: number): string => {
+  if (!Number.isFinite(n)) return '0'
+  const sign = n < 0 ? '-' : ''
+  const abs = Math.abs(n)
+  if (abs < 1_000) return `${sign}${Math.round(abs)}`
+  const tiers = ['K', 'M', 'B', 'T'] as const
+  let tier = Math.min(Math.floor(Math.log10(abs) / 3) - 1, tiers.length - 1)
+  let scaled = abs / 1_000 ** (tier + 1)
+  // One-decimal rounding can push 999_999 to '1000K': roll up a tier so the
+  // short form never grows a fourth digit (999_999 → '1M').
+  if (scaled >= 999.95 && tier < tiers.length - 1) {
+    tier += 1
+    scaled /= 1_000
+  }
+  return `${sign}${scaled.toFixed(1).replace(/\.0$/, '')}${tiers[tier] ?? 'K'}`
+}
+
+// Telemetry row-label abbreviations (Task 34): the full Activity-Monitor
+// forms size their content-based stat columns so wide the graphs lose
+// significance. Short forms are the default display; the full form always
+// rides the label's `title` tooltip. Mapping (full → short):
+//   PHYSICAL MEMORY → PHYS MEM | APP MEMORY → APP MEM | WIRED MEM ← WIRED MEMORY
+//   CACHED FILES → CACHED (unambiguous inside the memory panel)
+//   MEMORY USED kept per mandate; SWAP USED / COMPRESSED kept (standard terms)
+//   READS IN → READS | WRITES OUT → WRITES (totals; stay distinct from the
+//     DATA READ / DATA WRITTEN byte rows sharing the disk panel)
+//   READS IN/SEC → READS/S | WRITES OUT/SEC → WRITES/S
+//   DATA READ/SEC → DATA READ/S | DATA WRITTEN/SEC → DATA WRITTEN/S
+//     (byte totals DATA READ / DATA WRITTEN kept: they disambiguate ops rows)
+//   PACKETS IN → PKTS IN | PACKETS OUT → PKTS OUT
+//   PACKETS IN/SEC → PKTS IN/S | PACKETS OUT/SEC → PKTS OUT/S
+//   DATA RECEIVED → RX DATA | DATA SENT → TX DATA (+ /S rate forms)
+//     (RX/TX is the standard interface-counter vocabulary, netstat/ifconfig)
+//   CPU labels (SYSTEM/USER/IDLE/THREADS/PROCESSES) already short: kept.
+export const TELEMETRY_LABEL_SHORT: Readonly<Record<string, string>> = {
+  'PHYSICAL MEMORY': 'PHYS MEM',
+  'APP MEMORY': 'APP MEM',
+  'WIRED MEMORY': 'WIRED MEM',
+  'CACHED FILES': 'CACHED',
+  'READS IN': 'READS',
+  'WRITES OUT': 'WRITES',
+  'READS IN/SEC': 'READS/S',
+  'WRITES OUT/SEC': 'WRITES/S',
+  'DATA READ/SEC': 'DATA READ/S',
+  'DATA WRITTEN/SEC': 'DATA WRITTEN/S',
+  'PACKETS IN': 'PKTS IN',
+  'PACKETS OUT': 'PKTS OUT',
+  'PACKETS IN/SEC': 'PKTS IN/S',
+  'PACKETS OUT/SEC': 'PKTS OUT/S',
+  'DATA RECEIVED': 'RX DATA',
+  'DATA SENT': 'TX DATA',
+  'DATA RECEIVED/SEC': 'RX DATA/S',
+  'DATA SENT/SEC': 'TX DATA/S'
+}
+
+export const shortLabel = (full: string): string => TELEMETRY_LABEL_SHORT[full] ?? full
 
 // Append a resolved sample into every series, keeping each family untouched
 // while its value is null (honest absence keeps the graph short, not flat).

@@ -120,7 +120,7 @@ describe('RuntimeRoute activity monitor panels', () => {
     expect(text).toContain('IDLE')
     expect(text).toContain('65.8%')
     expect(text).toContain('THREADS')
-    expect(text).toContain('3,185')
+    expect(text).toContain('3.2K')
     expect(text).toContain('PROCESSES')
     expect(text).toContain('780')
     expect(text).toContain('29.0%')
@@ -130,16 +130,16 @@ describe('RuntimeRoute activity monitor panels', () => {
     fakeZero(() => Promise.resolve(SAMPLE))
     const el = await mountRoute()
     const text = el.textContent ?? ''
-    expect(text).toContain('PHYSICAL MEMORY')
+    expect(text).toContain('PHYS MEM')
     expect(text).toContain('16.00 GB')
     expect(text).toContain('12.50 GB')
-    expect(text).toContain('CACHED FILES')
+    expect(text).toContain('CACHED')
     expect(text).toContain('2.50 GB')
     expect(text).toContain('SWAP USED')
     expect(text).toContain('0.00 GB')
-    expect(text).toContain('APP MEMORY')
+    expect(text).toContain('APP MEM')
     expect(text).toContain('5.00 GB')
-    expect(text).toContain('WIRED MEMORY')
+    expect(text).toContain('WIRED MEM')
     expect(text).toContain('3.00 GB')
     expect(text).toContain('COMPRESSED')
     expect(text).toContain('4.50 GB')
@@ -149,24 +149,127 @@ describe('RuntimeRoute activity monitor panels', () => {
     fakeZero(() => Promise.resolve(SAMPLE))
     const el = await mountRoute()
     const text = el.textContent ?? ''
-    expect(text).toContain('READS IN')
-    expect(text).toContain('8,348,407')
-    expect(text).toContain('WRITES OUT')
-    expect(text).toContain('2,515,963')
+    expect(text).toContain('READS')
+    expect(text).toContain('8.3M')
+    expect(text).toContain('WRITES')
+    expect(text).toContain('2.5M')
     expect(text).toContain('DATA READ')
     expect(text).toContain('145.64 GB')
     expect(text).toContain('DATA WRITTEN')
     expect(text).toContain('44.33 GB')
-    expect(text).toContain('DATA READ/SEC')
+    expect(text).toContain('DATA READ/S')
     expect(text).toContain('6.0 MB')
-    expect(text).toContain('DATA WRITTEN/SEC')
+    expect(text).toContain('DATA WRITTEN/S')
     expect(text).toContain('1.5 MB')
-    expect(text).toContain('PACKETS IN')
-    expect(text).toContain('883,011')
-    expect(text).toContain('DATA RECEIVED')
+    expect(text).toContain('PKTS IN')
+    expect(text).toContain('883K')
+    expect(text).toContain('RX DATA')
     expect(text).toContain('907.9 MB')
-    expect(text).toContain('DATA SENT/SEC')
+    expect(text).toContain('TX DATA/S')
     expect(text).toContain('20.0 KB')
+  })
+
+  it('abbreviates large counters and keeps the exact value in the title tooltip', async () => {
+    fakeZero(() => Promise.resolve(SAMPLE))
+    const el = await mountRoute()
+    const text = el.textContent ?? ''
+    // Abbreviated defaults on screen…
+    expect(text).toContain('3.2K')
+    expect(text).toContain('8.3M')
+    expect(text).toContain('2.5M')
+    expect(text).toContain('883K')
+    // …exact values only in tooltips, never as visible text.
+    expect(text).not.toContain('8,348,407')
+    expect(text).not.toContain('2,515,963')
+    expect(text).not.toContain('883,011')
+    expect(text).not.toContain('3,185')
+    const byText = (s: string): HTMLSpanElement | undefined =>
+      [...el.querySelectorAll('span')].find((x) => x.textContent === s) as
+        HTMLSpanElement | undefined
+    expect(byText('8.3M')?.title).toBe('8,348,407')
+    expect(byText('2.5M')?.title).toBe('2,515,963')
+    expect(byText('883K')?.title).toBe('883,011')
+    expect(byText('3.2K')?.title).toBe('3,185')
+  })
+
+  it('shortens long row labels and keeps the full form in the title tooltip', async () => {
+    fakeZero(() => Promise.resolve(SAMPLE))
+    const el = await mountRoute()
+    const text = el.textContent ?? ''
+    expect(text).toContain('PHYS MEM')
+    expect(text).not.toContain('PHYSICAL MEMORY')
+    expect(text).toContain('RX DATA')
+    expect(text).not.toContain('DATA RECEIVED')
+    expect(text).toContain('PKTS IN')
+    expect(text).not.toContain('PACKETS IN')
+    expect(text).toContain('READS/S')
+    expect(text).not.toContain('READS IN/SEC')
+    expect(text).toContain('WRITES')
+    expect(text).not.toContain('WRITES OUT')
+    const byText = (s: string): HTMLSpanElement | undefined =>
+      [...el.querySelectorAll('span')].find((x) => x.textContent === s) as
+        HTMLSpanElement | undefined
+    expect(byText('PHYS MEM')?.title).toBe('PHYSICAL MEMORY')
+    expect(byText('RX DATA')?.title).toBe('DATA RECEIVED')
+    expect(byText('PKTS IN')?.title).toBe('PACKETS IN')
+    expect(byText('READS/S')?.title).toBe('READS IN/SEC')
+    // Already-short labels carry no redundant tooltip…
+    expect(byText('SYSTEM')?.title).toBe('')
+    expect(byText('MEMORY USED')?.title).toBe('')
+    // …and exact-small values carry none either.
+    expect(byText('780')?.title).toBe('')
+  })
+
+  it('renders no ellipsis-truncated spans at normal widths (overflow regression)', async () => {
+    const big = {
+      ...SAMPLE,
+      cpu: { ...SAMPLE.cpu, threads: 13_303_724, processes: 1_500_000 },
+      io: { ...SAMPLE.io, reads: 13_303_724, writes: 9_999_999 },
+      net: { ...SAMPLE.net, packetsIn: 13_303_724, packetsOut: 13_303_724 }
+    }
+    fakeZero(() => Promise.resolve(big))
+    const el = await mountRoute()
+    const text = el.textContent ?? ''
+    expect(text).toContain('13.3M')
+    expect(text).toContain('1.5M')
+    expect(text).not.toContain('13,303,724')
+    expect(text).not.toContain('1,500,000')
+    // No span in any panel asks for ellipsis truncation: abbreviated numbers
+    // and shortened labels always fit their content-sized columns, so the
+    // freed width stays with the flexible graph track.
+    const ellipsis = [...el.querySelectorAll('section span')].filter(
+      (s) => (s as HTMLSpanElement).style.textOverflow === 'ellipsis'
+    )
+    expect(ellipsis).toHaveLength(0)
+  })
+
+  it('keeps abbreviated values and live graphs at narrow widths (no spill)', async () => {
+    const big = { ...SAMPLE, io: { ...SAMPLE.io, reads: 13_303_724 } }
+    fakeZero(() => Promise.resolve(big))
+    const narrow = document.createElement('div')
+    narrow.style.width = '320px'
+    document.body.appendChild(narrow)
+    const narrowRoot = createRoot(narrow)
+    try {
+      await act(async () => {
+        narrowRoot.render(createElement(RuntimeRoute))
+      })
+      await flush()
+      expect(narrow.textContent ?? '').toContain('13.3M')
+      expect(narrow.textContent ?? '').not.toContain('13,303,724')
+      // Graphs keep their significance: dots render from the first sample.
+      expect(narrow.querySelectorAll('circle').length).toBeGreaterThanOrEqual(7)
+      // The route scrolls horizontally before anything spills.
+      const route = narrow.firstElementChild as HTMLElement | null
+      expect(route?.style.overflowX).toBe('auto')
+    } finally {
+      // Manual-root cleanup must run even when an assertion above fails
+      // (red), or this route's focus listener leaks into later tests.
+      await act(async () => {
+        narrowRoot.unmount()
+      })
+      narrow.remove()
+    }
   })
 
   it('shows honest placeholders when the op errors before any sample', async () => {
