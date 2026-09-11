@@ -138,7 +138,7 @@ export class JsonRpcStdio {
 
   send(method: string, params?: unknown): Promise<unknown> {
     if (this._state !== 'connecting' && this._state !== 'live') {
-      return Promise.reject(this.lastFailure ?? new Error('disconnected'))
+      return Promise.reject(new Error('disconnected'))
     }
     const declared = declaredHarness(params)
     if (declared && declared !== this.harness) {
@@ -317,9 +317,22 @@ export class JsonRpcStdio {
     if (session !== this.session) return
     this.session += 1
     this._state = 'disconnected'
+    const child = this.child
     this.child = null
     this.buffer = ''
     this.lastFailure = reason
+    if (child) {
+      try {
+        child.stdin?.end()
+      } catch {
+        /* stdin may already be gone; the kill below is authoritative */
+      }
+      try {
+        child.kill()
+      } catch {
+        /* a dead child cannot be killed again */
+      }
+    }
     const entries = [...this.pending.values()]
     this.pending.clear()
     for (const entry of entries) {

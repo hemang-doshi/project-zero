@@ -11,6 +11,8 @@ type SpawnRecord = { cmd: string; args: string[]; opts: Record<string, unknown> 
 type FakeChild = {
   child: ChildProcess
   writes: string[]
+  kills: string[]
+  stdinEnded: boolean
   out: (line: string) => void
   err: (line: string) => void
   exit: (code: number) => void
@@ -24,6 +26,8 @@ function fakeChild(script?: (req: ParsedReq, fake: FakeChild) => void): {
 } {
   const writes: string[] = []
   const records: SpawnRecord[] = []
+  const kills: string[] = []
+  let stdinEnded = false
   const stdout = new EventEmitter()
   const stderr = new EventEmitter()
   const child = new EventEmitter() as unknown as ChildProcess
@@ -31,6 +35,10 @@ function fakeChild(script?: (req: ParsedReq, fake: FakeChild) => void): {
   const api: FakeChild = {
     child,
     writes,
+    kills,
+    get stdinEnded(): boolean {
+      return stdinEnded
+    },
     out: (line: string): void => {
       stdout.emit('data', Buffer.from(line + '\n', 'utf8'))
     },
@@ -51,6 +59,16 @@ function fakeChild(script?: (req: ParsedReq, fake: FakeChild) => void): {
     } catch {
       return true
     }
+    return true
+  }
+  ;(stdin as unknown as { end: (cb?: () => void) => void }).end = (cb?: () => void): void => {
+    stdinEnded = true
+    if (cb) cb()
+  }
+  ;(child as unknown as { kill: (signal?: string) => boolean }).kill = (
+    signal?: string
+  ): boolean => {
+    kills.push(signal ?? 'SIGTERM')
     return true
   }
   Object.assign(child, { stdin, stdout, stderr })
@@ -146,6 +164,15 @@ describe('JsonRpcStdio process lifecycle', () => {
     expect(io.disconnect()).toBe('disconnected')
   })
 
+  it('kills the child and closes stdin on disconnect', async () => {
+    const { fake, spawnFn } = fakeChild()
+    const io = new JsonRpcStdio({ harness: 'codex', prefsDir: os.tmpdir(), spawnFn })
+    await io.connect('codex', ['app-server', '--stdio'])
+    io.disconnect()
+    expect(fake.kills).toEqual(['SIGTERM'])
+    expect(fake.stdinEnded).toBe(true)
+  })
+
   it('refuses a second connect while connected', async () => {
     const { spawnFn } = fakeChild()
     const io = new JsonRpcStdio({ harness: 'codex', prefsDir: os.tmpdir(), spawnFn })
@@ -170,6 +197,7 @@ describe('JsonRpcStdio process lifecycle', () => {
     fake.spawnError(new Error('spawn ENOENT'))
     await expect(p).rejects.toThrow(/spawn ENOENT/)
     expect(io.state).toBe('disconnected')
+    await expect(io.send('ping')).rejects.toThrow(/^disconnected$/)
   })
 })
 
@@ -297,10 +325,10 @@ describe('Harness lock', () => {
 describe('CodexBridge toolchain resolution', () => {
   it('fails with a clear message and never spawns when no toolchain exists', async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'zero-tool-'))
-    const { spawnFn } = fakeChild()
+    const { records, spawnFn } = fakeChild()
     const bridge = new CodexBridge({ prefsDir: dir, toolchainsDir: dir, spawnFn })
     await expect(bridge.connect()).rejects.toThrow(/toolchain not found/i)
-    expect(spawnFn).toBeDefined()
+    expect(records).toHaveLength(0)
   })
 
   it('picks the newest codex-* directory and runs app-server --stdio', async () => {
