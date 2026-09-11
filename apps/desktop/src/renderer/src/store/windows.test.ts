@@ -120,6 +120,12 @@ describe('window maximize', () => {
     expect(useWindows.getState().maximized).toEqual(['desk'])
   })
 
+  it('maximize spans the full canvas geometrically, beyond the user-resize ceiling', () => {
+    useWindows.getState().maximize('desk', { w: 1400, h: 932 })
+    expect(useWindows.getState().rects.desk).toEqual({ x: 0, y: 0, w: 1400, h: 932 })
+    expect(useWindows.getState().maximized).toEqual(['desk'])
+  })
+
   it('un-maximize restores the pre-maximize rect', () => {
     useWindows.getState().maximize('desk', { w: 900, h: 638 })
     useWindows.getState().maximize('desk', { w: 900, h: 638 })
@@ -146,6 +152,12 @@ describe('window maximize', () => {
     expect(useWindows.getState().rects.desk).toEqual({ x: 0, y: 0, w: 1000, h: 700 })
     expect(useWindows.getState().rects.network).toEqual({ x: 0, y: 0, w: 1000, h: 700 })
     expect(useWindows.getState().maximized).toEqual(['desk', 'network'])
+  })
+
+  it('refit re-spans maximized windows geometrically at oversized viewports', () => {
+    useWindows.getState().maximize('desk', { w: 900, h: 638 })
+    useWindows.getState().refit({ w: 1400, h: 932 })
+    expect(useWindows.getState().rects.desk).toEqual({ x: 0, y: 0, w: 1400, h: 932 })
   })
 
   it('refit with no maximized windows does nothing', () => {

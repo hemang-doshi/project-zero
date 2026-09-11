@@ -74,10 +74,14 @@ const openWindowId = (
   })
 }
 
-const maximizedRect = (bounds: CanvasBounds): Rect => {
-  const clamped = clampSize(bounds.w, bounds.h)
-  return { x: 0, y: 0, w: clamped.w, h: clamped.h }
-}
+// Maximize spans the canvas geometrically. The 1100×900 clampSize ceiling is
+// a per-window USER-resize bound — it never applies to the maximized span.
+const maximizedRect = (bounds: CanvasBounds): Rect => ({
+  x: 0,
+  y: 0,
+  w: bounds.w,
+  h: bounds.h
+})
 
 export const useWindows = create<WindowsState>((set, get) => ({
   ...initialWindows(),
