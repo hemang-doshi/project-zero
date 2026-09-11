@@ -30,6 +30,15 @@ func (r *Runtime) audioHealth() string {
 	return r.audioStatus
 }
 
+// AudioSequence exposes the latest frame counter without touching the
+// database, so connection polls can skip AudioLevels while no new frame
+// could possibly be delivered.
+func (r *Runtime) AudioSequence() uint64 {
+	r.audioMu.Lock()
+	defer r.audioMu.Unlock()
+	return r.audio.Sequence
+}
+
 // AudioLevels is transient: no PCM, retry queue, database writes or historical playback.
 func (r *Runtime) AudioLevels(ctx context.Context, node string) (AudioFrame, bool) {
 	r.audioMu.Lock()

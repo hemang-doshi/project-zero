@@ -14,6 +14,14 @@ import (
 	"time"
 )
 
+// pollDue reports whether a connection poll must run its full Known/Pending
+// work: any committed write advanced the revision, or the fallback interval
+// elapsed for Pending's time-based transitions (dispatch backoff, deadlines)
+// which need no writer.
+func pollDue(lastRev, rev uint64, lastFull, now time.Time) bool {
+	return rev != lastRev || now.Sub(lastFull) >= time.Second
+}
+
 func NewNodeHandler(r *runtime.Runtime) http.Handler {
 	var mu sync.Mutex
 	active := map[string]context.CancelFunc{}
@@ -90,22 +98,43 @@ func NewNodeHandler(r *runtime.Runtime) http.Handler {
 		go func() {
 			ticker := time.NewTicker(100 * time.Millisecond)
 			var audioSequence uint64
+			var audioRev uint64
+			var lastRev uint64
+			var lastFull time.Time
 			defer ticker.Stop()
 			for {
 				select {
 				case <-ctx.Done():
 					return
 				case <-ticker.C:
+					now := time.Now()
+					rev := r.Updates.Revision()
+					// Audio frames never bump the revision, so a new sequence is
+					// its own wake signal; a revision advance re-checks gates
+					// that may have changed (grants, profiles, spotify state).
+					// A static sequence with a static revision can deliver
+					// nothing new, so the database is left untouched.
+					if r.AudioSequence() != audioSequence || rev != audioRev {
+						audioRev = rev
+						if frame, ok := r.AudioLevels(ctx, id); ok && frame.Sequence != audioSequence && audioWindow.start(frame.Sequence) {
+							if e := send("display.telemetry", map[string]any{"session_id": sessionID, "sequence": frame.Sequence, "level": frame.Level, "bass": frame.Bass}); e != nil {
+								cancel()
+								return
+							}
+							audioSequence = frame.Sequence
+						}
+					}
+					// Commits are the only writers, so a static revision means
+					// Known and Pending would repeat their last answer. The 1s
+					// fallback covers Pending's time-based transitions
+					// (dispatch backoff, deadlines) without any writer.
+					if !pollDue(lastRev, rev, lastFull, now) {
+						continue
+					}
+					lastRev, lastFull = rev, now
 					if !r.Known(ctx, id, fp) {
 						cancel()
 						return
-					}
-					if frame, ok := r.AudioLevels(ctx, id); ok && frame.Sequence != audioSequence && audioWindow.start(frame.Sequence) {
-						if e := send("display.telemetry", map[string]any{"session_id": sessionID, "sequence": frame.Sequence, "level": frame.Level, "bass": frame.Bass}); e != nil {
-							cancel()
-							return
-						}
-						audioSequence = frame.Sequence
 					}
 					work, e := r.Pending(ctx, id)
 					if e != nil {
