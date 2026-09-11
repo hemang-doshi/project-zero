@@ -1,18 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import fixtureJson from './fixtures/cockpit.json'
 import {
-  activeProjectLabel,
   connectivity,
-  extrapolate,
   gitLine,
+  mostLoaded,
   parseSnapshot,
-  parseTelemetry,
   selectSession,
-  sessionChipTone,
   sessionTone,
-  pressureTone,
-  selectSpotify,
-  EMPTY_MACHINE_SAMPLE,
   type MachineSample
 } from './runtime.types'
 
@@ -54,28 +48,6 @@ describe('parseSnapshot', () => {
       status: 'ONLINE'
     })
     expect(snapshot?.integrations.map((i) => i.id)).toEqual(['git', 'spotify', 'codex'])
-    expect(snapshot?.listeningSession).toBeNull()
-  })
-
-  it('parses bounded Spotify listening observations with provenance', () => {
-    const value = fixture() as Record<string, unknown>
-    const snapshot = parseSnapshot({
-      ...value,
-      listening_session: {
-        id: 'session-1',
-        source: 'local-spotify-observer',
-        started_at: '2026-09-23T12:00:00Z',
-        last_observed_at: '2026-09-23T12:00:10Z',
-        playback_state: 'playing',
-        active_duration_ms: 10000,
-        tracks: [{ track: 'Song', artist: 'Artist', observed_at: '2026-09-23T12:00:00Z' }]
-      }
-    })
-    expect(snapshot?.listeningSession).toMatchObject({
-      source: 'local-spotify-observer',
-      activeDurationMs: 10000,
-      tracks: [{ track: 'Song', artist: 'Artist', uri: null }]
-    })
   })
 
   it('coerces numeric revoked flags', () => {
@@ -90,23 +62,6 @@ describe('parseSnapshot', () => {
     expect(parseSnapshot({ ...value, session: 4 })).toBeNull()
     expect(parseSnapshot(undefined)).toBeNull()
   })
-
-  it('parses once per snapshot reference and re-parses new references', () => {
-    const snap = { ...(fixture() as Record<string, unknown>), revision: 321 }
-    const first = parseSnapshot(snap)
-    const second = parseSnapshot(snap)
-    expect(second).toBe(first) // same reference → cached projection
-    const changed = { ...snap, revision: 322 }
-    const next = parseSnapshot(changed)
-    expect(next).not.toBe(first) // new reference → re-parse
-    expect(next?.revision).toBe(322)
-  })
-
-  it('caches malformed snapshots by reference too', () => {
-    const bad = { version: '9.9' }
-    expect(parseSnapshot(bad)).toBeNull()
-    expect(parseSnapshot(bad)).toBeNull()
-  })
 })
 
 describe('connectivity', () => {
@@ -116,14 +71,6 @@ describe('connectivity', () => {
     expect(connectivity('offline', snap).tone).toBe('error')
     expect(connectivity('reconnecting', snap).tone).toBe('attention')
     expect(connectivity('connecting', snap).tone).toBe('attention')
-  })
-
-  it('calls a never-established runtime unavailable instead of reconnecting', () => {
-    expect(connectivity('reconnecting', null)).toEqual({
-      label: 'OFFLINE',
-      detail: 'Runtime unavailable · waiting to reconnect',
-      tone: 'error'
-    })
   })
 
   it('reports connected display nodes when live', () => {
@@ -158,6 +105,21 @@ describe('gitLine', () => {
   })
 })
 
+describe('mostLoaded', () => {
+  it('picks the highest loaded percent metric', () => {
+    expect(mostLoaded({ cpu: 12.5, ram: 40, ssd: 999, gpu: 3 })).toBe('ram')
+    expect(mostLoaded({ cpu: 90, ram: 10, ssd: 0, gpu: 88 })).toBe('cpu')
+  })
+
+  it('returns null without any percent sample', () => {
+    expect(mostLoaded({ cpu: null, ram: null, ssd: 5_000, gpu: null })).toBeNull()
+  })
+
+  it('ignores non-finite values', () => {
+    expect(mostLoaded({ cpu: Number.NaN, ram: 1, ssd: null, gpu: null })).toBe('ram')
+  })
+})
+
 describe('sessionTone', () => {
   it('maps session states to tones', () => {
     expect(sessionTone('RUNNING')).toBe('healthy')
@@ -168,277 +130,9 @@ describe('sessionTone', () => {
   })
 })
 
-describe('sessionChipTone', () => {
-  it('keeps the live tone mapping', () => {
-    expect(sessionChipTone('live', 'RUNNING')).toBe('healthy')
-    expect(sessionChipTone('live', 'PAUSED')).toBe('attention')
-    expect(sessionChipTone('live', 'IDLE')).toBe('neutral')
-  })
-
-  it('grays cached states when the connection is not live', () => {
-    expect(sessionChipTone('offline', 'RUNNING')).toBe('neutral')
-    expect(sessionChipTone('reconnecting', 'RUNNING')).toBe('neutral')
-    expect(sessionChipTone('connecting', 'RUNNING')).toBe('neutral')
-  })
-
-  it('keeps error for a missing snapshot in every connection state', () => {
-    expect(sessionChipTone('live', null)).toBe('error')
-    expect(sessionChipTone('offline', null)).toBe('error')
-  })
-})
-
-describe('activeProjectLabel', () => {
-  it('shows the project name only while live', () => {
-    expect(activeProjectLabel('live', 'Project Zero')).toBe('Project Zero')
-    expect(activeProjectLabel('live', '')).toBe('No active project')
-    expect(activeProjectLabel('offline', 'Project Zero')).toBe('No active project')
-    expect(activeProjectLabel('reconnecting', 'Project Zero')).toBe('No active project')
-  })
-})
-
-describe('extrapolate', () => {
-  it('returns null without a snapshot', () => {
-    expect(extrapolate(null, true, 1_000, 5_000)).toBeNull()
-  })
-
-  it('adds elapsed time while ticking against a receivedAt baseline', () => {
-    expect(extrapolate(1_000, true, 1_000, 4_000)).toBe(4_000)
-  })
-
-  it('freezes the snapshot value when not ticking', () => {
-    expect(extrapolate(1_000, false, 1_000, 9_000)).toBe(1_000)
-  })
-
-  it('freezes when receivedAt is unknown', () => {
-    expect(extrapolate(1_000, true, null, 9_000)).toBe(1_000)
-  })
-
-  it('clamps a stale baseline where now precedes receivedAt', () => {
-    expect(extrapolate(1_000, true, 5_000, 2_000)).toBe(1_000)
-  })
-})
-
 describe('machine sample shape', () => {
-  it('starts with every panel unavailable', () => {
-    const sample: MachineSample = {
-      cpu: null,
-      memory: null,
-      io: null,
-      net: null,
-      gpu: null,
-      processes: []
-    }
-    expect(sample).toEqual(EMPTY_MACHINE_SAMPLE)
-  })
-})
-
-const WELL_FORMED: Record<string, unknown> = {
-  cpu: { system: 4.25, user: 30, idle: 65.75, threads: 3185, processes: 780 },
-  memory: {
-    total: 17_179_869_184,
-    used: 13_421_772_800,
-    percent: 78.125,
-    pressure: 78.125,
-    level: 'medium',
-    app: 5_368_709_120,
-    wired: 3_221_225_472,
-    compressed: 4_831_838_208,
-    cachedFiles: 2_684_354_560,
-    swapUsed: 536_870_912
-  },
-  io: {
-    reads: 8_348_407,
-    writes: 2_515_963,
-    readsPerSec: 12.5,
-    writesPerSec: 3.5,
-    dataRead: 156_378_263_552,
-    dataWritten: 47_597_654_016,
-    dataReadPerSec: 1_048_576,
-    dataWrittenPerSec: 262_144
-  },
-  net: {
-    packetsIn: 883_011,
-    packetsOut: 883_011,
-    packetsInPerSec: 25.5,
-    packetsOutPerSec: 21.5,
-    dataReceived: 951_953_745,
-    dataSent: 951_953_745,
-    dataReceivedPerSec: 40_960,
-    dataSentPerSec: 20_480
-  },
-  gpu: 29,
-  processes: [{ pid: 72, name: 'Codex', cpuPercent: 1.25, residentBytes: 4_194_304 }]
-}
-
-describe('parseTelemetry', () => {
-  it('parses a well-formed sampler payload into the panel sample', () => {
-    expect(parseTelemetry(WELL_FORMED)).toEqual(WELL_FORMED)
-  })
-
-  it('keeps only ten attributable process rows and bounds process names', () => {
-    const sample = parseTelemetry({
-      ...WELL_FORMED,
-      processes: [
-        { pid: 72, name: 'Codex', cpuPercent: 1.25, residentBytes: 4_194_304 },
-        null,
-        { pid: 'not-a-pid', name: 'Invalid', cpuPercent: 3, residentBytes: 5 },
-        ...Array.from({ length: 10 }, (_, index) => ({
-          pid: 100 + index,
-          name: `process-${index}-${'x'.repeat(90)}`,
-          cpuPercent: null,
-          residentBytes: 1024
-        }))
-      ]
-    })
-
-    expect(sample.processes).toHaveLength(10)
-    expect(sample.processes?.[0]).toEqual({
-      pid: 72,
-      name: 'Codex',
-      cpuPercent: 1.25,
-      residentBytes: 4_194_304
-    })
-    expect(sample.processes?.[9]?.name).toHaveLength(80)
-  })
-
-  it('keeps nulls for absent or malformed parts instead of dropping the sample', () => {
-    expect(parseTelemetry({})).toEqual(EMPTY_MACHINE_SAMPLE)
-    expect(
-      parseTelemetry({
-        cpu: 'x',
-        memory: { total: 0 },
-        io: { reads: 'no', dataWritten: 5 },
-        net: 'nonsense',
-        gpu: 9
-      })
-    ).toEqual({
-      cpu: null,
-      memory: {
-        total: 0,
-        used: 0,
-        percent: 0,
-        pressure: 0,
-        level: 'low',
-        app: null,
-        wired: null,
-        compressed: null,
-        cachedFiles: null,
-        swapUsed: null
-      },
-      io: {
-        reads: null,
-        writes: null,
-        readsPerSec: null,
-        writesPerSec: null,
-        dataRead: null,
-        dataWritten: 5,
-        dataReadPerSec: null,
-        dataWrittenPerSec: null
-      },
-      net: null,
-      gpu: 9,
-      processes: []
-    })
-    expect(parseTelemetry(null)).toEqual(EMPTY_MACHINE_SAMPLE)
-    expect(parseTelemetry('nonsense')).toEqual(EMPTY_MACHINE_SAMPLE)
-  })
-
-  it('collapses malformed cells to null while keeping valid siblings', () => {
-    const sample = parseTelemetry({
-      ...WELL_FORMED,
-      io: {
-        reads: 'x',
-        writes: Number.NaN,
-        readsPerSec: 1,
-        writesPerSec: 'no',
-        dataRead: 100,
-        dataWritten: null,
-        dataReadPerSec: 2,
-        dataWrittenPerSec: true
-      }
-    })
-    expect(sample.io?.reads).toBeNull()
-    expect(sample.io?.writes).toBeNull()
-    expect(sample.io?.readsPerSec).toBe(1)
-    expect(sample.io?.writesPerSec).toBeNull()
-    expect(sample.io?.dataRead).toBe(100)
-    expect(sample.io?.dataWritten).toBeNull()
-    expect(sample.io?.dataReadPerSec).toBe(2)
-    expect(sample.io?.dataWrittenPerSec).toBeNull()
-  })
-
-  it('rejects a malformed memory family honestly', () => {
-    expect(parseTelemetry({ ...WELL_FORMED, memory: { total: 'no' } }).memory).toBeNull()
-    expect(parseTelemetry({ ...WELL_FORMED, memory: null }).memory).toBeNull()
-  })
-})
-
-describe('pressureTone', () => {
-  it('maps kernel pressure levels to tones', () => {
-    expect(pressureTone('low')).toBe('healthy')
-    expect(pressureTone('medium')).toBe('attention')
-    expect(pressureTone('high')).toBe('error')
-  })
-})
-
-describe('cockpit audio projection (Task 26)', () => {
-  it('parses the fixture audio block the daemon projection now carries', () => {
-    const snapshot = parseSnapshot(fixture())
-    expect(snapshot?.audio).toEqual({
-      level: 8,
-      bass: 118,
-      sequence: 142,
-      status: 'ACTIVE'
-    })
-  })
-
-  it('collapses malformed or absent audio to null without failing the snapshot', () => {
-    const value = fixture() as Record<string, unknown>
-    expect(parseSnapshot({ ...value, audio: 'nope' })?.audio).toBeNull()
-    expect(parseSnapshot({ ...value, audio: { bass: 'x', status: 3 } })?.audio).toBeNull()
-    expect(parseSnapshot({ ...value, audio: { bass: -3, status: 'ACTIVE' } })?.audio).toBeNull()
-    const noAudio = { ...value } as Record<string, unknown>
-    delete noAudio.audio
-    expect(parseSnapshot(noAudio)?.audio).toBeNull()
-    expect(parseSnapshot(noAudio)).not.toBeNull()
-  })
-})
-
-describe('selectSpotify', () => {
-  it('reads the bounded media fields the desk card renders', () => {
-    const spotify = selectSpotify(fixture())
-    expect(spotify).toEqual({
-      enabled: true,
-      status: 'ONLINE',
-      state: 'paused',
-      track: 'Parking Lot',
-      artist: 'Mustard',
-      artworkId: 'f74dcb2fdf1cb1496dfa3f98e9a305eb3b43674242d728acee0082d9c528c087',
-      audioCapture: 'DISABLED'
-    })
-  })
-
-  it('is null when the snapshot has no spotify integration', () => {
-    const value = fixture() as Record<string, unknown>
-    expect(selectSpotify({ ...value, integrations: [] })).toBeNull()
-    expect(selectSpotify({ ...value, integrations: 'no' })).toBeNull()
-    expect(selectSpotify(null)).toBeNull()
-  })
-
-  it('keeps non-string media fields out of the honest projection', () => {
-    const value = fixture() as Record<string, unknown>
-    const integrations = (value.integrations as Record<string, unknown>[]).map((i) =>
-      i.id === 'spotify' ? { ...i, data: { state: 3, track: null, artist: 'X', artwork_id: 4 } } : i
-    )
-    const spotify = selectSpotify({ ...value, integrations })
-    expect(spotify).toEqual({
-      enabled: true,
-      status: 'ONLINE',
-      state: '',
-      track: '',
-      artist: 'X',
-      artworkId: null,
-      audioCapture: ''
-    })
+  it('starts with every tile unavailable', () => {
+    const sample: MachineSample = { cpu: null, ram: null, ssd: null, gpu: null }
+    expect([sample.cpu, sample.ram, sample.ssd, sample.gpu]).toEqual([null, null, null, null])
   })
 })

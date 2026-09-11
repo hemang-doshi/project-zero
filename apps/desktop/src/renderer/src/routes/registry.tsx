@@ -1,19 +1,19 @@
 import type { FC } from 'react'
-import type { RouteId } from '../desktop/canvas'
-import { AirlockRoute } from './AirlockRoute'
+import { ROUTE_TITLES, type RouteId } from '../desktop/canvas'
 import { DeskRoute } from './DeskRoute'
-import { FlightRecorderRoute } from './FlightRecorderRoute'
-import { NetworkRoute } from './NetworkRoute'
 import { RuntimeRoute } from './RuntimeRoute'
-import { SkillLabRoute } from './SkillLabRoute'
-import { ZeroBotRoute } from './ZeroBotRoute'
+
+const stub = (id: RouteId): FC => {
+  const Route = (): React.JSX.Element => <div className="zw-route">{ROUTE_TITLES[id]}</div>
+  return Route
+}
 
 export const ROUTES: Record<RouteId, FC> = {
   desk: DeskRoute,
   runtime: RuntimeRoute,
-  network: NetworkRoute,
-  flightRecorder: FlightRecorderRoute,
-  airlock: AirlockRoute,
-  zeroBot: ZeroBotRoute,
-  skillLab: SkillLabRoute
+  network: stub('network'),
+  flightRecorder: stub('flightRecorder'),
+  airlock: stub('airlock'),
+  zeroBot: stub('zeroBot'),
+  skillLab: stub('skillLab')
 }
