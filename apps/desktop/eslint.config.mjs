@@ -40,6 +40,7 @@ export default defineConfig(
           ignore: [
             'position',
             'quaternion',
+            'rotation',
             'scale',
             'geometry',
             'material',
@@ -50,7 +51,8 @@ export default defineConfig(
             'transparent',
             'opacity',
             'intensity',
-            'distance'
+            'distance',
+            'frustumCulled'
           ]
         }
       ]

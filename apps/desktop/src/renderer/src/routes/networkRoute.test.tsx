@@ -8,7 +8,9 @@ import { NetworkRoute } from './NetworkRoute'
 import type { SceneGraph } from './topology.model'
 import fixtureJson from './fixtures/cockpit.json'
 
-const sceneProps: { current: { graph: SceneGraph; selectedId: string | null } | null } = {
+const sceneProps: {
+  current: { graph: SceneGraph; selectedId: string | null; onSelect: (id: string) => void } | null
+} = {
   current: null
 }
 
@@ -18,7 +20,11 @@ vi.mock('./TopologyScene', () => ({
     selectedId: string | null
     onSelect: (id: string) => void
   }): unknown => {
-    sceneProps.current = { graph: props.graph, selectedId: props.selectedId }
+    sceneProps.current = {
+      graph: props.graph,
+      selectedId: props.selectedId,
+      onSelect: props.onSelect
+    }
     return createElement('div', {
       'data-testid': 'topology-stub',
       onClick: (): void => props.onSelect('desk-display-01')
@@ -72,14 +78,19 @@ describe('NetworkRoute topology', () => {
     expect(chips).toHaveLength(1)
   })
 
-  it('feeds the scene hub edges plus the gated iPhone from typed snapshot nodes', async () => {
+  it('feeds the scene the desk graph: no hub, no edges, gated iPhone aside', async () => {
     await mount()
     const graph = sceneProps.current?.graph
-    expect(graph?.nodes.some((n) => n.id === 'zero')).toBe(true)
-    expect(graph?.edges.some((e) => e.from === 'desk-display-01' && e.to === 'zero')).toBe(true)
+    // Router design killed: no hub node, no green edge connectors at all.
+    expect(graph?.nodes.some((n) => n.id === 'zero')).toBe(false)
+    expect(graph?.nodes.some((n) => (n.kind as string) === 'hub')).toBe(false)
+    expect('edges' in (graph as object)).toBe(false)
     const phone = graph?.nodes.find((n) => n.kind === 'phone')
     expect(phone?.status).toBe('GATED')
     expect(phone?.selectable).toBe(false)
+    // Desk peripherals ride along with the snapshot devices.
+    expect(graph?.nodes.some((n) => n.id === 'desk-keyboard')).toBe(true)
+    expect(graph?.nodes.some((n) => n.id === 'desk-mousepad')).toBe(true)
   })
 
   it('selects the same node from the scene and from the list row', async () => {
@@ -101,5 +112,16 @@ describe('NetworkRoute topology', () => {
       )
     })
     expect(sceneProps.current?.selectedId).toBe('desk-simulator')
+  })
+
+  it('keeps the always-present host selectable even with no list row', async () => {
+    await mount()
+    expect(sceneProps.current?.graph.nodes.some((n) => n.id === 'local-host')).toBe(true)
+    await act(async () => {
+      sceneProps.current?.onSelect('local-host')
+    })
+    // The host has no list row, but the scene selection must survive (the
+    // list only renders snapshot nodes).
+    expect(sceneProps.current?.selectedId).toBe('local-host')
   })
 })
