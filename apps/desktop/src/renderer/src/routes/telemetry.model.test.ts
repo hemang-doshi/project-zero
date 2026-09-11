@@ -1,0 +1,154 @@
+import { describe, expect, it } from 'vitest'
+import {
+  group,
+  polyPoints,
+  pushWindow,
+  windowMax,
+  accumulateHistory,
+  HISTORY_CAP,
+  EMPTY_HISTORY,
+  type TelemetryHistory
+} from './telemetry.model'
+import { EMPTY_MACHINE_SAMPLE, type MachineSample } from './runtime.types'
+import type { TelemetrySample } from '../../../shared/ipc'
+
+const sample = (over: Partial<TelemetrySample>): MachineSample => ({
+  cpu: null,
+  memory: null,
+  io: null,
+  net: null,
+  gpu: null,
+  ...over
+})
+
+describe('pushWindow', () => {
+  it('appends while under the cap', () => {
+    let w: number[] = []
+    for (let i = 0; i < HISTORY_CAP; i += 1) w = pushWindow(w, i)
+    expect(w).toHaveLength(HISTORY_CAP)
+    expect(w[0]).toBe(0)
+  })
+
+  it('caps at 60 points and drops the oldest', () => {
+    let w: number[] = []
+    for (let i = 0; i < HISTORY_CAP + 1; i += 1) w = pushWindow(w, i)
+    expect(w).toHaveLength(HISTORY_CAP)
+    expect(w[0]).toBe(1)
+    expect(w[HISTORY_CAP - 1]).toBe(HISTORY_CAP)
+  })
+})
+
+describe('windowMax', () => {
+  it('returns 0 for an empty window', () => {
+    expect(windowMax([])).toBe(0)
+  })
+
+  it('returns the largest value', () => {
+    expect(windowMax([3, 9, 2])).toBe(9)
+  })
+})
+
+describe('polyPoints', () => {
+  it('renders nothing below two points', () => {
+    expect(polyPoints([], 240, 56, 100)).toBe('')
+    expect(polyPoints([50], 240, 56, 100)).toBe('')
+  })
+
+  it('normalizes a 0–100 range into the fixed 240×56 box', () => {
+    expect(polyPoints([0, 100], 240, 56, 100)).toBe('2,54 238,2')
+  })
+
+  it('maps mid values proportionally', () => {
+    expect(polyPoints([0, 50, 100], 240, 56, 100)).toBe('2,54 120,28 238,2')
+  })
+
+  it('clamps values above the scale', () => {
+    expect(polyPoints([0, 150], 240, 56, 100)).toBe('2,54 238,2')
+  })
+})
+
+describe('group', () => {
+  it('inserts thousands separators', () => {
+    expect(group(8_348_407)).toBe('8,348,407')
+    expect(group(1_000_000)).toBe('1,000,000')
+  })
+
+  it('leaves small numbers unseparated', () => {
+    expect(group(999)).toBe('999')
+    expect(group(0)).toBe('0')
+  })
+
+  it('keeps the sign', () => {
+    expect(group(-1234)).toBe('-1,234')
+  })
+})
+
+describe('accumulateHistory', () => {
+  it('appends every non-null metric family value', () => {
+    let h: TelemetryHistory = EMPTY_HISTORY
+    h = accumulateHistory(
+      h,
+      sample({
+        cpu: { system: 10, user: 20, idle: 70, threads: 5, processes: 2 },
+        memory: {
+          total: 16,
+          used: 8,
+          percent: 50,
+          pressure: 50,
+          level: 'low',
+          app: null,
+          wired: null,
+          compressed: null,
+          cachedFiles: null,
+          swapUsed: null
+        },
+        io: {
+          reads: 1,
+          writes: 2,
+          readsPerSec: 10,
+          writesPerSec: 20,
+          dataRead: 3,
+          dataWritten: 4,
+          dataReadPerSec: 100,
+          dataWrittenPerSec: 200
+        },
+        net: {
+          packetsIn: 1,
+          packetsOut: 2,
+          packetsInPerSec: 30,
+          packetsOutPerSec: 40,
+          dataReceived: 5,
+          dataSent: 6,
+          dataReceivedPerSec: 300,
+          dataSentPerSec: 400
+        },
+        gpu: 29
+      })
+    )
+    expect(h.cpuSystem).toEqual([10])
+    expect(h.cpuUser).toEqual([20])
+    expect(h.pressure).toEqual([50])
+    expect(h.ioRead).toEqual([100])
+    expect(h.ioWrite).toEqual([200])
+    expect(h.netIn).toEqual([30])
+    expect(h.netOut).toEqual([40])
+  })
+
+  it('keeps each series untouched while its value is null', () => {
+    let h: TelemetryHistory = EMPTY_HISTORY
+    h = accumulateHistory(h, EMPTY_MACHINE_SAMPLE)
+    expect(h).toEqual(EMPTY_HISTORY)
+  })
+
+  it('caps every series at 60 points', () => {
+    let h: TelemetryHistory = EMPTY_HISTORY
+    for (let i = 0; i < 70; i += 1) {
+      h = accumulateHistory(
+        h,
+        sample({ cpu: { system: i, user: null, idle: null, threads: null, processes: null } })
+      )
+    }
+    expect(h.cpuSystem).toHaveLength(60)
+    expect(h.cpuSystem[0]).toBe(10)
+  })
+})

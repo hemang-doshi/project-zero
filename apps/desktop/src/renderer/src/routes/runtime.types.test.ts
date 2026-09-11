@@ -5,24 +5,17 @@ import {
   connectivity,
   extrapolate,
   gitLine,
-  mostLoaded,
   parseSnapshot,
   parseTelemetry,
   selectSession,
   sessionChipTone,
   sessionTone,
+  pressureTone,
   EMPTY_MACHINE_SAMPLE,
-  type MachineResource,
   type MachineSample
 } from './runtime.types'
 
 const fixture = (): unknown => fixtureJson as unknown
-
-const resource = (used: number, total: number): MachineResource => ({
-  used,
-  total,
-  percent: (used / total) * 100
-})
 
 describe('selectSession', () => {
   it('reads the session fields the routes render', () => {
@@ -134,22 +127,6 @@ describe('gitLine', () => {
   })
 })
 
-describe('mostLoaded', () => {
-  it('picks the highest loaded percent metric', () => {
-    expect(mostLoaded({ cpu: 12.5, ram: resource(4, 10), ssd: null, gpu: 3 })).toBe('ram')
-    expect(mostLoaded({ cpu: 90, ram: resource(1, 10), ssd: null, gpu: 88 })).toBe('cpu')
-    expect(mostLoaded({ cpu: 3, ram: null, ssd: null, gpu: 88 })).toBe('gpu')
-  })
-
-  it('returns null without any percent sample', () => {
-    expect(mostLoaded({ cpu: null, ram: null, ssd: resource(5, 10), gpu: null })).toBeNull()
-  })
-
-  it('ignores non-finite values', () => {
-    expect(mostLoaded({ cpu: Number.NaN, ram: resource(0.5, 1), ssd: null, gpu: null })).toBe('ram')
-  })
-})
-
 describe('sessionTone', () => {
   it('maps session states to tones', () => {
     expect(sessionTone('RUNNING')).toBe('healthy')
@@ -211,45 +188,129 @@ describe('extrapolate', () => {
 })
 
 describe('machine sample shape', () => {
-  it('starts with every tile unavailable', () => {
-    const sample: MachineSample = { cpu: null, ram: null, ssd: null, gpu: null }
+  it('starts with every panel unavailable', () => {
+    const sample: MachineSample = { cpu: null, memory: null, io: null, net: null, gpu: null }
     expect(sample).toEqual(EMPTY_MACHINE_SAMPLE)
   })
 })
 
+const WELL_FORMED: Record<string, unknown> = {
+  cpu: { system: 4.25, user: 30, idle: 65.75, threads: 3185, processes: 780 },
+  memory: {
+    total: 17_179_869_184,
+    used: 13_421_772_800,
+    percent: 78.125,
+    pressure: 78.125,
+    level: 'medium',
+    app: 5_368_709_120,
+    wired: 3_221_225_472,
+    compressed: 4_831_838_208,
+    cachedFiles: 2_684_354_560,
+    swapUsed: 536_870_912
+  },
+  io: {
+    reads: 8_348_407,
+    writes: 2_515_963,
+    readsPerSec: 12.5,
+    writesPerSec: 3.5,
+    dataRead: 156_378_263_552,
+    dataWritten: 47_597_654_016,
+    dataReadPerSec: 1_048_576,
+    dataWrittenPerSec: 262_144
+  },
+  net: {
+    packetsIn: 883_011,
+    packetsOut: 883_011,
+    packetsInPerSec: 25.5,
+    packetsOutPerSec: 21.5,
+    dataReceived: 951_953_745,
+    dataSent: 951_953_745,
+    dataReceivedPerSec: 40_960,
+    dataSentPerSec: 20_480
+  },
+  gpu: 29
+}
+
 describe('parseTelemetry', () => {
-  it('parses a well-formed sampler payload into the tile sample', () => {
-    const sample = parseTelemetry({
-      cpu: 4.25,
-      ram: resource(8, 16),
-      ssd: resource(100, 245),
-      gpu: null
-    })
-    expect(sample).toEqual({ cpu: 4.25, ram: resource(8, 16), ssd: resource(100, 245), gpu: null })
+  it('parses a well-formed sampler payload into the panel sample', () => {
+    expect(parseTelemetry(WELL_FORMED)).toEqual(WELL_FORMED)
   })
 
   it('keeps nulls for absent or malformed parts instead of dropping the sample', () => {
-    expect(parseTelemetry({})).toEqual({ cpu: null, ram: null, ssd: null, gpu: null })
+    expect(parseTelemetry({})).toEqual(EMPTY_MACHINE_SAMPLE)
     expect(
       parseTelemetry({
         cpu: 'x',
-        ram: { used: 'no' },
-        ssd: { used: 1, total: 0, percent: 50 },
+        memory: { total: 0 },
+        io: { reads: 'no', dataWritten: 5 },
+        net: 'nonsense',
         gpu: 9
       })
-    ).toEqual({ cpu: null, ram: null, ssd: null, gpu: 9 })
+    ).toEqual({
+      cpu: null,
+      memory: {
+        total: 0,
+        used: 0,
+        percent: 0,
+        pressure: 0,
+        level: 'low',
+        app: null,
+        wired: null,
+        compressed: null,
+        cachedFiles: null,
+        swapUsed: null
+      },
+      io: {
+        reads: null,
+        writes: null,
+        readsPerSec: null,
+        writesPerSec: null,
+        dataRead: null,
+        dataWritten: 5,
+        dataReadPerSec: null,
+        dataWrittenPerSec: null
+      },
+      net: null,
+      gpu: 9
+    })
     expect(parseTelemetry(null)).toEqual(EMPTY_MACHINE_SAMPLE)
     expect(parseTelemetry('nonsense')).toEqual(EMPTY_MACHINE_SAMPLE)
   })
 
-  it('rejects non-finite numbers honestly', () => {
+  it('collapses malformed cells to null while keeping valid siblings', () => {
     const sample = parseTelemetry({
-      cpu: Number.NaN,
-      ram: resource(1, Number.POSITIVE_INFINITY),
-      ssd: null,
-      gpu: null
+      ...WELL_FORMED,
+      io: {
+        reads: 'x',
+        writes: Number.NaN,
+        readsPerSec: 1,
+        writesPerSec: 'no',
+        dataRead: 100,
+        dataWritten: null,
+        dataReadPerSec: 2,
+        dataWrittenPerSec: true
+      }
     })
-    expect(sample.cpu).toBeNull()
-    expect(sample.ram).toBeNull()
+    expect(sample.io?.reads).toBeNull()
+    expect(sample.io?.writes).toBeNull()
+    expect(sample.io?.readsPerSec).toBe(1)
+    expect(sample.io?.writesPerSec).toBeNull()
+    expect(sample.io?.dataRead).toBe(100)
+    expect(sample.io?.dataWritten).toBeNull()
+    expect(sample.io?.dataReadPerSec).toBe(2)
+    expect(sample.io?.dataWrittenPerSec).toBeNull()
+  })
+
+  it('rejects a malformed memory family honestly', () => {
+    expect(parseTelemetry({ ...WELL_FORMED, memory: { total: 'no' } }).memory).toBeNull()
+    expect(parseTelemetry({ ...WELL_FORMED, memory: null }).memory).toBeNull()
+  })
+})
+
+describe('pressureTone', () => {
+  it('maps kernel pressure levels to tones', () => {
+    expect(pressureTone('low')).toBe('healthy')
+    expect(pressureTone('medium')).toBe('attention')
+    expect(pressureTone('high')).toBe('error')
   })
 })
