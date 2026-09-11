@@ -8,10 +8,10 @@ import {
   defaultSkillRoots,
   discoverPlugins,
   discoverSelfLearnt,
+  glyphForPlugin,
   parseSkillFrontmatter,
   PLUGIN_COLORS,
-  pluginPackageSkillRoots,
-  SINGLETON_FAMILIES,
+  PLUGIN_GLYPHS,
   STANDALONE_GROUP_ID,
   type FsDeps
 } from './skillPlugins'
@@ -143,21 +143,15 @@ describe('discoverPlugins', () => {
     expect(discoverPlugins(['/whatever'])).toEqual([])
   })
 
-  it('recurses containers with their own SKILL.md into the family roster', () => {
+  it('treats a container with its own SKILL.md as one skill, not a plugin', () => {
     withTmp((dir) => {
       // Mirrors ~/.claude/skills/gstack: repo root carries SKILL.md while
-      // also holding skill subdirs — the root stays one standalone skill AND
-      // its children form the gstack family (no double-count: same
-      // (group, id) collapses).
+      // also holding skill subdirs — the root wins, no double-count.
       writeSkill(join(dir, 'gstack'), 'name: gstack\ndescription: The stack.')
       writeSkill(join(dir, 'gstack', 'browse'), 'name: browse')
-      writeSkill(join(dir, 'browse'), 'name: browse\ndescription: Flat install.')
       const groups = discoverPlugins([dir], nodeDeps())
-      expect(groups.map((g) => g.id)).toEqual(['gstack', STANDALONE_GROUP_ID])
-      // Nested copy wins the dedupe over the flat mirror.
-      expect(groups[0]?.skills.map((s) => s.id)).toEqual(['browse'])
-      expect(groups[0]?.skills[0]?.description).toBeUndefined()
-      expect(groups[1]?.skills.map((s) => s.id)).toEqual(['gstack'])
+      expect(groups.map((g) => g.id)).toEqual([STANDALONE_GROUP_ID])
+      expect(groups[0]?.skills.map((s) => s.id)).toEqual(['gstack'])
     })
   })
 
@@ -184,87 +178,27 @@ describe('discoverPlugins', () => {
       expect(alone?.skills[0]?.description).toBe('From A.')
     })
   })
-
-  it('coalesces `<container>-*` folders into the container family by folder name', () => {
-    withTmp((dir) => {
-      writeSkill(join(dir, 'gstack', 'browse'), 'name: browse')
-      // Vendored copies carry BARE frontmatter ids — the folder is the only
-      // family signal (mirrors ~/.codex/skills/gstack-ship: name: ship).
-      writeSkill(join(dir, 'gstack-ship'), 'name: ship\ndescription: Vendored.')
-      writeSkill(join(dir, 'watch'), 'name: watch\ndescription: Loose.')
-      const groups = discoverPlugins([dir], nodeDeps())
-      expect(groups.map((g) => g.id)).toEqual(['gstack', STANDALONE_GROUP_ID])
-      expect(groups[0]?.skills.map((s) => s.id)).toEqual(['browse', 'ship'])
-      expect(groups[0]?.skills.every((s) => s.pluginId === 'gstack')).toBe(true)
-      expect(groups[1]?.skills.map((s) => s.id)).toEqual(['watch'])
-    })
-  })
-
-  it('migrates flat installs matching a container roster into the family', () => {
-    withTmp((dir) => {
-      writeSkill(join(dir, 'gstack', 'autoplan'), 'name: autoplan')
-      writeSkill(join(dir, 'autoplan'), 'name: autoplan\ndescription: Flat copy.')
-      writeSkill(join(dir, 'unrelated'), 'name: unrelated')
-      const groups = discoverPlugins([dir], nodeDeps())
-      const gstack = groups.find((g) => g.id === 'gstack')
-      const alone = groups.find((g) => g.id === STANDALONE_GROUP_ID)
-      expect(gstack?.skills.map((s) => s.id)).toEqual(['autoplan'])
-      expect(alone?.skills.map((s) => s.id)).toEqual(['unrelated'])
-    })
-  })
-
-  it('curates the playwright singleton while lookalikes stay standalone', () => {
-    withTmp((dir) => {
-      writeSkill(join(dir, 'playwright'), 'name: playwright\ndescription: Browser CLI.')
-      writeSkill(join(dir, 'watch'), 'name: watch\ndescription: Video watcher.')
-      const groups = discoverPlugins([dir], nodeDeps())
-      expect(groups.map((g) => g.id)).toEqual(['playwright', STANDALONE_GROUP_ID])
-      expect(groups[0]?.skills).toHaveLength(1)
-      expect(groups[0]?.skills[0]?.pluginId).toBe('playwright')
-      expect(groups[1]?.skills.map((s) => s.id)).toEqual(['watch'])
-    })
-  })
-
-  it('prefers package binding over singleton curation', () => {
-    withTmp((dir) => {
-      const skills = join(dir, 'vendored', 'skills')
-      writeSkill(join(skills, 'playwright'), 'name: playwright')
-      writeFileSync(join(dir, 'vendored', 'package.json'), JSON.stringify({ name: 'superpowers' }))
-      const groups = discoverPlugins([skills], nodeDeps())
-      expect(groups.map((g) => g.id)).toEqual(['superpowers'])
-    })
-  })
-
-  it('leaves name-lookalikes without any family shape standalone', () => {
-    withTmp((dir) => {
-      // hyperframes-*/gsap-* share stems but have no container, manifest, or
-      // roster anywhere: bare installs with related names, not families.
-      writeSkill(join(dir, 'hyperframes'), 'name: hyperframes')
-      writeSkill(join(dir, 'hyperframes-cli'), 'name: hyperframes-cli')
-      writeSkill(join(dir, 'run-jobs-daily-workflow'), 'name: run-jobs-daily-workflow')
-      writeSkill(join(dir, 'run-weekly-funnel-review'), 'name: run-weekly-funnel-review')
-      const groups = discoverPlugins([dir], nodeDeps())
-      expect(groups.map((g) => g.id)).toEqual([STANDALONE_GROUP_ID])
-      expect(groups[0]?.skills).toHaveLength(4)
-    })
-  })
 })
 
-describe('colorForPlugin', () => {
+describe('glyphForPlugin / colorForPlugin', () => {
   it('is deterministic', () => {
     for (const id of ['gstack', 'superpowers', 'playwright', STANDALONE_GROUP_ID, '']) {
+      expect(glyphForPlugin(id)).toBe(glyphForPlugin(id))
       expect(colorForPlugin(id)).toBe(colorForPlugin(id))
     }
   })
 
   it('stays inside the contract vocabularies', () => {
     for (const id of ['gstack', 'superpowers', 'playwright', 'alpha', 'zebra', STANDALONE_GROUP_ID]) {
+      expect(PLUGIN_GLYPHS).toContain(glyphForPlugin(id))
       expect(PLUGIN_COLORS).toContain(colorForPlugin(id))
     }
   })
 
-  it('pins known decorative vial colors so scene drift is visible', () => {
+  it('pins known assignments so scene drift is visible', () => {
+    expect(glyphForPlugin('gstack')).toBe('flask')
     expect(colorForPlugin('gstack')).toBe('#10B981')
+    expect(glyphForPlugin(STANDALONE_GROUP_ID)).toBe('bolt')
     expect(colorForPlugin(STANDALONE_GROUP_ID)).toBe('#A83300')
   })
 })
@@ -291,39 +225,8 @@ describe('discoverSelfLearnt', () => {
   })
 })
 
-describe('pluginPackageSkillRoots', () => {
-  it('finds package skills dirs by manifest, bounded and sorted', () => {
-    withTmp((dir) => {
-      const skills = join(dir, 'cache', 'pkg-a', 'node_modules', 'pkg-a', 'skills')
-      writeSkill(join(skills, 'alpha'), 'name: alpha')
-      writeFileSync(
-        join(dir, 'cache', 'pkg-a', 'node_modules', 'pkg-a', 'package.json'),
-        JSON.stringify({ name: 'pkg-a' })
-      )
-      // A skills/ dir without a named manifest parent is not a package root.
-      writeSkill(join(dir, 'cache', 'loose', 'skills', 'beta'), 'name: beta')
-      const found = pluginPackageSkillRoots(join(dir, 'cache'), nodeDeps())
-      expect(found).toEqual([skills])
-      // Discovered roots attribute to the package through discoverPlugins.
-      const groups = discoverPlugins(found, nodeDeps())
-      expect(groups.map((g) => g.id)).toEqual(['pkg-a'])
-    })
-  })
-
-  it('returns [] for missing caches', () => {
-    withTmp((dir) => {
-      expect(pluginPackageSkillRoots(join(dir, 'nope'), nodeDeps())).toEqual([])
-    })
-  })
-})
-
-describe('SINGLETON_FAMILIES', () => {
-  it('curates exactly the owner-directed singletons', () => {
-    expect([...SINGLETON_FAMILIES]).toEqual(['playwright'])
-  })
-})
-
-describe('root helpers', () => {  it('builds the diagnosed skill roots from a home dir', () => {
+describe('root helpers', () => {
+  it('builds the diagnosed skill roots from a home dir', () => {
     expect(defaultSkillRoots('/Users/test')).toEqual([
       '/Users/test/.claude/skills',
       '/Users/test/.agents/skills',

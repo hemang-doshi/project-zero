@@ -27,53 +27,33 @@
 //      ~/.gstack/repos/gstack, whose subdirectories are skills.
 //   3. Name-prefix vendoring: `gstack-*` entries inside ~/.codex/skills.
 //
-// PLUGIN-GROUPING RULE, fix round 1 (binding for discoverPlugins). The
-// round-0 "parent folder only" rule yielded a single plugin group (.system)
-// because the real shapes hide families in three more places — verified
-// against the actual dirs on 2026-09-11 (see counts in the header):
-//   - superpowers (14 skills) lives ONLY in the opencode plugin cache
-//     <cache>/…/node_modules/superpowers/skills/<skill>/SKILL.md, with
-//     package.json `name: superpowers` next door. Fix: the main process
-//     composes roots as
-//       [...defaultSkillRoots(home),
-//        ...pluginPackageSkillRoots(home + '/.cache/opencode/packages', deps)]
-//     and the pre-existing package-manifest rule attributes that root to
-//     `superpowers`. pluginPackageSkillRoots is a bounded recursive search
-//     for exactly that shape (a `skills/` dir whose parent package.json
-//     names it) — no hardcoded package names, no hardcoded cache layout.
-//   - gstack appears twice: (a) 53 vendored `gstack-*` folders in
-//     ~/.codex/skills whose frontmatter names are BARE (`name: browse`),
-//     so the family key MUST be the folder name, never the frontmatter id;
-//     (b) the `gstack` repo-symlink container holds 54 skill children whose
-//     folders match the flat installs (`browse`, `autoplan`, …). Fix:
-//     `<container>-*` folder prefixes join the container's family, and a
-//     flat skill whose id or folder matches a container's child roster
-//     migrates into that container's family. Prefixes only fire for
-//     containers actually seen in the scanned roots (data-driven, not a
-//     `gstack` special-case); longest container id wins ties.
-//   - playwright is a singleton with NO discoverable family shape (verified
-//     byte-for-byte comparable to `watch`: rich flat dir in
-//     ~/.codex/skills + symlink in skills-codex). The owner explicitly
-//     expects the vial, so SINGLETON_FAMILIES curates it — one entry, pinned
-//     by test, documented here instead of hidden in code.
-// Precedence (first match wins): package-manifest binding > container-nested
-// children > singleton curation > `<container>-` prefix > container roster >
-// standalone. Same-(group, id) duplicates collapse first-sight-wins; when a
-// skill is both nested and flat, the nested copy wins (plugin identity is
-// the stronger signal; the flat is usually the manager's mirror).
-// Deliberately NOT grouped: `hyperframes-*`, `gsap-*`, `supabase-*`,
-// `plan-*`, `design-*` and friends share name stems but have no container,
-// no manifest, and no roster anywhere — bare SKILL.md installs with related
-// names stay `standalone` per the acceptance criteria (a stem-guessing rule
-// would fabricate families like `run` for run-jobs-*/run-weekly-*).
-// Deterministic throughout: roots in order, entries sorted, groups A–Z with
-// `standalone` last, skills by (lowercased name, id).
+// PLUGIN-GROUPING RULE (binding for discoverPlugins): the parent folder is
+// the plugin. A skill found at <root>/<skill>/SKILL.md has no plugin parent
+// and lands in the `standalone` group. A skill found at
+// <root>/<plugin>/<skill>/SKILL.md (the container itself carries no
+// SKILL.md) lands in the group whose id is the parent folder name. A root
+// whose own basename is `skills` and whose parent holds a package.json with
+// a string `name` is a plugin package's skills dir (shape 1 above): its
+// depth-1 skills group under the short package name instead of standalone.
+// A container entry that ALSO carries its own SKILL.md (observed: the
+// `gstack` symlink — repo root has SKILL.md and skill subdirs) counts as ONE
+// standalone skill; its children are NOT recursed, so the flat installs of
+// the same skills are never double-counted. Roots are scanned in order and
+// the first sighting of a (group, id) pair wins.
 //
-// SELF-LEARNT VERDICT: no historic learned-skill store or real `Debug Zero`
-// skill was found in the configured provider roots. Zero now writes reviewed
-// skills to its own profile-local `skills-learned` directory. This module
-// reads that directory only when the main process injects it explicitly;
-// direct calls without roots still return [] honestly.
+// SELF-LEARNT VERDICT (binding for discoverSelfLearnt): there is NO
+// self-learnt skill store on this machine. Searched and found empty:
+//   - every skill dir above for learned markers
+//     (rg for self-learn|self_learn|learned-in|learnt: no hits),
+//   - the daemon: core/ contains no skill code at all,
+//   - daemon state DBs (.runtime/live/zero.db, .runtime/v02-dev/zero.db):
+//     `strings | rg -i skill` returns nothing,
+//   - repo-local: no .opencode/, no .claude/skills, .codex/ holds only
+//     hooks.json.
+// (runtime.types.ts SKILL_FIXTURES use sources like `learned-in-codex` only
+// as fixture labels, not as a store.) discoverSelfLearnt therefore returns
+// [] unless the caller injects explicit roots via deps — the [] is the
+// honest answer, never fabricated entries.
 //
 // This module is renderer-safe AND main-process-safe: it imports nothing
 // (no node:fs, no node:path). All filesystem access arrives through the
@@ -82,6 +62,8 @@
 //     readFile: p => tryOrNull(() => fs.readFileSync(p, 'utf8')),
 //     isDirectory: p => tryFalse(() => fs.statSync(p).isDirectory()) }
 // Tests inject tmpdir fixtures the same way.
+
+export type SkillGlyph = 'flask' | 'masks' | 'stack' | 'bolt' | 'orb'
 
 export type SkillSummary = {
   id: string
@@ -96,6 +78,7 @@ export type PluginGroup = {
   id: string
   name: string
   color: string
+  glyph: SkillGlyph
   skills: SkillSummary[]
 }
 
@@ -121,13 +104,9 @@ export type SelfLearntDeps = FsDeps & {
 export const STANDALONE_GROUP_ID = 'standalone'
 export const STANDALONE_GROUP_NAME = 'Standalone'
 
-// Owner-directed singleton families: flat skills that form a vial of their
-// own despite having no discoverable family shape. `playwright` is the only
-// entry: verified structurally identical to `watch` (rich flat dir in
-// ~/.codex/skills plus a skills-codex symlink), so no structural rule can
-// separate them — curation is the honest mechanism. Extend only on explicit
-// owner direction; everything else stays `standalone`.
-export const SINGLETON_FAMILIES: readonly string[] = ['playwright']
+// Glyph vocabulary, fixed order — glyphForPlugin indexes into this exact
+// array, so the order is part of the contract with the scene lane.
+export const PLUGIN_GLYPHS: readonly SkillGlyph[] = ['flask', 'masks', 'stack', 'bolt', 'orb']
 
 // Vial palette. Hardcoded ZERO_TOKENS hexes (token names in comments) — no
 // new hues introduced. colorForPlugin indexes into this exact array.
@@ -153,43 +132,14 @@ export function defaultSkillRoots(homeDir: string): string[] {
   ]
 }
 
-// Legacy candidate locations are included for diagnosis only. The app never
-// scans these; newly approved learned skills live in the explicit app-profile
-// path injected by main so they cannot pollute provider skill folders.
+// Candidate self-learnt locations, checked on this machine and ABSENT (see
+// verdict above). Exported so a future store can be wired without changing
+// this module's shape; discoverSelfLearnt does NOT consult these by itself
+// because silently scanning a hardcoded home from the renderer would be a
+// lie about where data comes from — the caller passes explicit roots.
 export function candidateSelfLearntRoots(homeDir: string): string[] {
   const home = homeDir.replace(/\/+$/, '')
   return [`${home}/.config/project-zero/skills-learned`, `${home}/.claude/skills-learned`]
-}
-
-// Bounded recursive search for plugin-package skills dirs under an opencode
-// packages cache: any `skills/` directory whose parent package.json names it
-// (the superpowers shape diagnosed above). Returns sorted absolute paths for
-// the caller to append to defaultSkillRoots — discoverPlugins then applies
-// its package-manifest rule with no further special cases. Collected `skills`
-// dirs are not descended into; anything else recurses to maxDepth.
-export function pluginPackageSkillRoots(
-  packagesDir: string,
-  deps: FsDeps = NULL_DEPS,
-  maxDepth = 6
-): string[] {
-  const out: string[] = []
-  const walk = (dir: string, depth: number): void => {
-    if (depth > maxDepth) return
-    const entries = deps.readdir(dir)
-    if (entries === null) return
-    for (const entry of [...entries].sort()) {
-      if (entry === '.' || entry === '..') continue
-      const full = joinPath(dir, entry)
-      if (!deps.isDirectory(full)) continue
-      if (entry === 'skills' && packagePluginForRoot(full, deps) !== null) {
-        out.push(full)
-        continue
-      }
-      walk(full, depth + 1)
-    }
-  }
-  walk(packagesDir, 0)
-  return out
 }
 
 const NULL_DEPS: FsDeps = {
@@ -202,7 +152,7 @@ const joinPath = (dir: string, entry: string): string => `${dir.replace(/\/+$/, 
 
 // FNV-1a (32-bit) over UTF-16 code units. Chosen because it is tiny,
 // dependency-free, and stable across engines (unlike localeCompare-based
-// tricks) — decorative vial colors must not move between runs.
+// tricks) — glyph/color assignment must not move between runs.
 const fnv1a = (s: string): number => {
   let h = 0x811c9dc5
   for (let i = 0; i < s.length; i += 1) {
@@ -210,6 +160,10 @@ const fnv1a = (s: string): number => {
     h = Math.imul(h, 0x01000193)
   }
   return h >>> 0
+}
+
+export function glyphForPlugin(pluginId: string): SkillGlyph {
+  return PLUGIN_GLYPHS[fnv1a(pluginId) % PLUGIN_GLYPHS.length] as SkillGlyph
 }
 
 export function colorForPlugin(pluginId: string): string {
@@ -350,8 +304,8 @@ const toSummary = (
     pluginId: groupId === STANDALONE_GROUP_ID ? null : groupId
   }
   if (found.frontmatter.description !== undefined) summary.description = found.frontmatter.description
-  // Icon remains unset when the skill has no icon metadata. The renderer
-  // shows a neutral unknown marker instead of borrowing a made-up logo.
+  // icon is unset: no icon source was diagnosed anywhere (no icon field in
+  // any SKILL.md frontmatter observed) — the scene lane owns vial glyphs.
   return summary
 }
 
@@ -366,81 +320,6 @@ const byName = (a: SkillSummary, b: SkillSummary): number => {
 }
 
 export function discoverPlugins(dirs: string[], deps: FsDeps = NULL_DEPS): PluginGroup[] {
-  // Phase 1 — collect. One readdir per directory (cached): family decisions
-  // in phase 2 need every container known before any flat skill is assigned.
-  const listed = new Map<string, string[] | null>()
-  const list = (dir: string): string[] | null => {
-    const hit = listed.get(dir)
-    if (hit !== undefined) return hit
-    const entries = deps.readdir(dir)
-    listed.set(dir, entries)
-    return entries
-  }
-  type Flat = { folder: string; found: FoundSkill; pkgPlugin: string | null }
-  type Container = { id: string; children: FoundSkill[]; roster: Set<string> }
-  const flats: Flat[] = []
-  const containers: Container[] = []
-  for (const root of dirs) {
-    const entries = list(root)
-    if (entries === null) continue // missing/unreadable root: fail soft
-    const pkgPlugin = packagePluginForRoot(root, deps)
-    for (const entry of [...entries].sort()) {
-      if (entry === '.' || entry === '..') continue
-      const full = joinPath(root, entry)
-      if (!deps.isDirectory(full)) continue // stray files fail soft
-      const own = readSkillDir(full, deps)
-      if (pkgPlugin !== null) {
-        // Shape-1 package layout: depth-1 skills only, never descended.
-        if (own !== null) flats.push({ folder: entry, found: own, pkgPlugin })
-        continue
-      }
-      // Container children are collected even when the container carries its
-      // own SKILL.md (the `gstack` symlink shape): the roster is what lets
-      // the flat installs of the same family migrate home. The container's
-      // own skill still counts as a flat candidate, decided in phase 2.
-      const kids = list(full) ?? []
-      const childSkills: FoundSkill[] = []
-      for (const child of [...kids].sort()) {
-        if (child === '.' || child === '..') continue
-        const childFull = joinPath(full, child)
-        if (!deps.isDirectory(childFull)) continue
-        const nested = readSkillDir(childFull, deps)
-        if (nested !== null) childSkills.push(nested)
-      }
-      if (childSkills.length > 0) {
-        containers.push({
-          id: entry,
-          children: childSkills,
-          roster: new Set(childSkills.map((c) => c.folder))
-        })
-      }
-      if (own !== null) flats.push({ folder: entry, found: own, pkgPlugin: null })
-    }
-  }
-
-  // Phase 2 — assign by precedence: package binding (already on the flat) >
-  // container-nested children > singleton curation > `<container>-` folder
-  // prefix > container roster > standalone.
-  const containerIds = [...new Set(containers.map((c) => c.id))].sort()
-  const roster = new Map<string, string>() // child folder -> container id
-  for (const c of containers) {
-    for (const folder of [...c.roster].sort()) {
-      if (!roster.has(folder)) roster.set(folder, c.id)
-    }
-  }
-  // Prefix families key on the FOLDER name (vendored `gstack-*` folders carry
-  // bare frontmatter ids — the folder is the only family signal). Only fires
-  // for containers actually seen; longest container id wins ties.
-  const prefixFamily = (folder: string): string | null => {
-    let best: string | null = null
-    for (const id of containerIds) {
-      if (folder.length > id.length + 1 && folder.startsWith(`${id}-`)) {
-        if (best === null || id.length > best.length) best = id
-      }
-    }
-    return best
-  }
-
   const buckets = new Map<string, SkillSummary[]>()
   const seen = new Set<string>()
   const put = (groupId: string, s: SkillSummary): void => {
@@ -452,31 +331,36 @@ export function discoverPlugins(dirs: string[], deps: FsDeps = NULL_DEPS): Plugi
     else list.push(s)
   }
 
-  // Nested copies win dedupe over flat mirrors of the same (group, id).
-  for (const c of containers) {
-    for (const child of c.children) put(c.id, toSummary(child, c.id, 'installed'))
-  }
-  for (const f of flats) {
-    if (f.pkgPlugin !== null) {
-      put(f.pkgPlugin, toSummary(f.found, f.pkgPlugin, 'installed'))
-      continue
+  for (const root of dirs) {
+    const entries = deps.readdir(root)
+    if (entries === null) continue // missing/unreadable root: fail soft
+    const pkgPlugin = packagePluginForRoot(root, deps)
+    const sorted = [...entries].sort()
+    for (const entry of sorted) {
+      if (entry === '.' || entry === '..') continue
+      const full = joinPath(root, entry)
+      if (!deps.isDirectory(full)) continue // stray files fail soft
+      const own = readSkillDir(full, deps)
+      if (own !== null) {
+        // Depth-1 skill: standalone, unless the root is a plugin package's
+        // skills/ dir (shape 1) — then the package is the plugin.
+        const groupId = pkgPlugin ?? STANDALONE_GROUP_ID
+        put(groupId, toSummary(own, groupId, 'installed'))
+        continue
+      }
+      // Depth-2: container without its own SKILL.md whose children are
+      // skills — the parent folder (entry) is the plugin.
+      const children = deps.readdir(full)
+      if (children === null) continue
+      for (const child of [...children].sort()) {
+        if (child === '.' || child === '..') continue
+        const childFull = joinPath(full, child)
+        if (!deps.isDirectory(childFull)) continue
+        const nested = readSkillDir(childFull, deps)
+        if (nested === null) continue
+        put(entry, toSummary(nested, entry, 'installed'))
+      }
     }
-    const id = f.found.frontmatter.name ?? f.folder
-    if ((SINGLETON_FAMILIES as readonly string[]).includes(id)) {
-      put(id, toSummary(f.found, id, 'installed'))
-      continue
-    }
-    const prefix = prefixFamily(f.folder)
-    if (prefix !== null) {
-      put(prefix, toSummary(f.found, prefix, 'installed'))
-      continue
-    }
-    const rosterHit = roster.get(id) ?? roster.get(f.folder) ?? null
-    if (rosterHit !== null) {
-      put(rosterHit, toSummary(f.found, rosterHit, 'installed'))
-      continue
-    }
-    put(STANDALONE_GROUP_ID, toSummary(f.found, STANDALONE_GROUP_ID, 'installed'))
   }
 
   const groups: PluginGroup[] = []
@@ -487,6 +371,7 @@ export function discoverPlugins(dirs: string[], deps: FsDeps = NULL_DEPS): Plugi
       id,
       name: humanize(id),
       color: colorForPlugin(id),
+      glyph: glyphForPlugin(id),
       skills: (buckets.get(id) as SkillSummary[]).sort(byName)
     })
   }
@@ -496,6 +381,7 @@ export function discoverPlugins(dirs: string[], deps: FsDeps = NULL_DEPS): Plugi
       id: STANDALONE_GROUP_ID,
       name: STANDALONE_GROUP_NAME,
       color: colorForPlugin(STANDALONE_GROUP_ID),
+      glyph: glyphForPlugin(STANDALONE_GROUP_ID),
       skills: alone.sort(byName)
     })
   }
