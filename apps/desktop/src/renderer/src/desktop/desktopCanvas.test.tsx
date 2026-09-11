@@ -6,6 +6,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { DesktopCanvas, type DesktopCanvasProps } from './DesktopCanvas'
 import { TASKBAR_H } from './Taskbar'
 import { initialWindows, useWindows } from '../store/windows'
+import { useDesktopPrefs } from '../store/prefs'
 
 let container: HTMLDivElement | null = null
 let root: ReturnType<typeof createRoot> | null = null
@@ -82,5 +83,115 @@ describe('DesktopCanvas maximize wiring', () => {
   it('renders the real taskbar with window buttons', () => {
     const el = mount(base())
     expect(el.querySelector('button[data-window="desk"]')).not.toBeNull()
+  })
+})
+
+type FakeInvoke = (op: string, payload?: unknown) => Promise<unknown>
+
+const stubZeroInJsdom = (invoke: FakeInvoke): void => {
+  ;(window as unknown as { zero?: unknown }).zero = { invoke, subscribe: () => () => {} }
+}
+
+const click = (el: HTMLElement): void => {
+  act(() => {
+    el.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+  })
+}
+
+describe('DesktopCanvas wallpaper pick flow', () => {
+  let resolvePick: (value: string | null) => void = () => {}
+  let setPatches: unknown[] = []
+  let invoke: ReturnType<typeof vi.fn> | null = null
+
+  const resetStores = (): void => {
+    useWindows.setState(initialWindows())
+    useDesktopPrefs.setState({
+      wallpaper: { kind: 'dotted-green', mode: 'cover' },
+      icons: {},
+      windows: {},
+      loaded: false
+    })
+  }
+
+  const mountWithZero = async (): Promise<HTMLElement> => {
+    resetStores()
+    setPatches = []
+    invoke = vi.fn((op: string, payload?: unknown) => {
+      if (op === 'prefs.get') {
+        return Promise.resolve({
+          wallpaper: { kind: 'dotted-green', mode: 'cover' },
+          icons: {},
+          windows: {}
+        })
+      }
+      if (op === 'prefs.set') {
+        setPatches.push(payload)
+        return Promise.resolve({})
+      }
+      if (op === 'wallpaper.pick') {
+        return new Promise((res) => {
+          resolvePick = res as (value: string | null) => void
+        })
+      }
+      return Promise.reject(new Error(`unexpected op ${op}`))
+    })
+    stubZeroInJsdom(invoke as unknown as FakeInvoke)
+    const el = mount(base())
+    await act(async () => {
+      await Promise.resolve()
+    })
+    return el
+  }
+
+  afterEach(() => {
+    delete (window as unknown as { zero?: unknown }).zero
+    resetStores()
+  })
+
+  const openPickDialog = (el: HTMLElement): void => {
+    click(el.querySelector('button[data-settings="true"]') as HTMLElement)
+    const custom = [...(el.querySelectorAll('#settings button') ?? [])].find((b) =>
+      (b.textContent ?? '').includes('Custom')
+    )
+    expect(custom).toBeDefined()
+    click(custom as HTMLElement)
+    const pick = [...(el.querySelectorAll('#settings button') ?? [])].find((b) =>
+      (b.textContent ?? '').includes('CHOOSE IMAGE')
+    )
+    expect(pick).toBeDefined()
+    click(pick as HTMLElement)
+  }
+
+  it('a picked path switches to custom and persists the full wallpaper patch', async () => {
+    const el = await mountWithZero()
+    openPickDialog(el)
+    await act(async () => {
+      resolvePick('/tmp/picked.png')
+      await Promise.resolve()
+    })
+    expect(useDesktopPrefs.getState().wallpaper).toEqual({
+      kind: 'custom',
+      path: '/tmp/picked.png',
+      mode: 'cover'
+    })
+    expect(invoke).toHaveBeenCalledWith('prefs.set', {
+      wallpaper: { kind: 'custom', path: '/tmp/picked.png', mode: 'cover' }
+    })
+  })
+
+  it('a cancelled pick keeps the fallback texture and persists no picked path', async () => {
+    const el = await mountWithZero()
+    openPickDialog(el)
+    await act(async () => {
+      resolvePick(null)
+      await Promise.resolve()
+    })
+    expect(useDesktopPrefs.getState().wallpaper).toEqual({
+      kind: 'custom',
+      mode: 'cover'
+    })
+    for (const patch of setPatches) {
+      expect((patch as { wallpaper?: { path?: string } }).wallpaper?.path).toBeUndefined()
+    }
   })
 })

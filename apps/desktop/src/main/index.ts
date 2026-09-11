@@ -1,19 +1,17 @@
 import { app, shell, BrowserWindow, protocol, net, dialog } from 'electron'
 import { join } from 'path'
-import { pathToFileURL } from 'url'
 import { is } from '@electron-toolkit/utils'
 import { CockpitModel } from './cockpit-model'
 import { fetchSnapshot, openStream, postCommand } from './socket'
 import { registerIpcHandlers, attachCockpitPush, attachBridgePush, bridgePair } from './ipc'
 import { PrefsStore, startupMigrate } from './prefs'
+import { createWallpaperImageHandler, IMAGE_EXTENSIONS } from './wallpaper-image'
 import { createTelemetrySampler } from './telemetry'
 import { createTray } from './tray'
 
 const appSupport = join(process.env.HOME ?? '', 'Library', 'Application Support', 'ProjectZero')
 const socketPath = join(appSupport, 'zero.sock')
 const prefsStoreDir = join(appSupport, 'desktop-electron')
-
-const IMAGE_EXTENSIONS = ['png', 'jpg', 'jpeg', 'webp', 'gif']
 
 protocol.registerSchemesAsPrivileged([
   { scheme: 'zero-img', privileges: { standard: true, secure: true, supportFetchAPI: true } }
@@ -27,18 +25,7 @@ const pickImage = async (): Promise<string | null> => {
   return res.canceled ? null : (res.filePaths[0] ?? null)
 }
 
-const serveWallpaperImage = (request: Request): Response | Promise<Response> => {
-  try {
-    const file = decodeURIComponent(new URL(request.url).pathname.slice(1))
-    const ext = file.split('.').pop()?.toLowerCase() ?? ''
-    if (!IMAGE_EXTENSIONS.includes(ext)) {
-      return new Response('not an image', { status: 403 })
-    }
-    return net.fetch(pathToFileURL(file).toString())
-  } catch (err) {
-    return new Response(`bad request: ${String(err)}`, { status: 404 })
-  }
-}
+const serveWallpaperImage = createWallpaperImageHandler((fileUrl) => net.fetch(fileUrl))
 
 function createWindow(model: CockpitModel): void {
   const mainWindow = new BrowserWindow({
