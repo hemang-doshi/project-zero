@@ -132,5 +132,48 @@ int main(void) {
       assert(zero_rejoin_delay_ms(ZERO_REJOIN_TRANSIENT, c, 1234) <
              zero_rejoin_delay_ms(ZERO_REJOIN_AUTH, c, 1234));
   }
+  /* Task 38 transport-recovery invariant: a locally-detected dead socket
+     (command-queue overflow, frame-bounds violation) MUST reset the real
+     transport — never a silent connected=false while the socket lives on
+     (that self-imposes a permanent offline: no DISCONNECTED event, no
+     library auto-reconnect, no re-hello). */
+  {
+    zero_link_state s = {0};
+    /* Remote DISCONNECTED: paces the hello, never requests a reset. */
+    zero_link_note_drop(&s, 100000, 0, false);
+    assert(!s.reset_requested);
+    assert(s.streak == 1);
+    assert(s.down_at_ms == 100000);
+    assert(s.not_before_ms == 100000 + ZERO_REJOIN_FAST_BASE_MS);
+    /* Local failure (overflow/frame-bounds): MUST request a transport reset,
+       keep pacing the hello, and preserve the outage start. */
+    zero_link_note_drop(&s, 100500, 0, true);
+    assert(s.reset_requested);
+    assert(s.streak == 2);
+    assert(s.down_at_ms == 100000);
+    assert(s.not_before_ms == 100500 + 2 * ZERO_REJOIN_FAST_BASE_MS);
+    /* Jitter stays bounded on a fresh streak. */
+    for (unsigned r = 0; r < 600; r++) {
+      zero_link_state t = {0};
+      zero_link_note_drop(&t, 0, r, true);
+      assert(t.reset_requested);
+      assert(t.not_before_ms >= ZERO_REJOIN_FAST_BASE_MS &&
+             t.not_before_ms <=
+                 ZERO_REJOIN_FAST_BASE_MS + ZERO_REJOIN_FAST_JITTER_MS);
+    }
+    /* A long mixed streak still requests the reset and stays capped. */
+    for (unsigned r = 0; r < 600; r++) {
+      zero_link_state t = {0};
+      for (unsigned c = 0; c < 20; c++)
+        zero_link_note_drop(&t, (int64_t)(c * 1000), r, (c % 2) == 0);
+      assert(t.reset_requested);
+      assert(t.streak == 20);
+      assert(t.not_before_ms >= 19000 + ZERO_REJOIN_FAST_CAP_MS &&
+             t.not_before_ms <=
+                 19000 + ZERO_REJOIN_FAST_CAP_MS + ZERO_REJOIN_FAST_JITTER_MS);
+    }
+    /* Null-safe: the event callback must never crash. */
+    zero_link_note_drop(NULL, 0, 0, true);
+  }
   return 0;
 }
