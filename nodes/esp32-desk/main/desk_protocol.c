@@ -204,3 +204,18 @@ unsigned zero_rejoin_delay_ms(zero_rejoin_cause cause, unsigned consecutive,
     return backoff + (rand16 % (ZERO_REJOIN_FAST_JITTER_MS + 1));
   }
 }
+
+void zero_link_note_drop(zero_link_state *s, int64_t now_ms, unsigned rand16,
+                         bool local_failure) {
+  if (!s)
+    return;
+  if (now_ms < 0)
+    now_ms = 0;
+  if (!s->down_at_ms)
+    s->down_at_ms = now_ms;
+  s->not_before_ms =
+      now_ms + (int64_t)zero_rejoin_delay_ms(ZERO_REJOIN_TRANSIENT,
+                                             s->streak++, rand16);
+  if (local_failure)
+    s->reset_requested = true;
+}

@@ -59,3 +59,26 @@ zero_rejoin_cause zero_rejoin_classify(unsigned wifi_reason);
 /* Delay in ms before the next rejoin attempt. consecutive counts unbroken
    failures (0 = first retry); rand16 is any 16-bit entropy for jitter. */
 unsigned zero_rejoin_delay_ms(zero_rejoin_cause cause, unsigned consecutive, unsigned rand16);
+
+/* Task 38 transport-recovery invariant: a locally-detected dead socket
+   (command-queue overflow, frame-bounds violation) MUST reset the real
+   WebSocket transport — never just clear the local connected flag while the
+   socket object lives on. A silent connected=false self-imposes a permanent
+   offline: no DISCONNECTED event fires, the library never auto-reconnects,
+   and no re-hello is ever sent. The event callback records the decision
+   here; the main loop performs the    stop/destroy/recreate (the callback
+   cannot safely tear down the client in its own context). Pure flags and
+   arithmetic: no heap, no I/O. */
+typedef struct {
+  bool reset_requested;  /* main loop must stop/destroy/recreate ws */
+  unsigned streak;       /* unbroken drop streak pacing the next hello */
+  int64_t not_before_ms; /* earliest next session.hello (monotonic ms) */
+  int64_t down_at_ms;    /* outage start (monotonic ms), 0 = none */
+} zero_link_state;
+/* Record a socket drop. local_failure=true for locally-detected death
+   (overflow/frame-bounds: requests a transport reset); false for a library
+   DISCONNECTED (transport already down; the library auto-reconnects). Both
+   stamp the outage start once and pace the next hello with the transient
+   backoff. Null-safe. */
+void zero_link_note_drop(zero_link_state *s, int64_t now_ms, unsigned rand16,
+                         bool local_failure);

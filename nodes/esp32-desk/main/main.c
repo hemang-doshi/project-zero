@@ -56,7 +56,7 @@ static int link_rssi;
 static unsigned link_reason, socket_drops, wifi_drops;
 static unsigned hb_sent, hb_acked;
 static uint32_t hb_pending_seq;
-static int64_t link_down_at, link_downtime_ms;
+static int64_t link_downtime_ms;
 static const char *str(const cJSON *v, const char *k) {
   cJSON *p = cJSON_GetObjectItemCaseSensitive(v, k);
   return cJSON_IsString(p) ? p->valuestring : "";
@@ -107,9 +107,17 @@ static void send_message(const char *type, const char *body) {
    2/7; the old code re-helloed immediately (<1 s), racing daemon session
    teardown (reset/deadline interleave in Task 0 baseline). Gate the
    application rejoin (session.hello) on a reason-aware backoff with jitter;
-   the transport reconnect itself is untouched. */
-static int64_t hello_not_before;
-static unsigned sock_streak, wifi_streak;
+   the transport reconnect itself is untouched.
+   Task 38: drop accounting lives in link_state (zero_link_state) so the
+   locally-detected dead-socket paths (queue overflow, frame bounds) share
+   the same paced re-hello AND additionally request a real transport reset —
+   a silent connected=false with a live ws object self-imposes a permanent
+   offline (no DISCONNECTED event, no auto-reconnect, no re-hello), which is
+   exactly the .runtime/flow-acceptance.log freeze (socket=0/welcomed=0 with
+   audio_rx frozen after ZERO COMMAND QUEUE OVERFLOW). */
+static zero_link_state link_state;
+static unsigned wifi_streak;
+static unsigned socket_resets;
 static void websocket_event(void *arg, esp_event_base_t base, int32_t id,
                             void *data) {
   (void)arg;
@@ -124,12 +132,8 @@ static void websocket_event(void *arg, esp_event_base_t base, int32_t id,
     connected = false;
     rx_used = 0;
     socket_drops++;
-    if (!link_down_at)
-      link_down_at = esp_timer_get_time() / 1000;
-    hello_not_before = esp_timer_get_time() / 1000 +
-                       (int64_t)zero_rejoin_delay_ms(ZERO_REJOIN_TRANSIENT,
-                                                     sock_streak++,
-                                                     (unsigned)esp_random());
+    zero_link_note_drop(&link_state, esp_timer_get_time() / 1000,
+                        (unsigned)esp_random(), false);
   } else if (id == WEBSOCKET_EVENT_DATA) {
     if (e->op_code != 1 && e->op_code != 0)
       return;
@@ -138,6 +142,11 @@ static void websocket_event(void *arg, esp_event_base_t base, int32_t id,
       printf("ZERO FRAME BOUNDS len=%d used=%u chunk=%d\n",e->payload_len,(unsigned)rx_used,e->data_len);
       connected = false;
       rx_used = 0;
+      /* Task 38: a locally-detected dead socket MUST reset the real
+         transport — the library will not (no DISCONNECTED fires for a
+         local flag clear). The main loop performs the stop/destroy. */
+      zero_link_note_drop(&link_state, esp_timer_get_time() / 1000,
+                          (unsigned)esp_random(), true);
       return;
     }
     if (e->payload_offset == 0 && e->op_code == 1)
@@ -151,7 +160,12 @@ static void websocket_event(void *arg, esp_event_base_t base, int32_t id,
       } else if (xQueueSend(messages, rx, 0) != pdTRUE) {
         queue_overflows++;
         puts("ZERO COMMAND QUEUE OVERFLOW");
+        /* Task 38: same invariant as frame-bounds — request a real
+           transport reset so the node re-hellos instead of freezing
+           offline with socket=0/welcomed=0 forever. */
         connected = false;
+        zero_link_note_drop(&link_state, esp_timer_get_time() / 1000,
+                            (unsigned)esp_random(), true);
       }
       rx_used = 0;
     }
@@ -164,9 +178,9 @@ static void wifi_event(void *arg, esp_event_base_t base, int32_t id,
     wifi_ready = true;
     wifi_streak = 0;
     int64_t now = esp_timer_get_time() / 1000;
-    if (link_down_at)
-      link_downtime_ms = now - link_down_at;
-    link_down_at = 0;
+    if (link_state.down_at_ms)
+      link_downtime_ms = now - link_state.down_at_ms;
+    link_state.down_at_ms = 0;
     wifi_ap_record_t ap;
     if (esp_wifi_sta_get_ap_info(&ap) == ESP_OK)
       link_rssi = ap.rssi;
@@ -175,8 +189,8 @@ static void wifi_event(void *arg, esp_event_base_t base, int32_t id,
     printf("ZERO WIFI LOST reason=%u\n", link_reason);
     wifi_ready = false;
     wifi_drops++;
-    if (!link_down_at)
-      link_down_at = esp_timer_get_time() / 1000;
+    if (!link_state.down_at_ms)
+      link_state.down_at_ms = esp_timer_get_time() / 1000;
   }
 }
 static void handle(const char *message) {
@@ -221,12 +235,12 @@ static void handle(const char *message) {
       return;
     strcpy(session_id, s);
     welcomed = true;
-    sock_streak = 0;
+    link_state.streak = 0;
     {
       int64_t now = esp_timer_get_time() / 1000;
-      if (link_down_at)
-        link_downtime_ms = now - link_down_at;
-      link_down_at = 0;
+      if (link_state.down_at_ms)
+        link_downtime_ms = now - link_state.down_at_ms;
+      link_state.down_at_ms = 0;
     }
     audio_sequence=0;
     char reg[512], link[ZERO_LINK_JSON_MAX];
@@ -445,7 +459,33 @@ void app_main(void) {
                                     NULL);
       ESP_ERROR_CHECK(esp_websocket_client_start(ws));
     }
-    if (connected && !was_connected && now >= hello_not_before) {
+    /* Task 38 transport-recovery invariant: a locally-detected dead socket
+       (queue overflow / frame-bounds) MUST reset the real transport. The
+       event callback only raises link_state.reset_requested — tearing the
+       client down must happen here in the main-loop task, never in callback
+       context. stop+destroy drops the dead object so the wifi_ready && !ws
+       branch below builds a fresh client; stale pre-outage commands are
+       flushed so they can never run after the next welcome; the re-hello
+       stays paced by the backoff zero_link_note_drop already stored.
+       Bounded: exactly one reset per local failure; the hello gate below
+       keeps its backoff, so a bursting daemon causes spaced reconnects,
+       never a hot spin. (If stop() itself emits DISCONNECTED, that handler
+       only re-arms the same backoff — one extra bounded step, no new reset.) */
+    if (link_state.reset_requested && ws) {
+      esp_websocket_client_stop(ws);
+      esp_websocket_client_destroy(ws);
+      ws = NULL;
+      connected = false;
+      welcomed = false;
+      was_connected = false;
+      rx_used = 0;
+      link_state.reset_requested = false;
+      socket_resets++;
+      xQueueReset(messages);
+      xQueueReset(audio_messages);
+      puts("ZERO SOCKET RESET");
+    }
+    if (connected && !was_connected && now >= link_state.not_before_ms) {
       welcomed = false;
       send_message("session.hello",
                    "{\"versions\":[\"0.1\"],\"max_frame\":8192}");
@@ -489,7 +529,7 @@ void app_main(void) {
       last_screen = now;
     }
     if(cert[0] && now>=panel_test_until)display_animate(now,welcomed);
-    if(now-debug_at>=10000){printf("ZERO LINK wifi=%d socket=%d welcomed=%d queue_overflows=%u audio_rx=%u audio_ok=%u rssi=%d reason=%u downtime_ms=%lld hb=%u/%u sock_drop=%u wifi_drop=%u\n",wifi_ready,connected,welcomed,queue_overflows,audio_received,audio_accepted,link_rssi,link_reason,(long long)link_downtime_ms,hb_sent,hb_acked,socket_drops,wifi_drops);debug_at=now;}
+    if(now-debug_at>=10000){printf("ZERO LINK wifi=%d socket=%d welcomed=%d queue_overflows=%u audio_rx=%u audio_ok=%u rssi=%d reason=%u downtime_ms=%lld hb=%u/%u sock_drop=%u wifi_drop=%u sock_reset=%u\n",wifi_ready,connected,welcomed,queue_overflows,audio_received,audio_accepted,link_rssi,link_reason,(long long)link_downtime_ms,hb_sent,hb_acked,socket_drops,wifi_drops,socket_resets);debug_at=now;}
     esp_task_wdt_reset();
     vTaskDelay(pdMS_TO_TICKS(10));
   }
