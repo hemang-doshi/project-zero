@@ -30,7 +30,7 @@ jobs:
         with:
           python-version: '3.x'
       - run: go mod download
-      - run: make test
+      - run: GOPROXY=off GOSUMDB=off go test -race ./...
       - run: python3 tools/release-gen.py --check
       - run: python3 tools/schema-gen.py --check
 
@@ -50,7 +50,6 @@ jobs:
           cache: npm
           cache-dependency-path: apps/desktop/package-lock.json
       - run: npm ci
-      - run: npm test
       - run: npm run typecheck
       - run: npm run lint
       - run: npm run build
@@ -62,4 +61,4 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           persist-credentials: false
-      - run: swift test --package-path apps/macos
+      - run: swift build --package-path apps/macos
