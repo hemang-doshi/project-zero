@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useState } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ZERO_TYPE } from '../../../shared/tokens'
 import { type OpName } from '../../../shared/ipc'
 import { Chip } from './Chip'
@@ -158,6 +158,8 @@ const parseNote = (raw: unknown): string | null => {
 }
 
 export const SkillLabRoute = memo(function SkillLabRoute(): React.JSX.Element {
+  const routeRef = useRef<HTMLDivElement>(null)
+  const detailsRef = useRef<HTMLElement>(null)
   const hasBridge = typeof window !== 'undefined' && window.zero !== undefined
   const [groups, setGroups] = useState<PluginGroup[]>([])
   const [selfLearnt, setSelfLearnt] = useState<SkillSummary[]>([])
@@ -184,6 +186,12 @@ export const SkillLabRoute = memo(function SkillLabRoute(): React.JSX.Element {
   )
   const selected = rows.find((row) => row.key === selectedKey) ?? null
   const { start, end } = skillWindow(filtered.length, scrollTop, 420)
+  const chooseSkill = (key: string): void => {
+    setSelectedKey(key)
+    if ((routeRef.current?.clientWidth ?? 0) < 600) {
+      detailsRef.current?.scrollIntoView({ block: 'nearest' })
+    }
+  }
 
   // Applies one discovery result; state sets ride promise callbacks (never
   // synchronous effect bodies) per the hooks lint.
@@ -252,7 +260,7 @@ export const SkillLabRoute = memo(function SkillLabRoute(): React.JSX.Element {
   }
 
   return (
-    <div className="zw-route" style={routeStyle}>
+    <div ref={routeRef} className="zw-route" style={routeStyle}>
       <div style={headerRow}>
         <span style={microStyle}>PROJECT ZERO — SKILL LAB</span>
         <Chip label="LOCAL INVENTORY" tone="neutral" />
@@ -326,7 +334,7 @@ export const SkillLabRoute = memo(function SkillLabRoute(): React.JSX.Element {
               Math.max(0, current + (e.key === 'ArrowDown' ? 1 : -1))
             )
             if (filtered[next]) {
-              setSelectedKey(filtered[next].key)
+              chooseSkill(filtered[next].key)
               e.currentTarget.scrollTop = next * 56
             }
           }}
@@ -338,7 +346,7 @@ export const SkillLabRoute = memo(function SkillLabRoute(): React.JSX.Element {
                 type="button"
                 role="option"
                 aria-selected={selectedKey === row.key}
-                onClick={() => setSelectedKey(row.key)}
+                onClick={() => chooseSkill(row.key)}
                 style={{
                   position: 'absolute',
                   top: (start + index) * 56,
@@ -382,6 +390,7 @@ export const SkillLabRoute = memo(function SkillLabRoute(): React.JSX.Element {
           ) : null}
         </div>
         <aside
+          ref={detailsRef}
           className="skill-lab-details"
           aria-label="Skill details"
           style={{
