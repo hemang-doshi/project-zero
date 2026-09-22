@@ -130,6 +130,27 @@ function listOf(result: unknown): unknown[] {
   return Array.isArray(data) ? data : []
 }
 
+function boundCodexThread(value: unknown): unknown {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return null
+  const thread = value as Record<string, unknown>
+  if (!Array.isArray(thread['turns'])) return thread
+  const turns: unknown[] = []
+  let itemBudget = 400
+  let turnBudget = 400
+  for (let index = thread['turns'].length - 1; index >= 0 && turnBudget > 0; index -= 1) {
+    const rawTurn = thread['turns'][index]
+    if (typeof rawTurn !== 'object' || rawTurn === null || Array.isArray(rawTurn)) continue
+    const turn = rawTurn as Record<string, unknown>
+    const rawItems = Array.isArray(turn['items']) ? turn['items'] : []
+    if (rawItems.length > 0 && itemBudget === 0) break
+    const items = rawItems.slice(Math.max(0, rawItems.length - itemBudget))
+    itemBudget -= items.length
+    turnBudget -= 1
+    turns.unshift({ ...turn, items })
+  }
+  return { ...thread, turns }
+}
+
 function promptRequest(
   value: unknown,
   decision = false
@@ -224,7 +245,7 @@ export function createDispatch(
     const result = await bridge.send('thread/read', { threadId, includeTurns: true })
     const root =
       typeof result === 'object' && result !== null ? (result as Record<string, unknown>) : {}
-    return { harness: 'codex', thread: root['thread'] ?? null }
+    return { harness: 'codex', thread: boundCodexThread(root['thread']) }
   }
   const prepareOpenCode = async (payload: unknown): Promise<unknown> => {
     const { threadId } = (payload ?? {}) as Partial<ThreadGetPayload>

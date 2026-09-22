@@ -487,6 +487,7 @@ export const ZeroBotRoute = memo(function ZeroBotRoute(): React.JSX.Element {
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [inspectorOpen, setInspectorOpen] = useState(true)
+  const [workspaceWidth, setWorkspaceWidth] = useState<number | null>(null)
   const workspaceRef = useRef<HTMLDivElement>(null)
   const [composerText, setComposerText] = useState('')
   const [promptBusy, setPromptBusy] = useState(false)
@@ -507,6 +508,7 @@ export const ZeroBotRoute = memo(function ZeroBotRoute(): React.JSX.Element {
   useEffect(() => {
     if (typeof ResizeObserver === 'undefined' || workspaceRef.current === null) return
     const observer = new ResizeObserver(([entry]) => {
+      setWorkspaceWidth(entry.contentRect.width)
       if (entry.contentRect.width < 820) setInspectorOpen(false)
     })
     observer.observe(workspaceRef.current)
@@ -918,8 +920,15 @@ export const ZeroBotRoute = memo(function ZeroBotRoute(): React.JSX.Element {
     new Set([...HARNESS_MODELS[harness], ...(result?.models.map((m) => m.id) ?? [])])
   )
 
+  const codexRows = lanes.codex.rows
+  const projectThreads = useMemo(
+    () => groupThreadsByRegisteredProject(projects, codexRows),
+    [projects, codexRows]
+  )
   const openRow = lane.rows.find((r) => r.id === lane.threadId) ?? null
-  const openProject = openRow?.projectId ? projects.find((p) => p.id === openRow.projectId) : null
+  const openProject =
+    projectThreads.groups.find(({ rows }) => rows.some((row) => row.id === openRow?.id))?.project ??
+    null
   const canSend =
     live &&
     lane.threadId !== null &&
@@ -1028,21 +1037,25 @@ export const ZeroBotRoute = memo(function ZeroBotRoute(): React.JSX.Element {
       ? `${PROVIDER_DISPLAY[harness]} · ${selectedModel} · ${lane.items.length} item${lane.items.length === 1 ? '' : 's'} in this view`
       : `${PROVIDER_DISPLAY[harness]} · ${selectedModel}`
 
-  const codexRows = lanes.codex.rows
-  const projectThreads = useMemo(
-    () => groupThreadsByRegisteredProject(projects, codexRows),
-    [projects, codexRows]
-  )
   const codexInfo = states.codex
   const opencodeResult = discovery.opencode ?? null
   const openOpenCodeRow =
     opencodeResult?.folders
       .flatMap((group) => group.sessions)
       .find((session) => session.id === lanes.opencode.threadId) ?? null
+  const compact = workspaceWidth !== null && workspaceWidth < 620
 
   return (
     <div ref={workspaceRef} className="zw-route" data-region="workspace" style={workspaceStyle}>
-      <aside data-region="sidebar" style={sidebarStyle} aria-label="Conversations">
+      <aside
+        data-region="sidebar"
+        style={
+          compact
+            ? { ...sidebarStyle, width: '42%', minWidth: 168, maxWidth: 264, flexShrink: 1 }
+            : sidebarStyle
+        }
+        aria-label="Conversations"
+      >
         <span data-voice="human" style={sectionLabel}>
           PROJECT ZERO — ZERO BOT
         </span>
@@ -1215,13 +1228,27 @@ export const ZeroBotRoute = memo(function ZeroBotRoute(): React.JSX.Element {
       </aside>
 
       <main data-region="canvas" style={canvasStyle} aria-label="Conversation">
-        <div style={canvasHead}>
+        <div
+          style={
+            compact
+              ? {
+                  ...canvasHead,
+                  alignItems: 'flex-start',
+                  flexWrap: 'wrap',
+                  padding: '10px 10px 6px'
+                }
+              : canvasHead
+          }
+        >
           <div style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}>
             <span data-voice="human" style={sectionLabel}>
               CONVERSATION · {harness.toUpperCase()}
             </span>
             {lane.threadId !== null ? (
-              <span data-voice="human" style={{ ...bodyText, fontWeight: 700 }}>
+              <span
+                data-voice="human"
+                style={{ ...bodyText, fontWeight: 700, overflowWrap: 'anywhere' }}
+              >
                 {openRow !== null ? threadTitle(openRow) : openOpenCodeRow?.title || lane.threadId}
               </span>
             ) : null}
@@ -1361,7 +1388,13 @@ export const ZeroBotRoute = memo(function ZeroBotRoute(): React.JSX.Element {
             >
               <select
                 aria-label="Model selector"
-                style={{ ...modelChip, borderRadius: 6, maxWidth: 180 }}
+                style={{
+                  ...modelChip,
+                  borderRadius: 6,
+                  maxWidth: compact ? 132 : 180,
+                  minWidth: 0,
+                  flex: '1 1 100px'
+                }}
                 value={selectedModel}
                 onChange={(e) => {
                   activePromptRef.current = null

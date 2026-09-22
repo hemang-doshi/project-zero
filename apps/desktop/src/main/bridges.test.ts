@@ -234,12 +234,24 @@ describe('JsonRpcStdio process lifecycle', () => {
 })
 
 describe('JsonRpcStdio response bounds', () => {
-  it('rejects an oversized response over 1 MiB and disconnects', async () => {
+  it('accepts a saved-thread response larger than the former 1 MiB ceiling', async () => {
+    const { fake, spawnFn } = fakeChild()
+    const io = new JsonRpcStdio({ harness: 'codex', prefsDir: os.tmpdir(), spawnFn })
+    await io.connect('codex', ['app-server', '--stdio'])
+    const p = io.send('thread/read')
+    const req = JSON.parse(fake.writes[0]) as { id: number }
+    const result = 'x'.repeat(1_100_000)
+    fake.out(JSON.stringify({ jsonrpc: '2.0', id: req.id, result }) + '\n')
+    await expect(p).resolves.toBe(result)
+    expect(io.state).toBe('live')
+  })
+
+  it('rejects an oversized response over 16 MiB and disconnects', async () => {
     const { fake, spawnFn } = fakeChild()
     const io = new JsonRpcStdio({ harness: 'codex', prefsDir: os.tmpdir(), spawnFn })
     await io.connect('codex', ['app-server', '--stdio'])
     const p = io.send('thread/list')
-    const oversized = JSON.stringify({ jsonrpc: '2.0', id: 1, result: 'x'.repeat(1_100_000) })
+    const oversized = JSON.stringify({ jsonrpc: '2.0', id: 1, result: 'x'.repeat(17_000_000) })
     fake.out(oversized)
     await expect(p).rejects.toThrow(/too large/)
     expect(io.state).toBe('disconnected')
