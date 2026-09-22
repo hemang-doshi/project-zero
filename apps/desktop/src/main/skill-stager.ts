@@ -59,8 +59,9 @@ export function inspectStagedSkill(root: string, candidateId: string): StagedSki
       })
       if (path === 'SKILL.md') {
         const content = data.toString('utf8')
-        if (!/^---\r?\n[\s\S]{1,16000}?\r?\n---\r?\n/.test(content) ||
-          !/^name:\s*\S+/m.test(content) || !/^description:\s*\S+/m.test(content))
+        const frontmatter = /^---\r?\n([\s\S]{1,16000}?)\r?\n---\r?\n/.exec(content)?.[1]
+        if (!frontmatter || content.includes('\ufffd') ||
+          !/^name:\s*\S+/m.test(frontmatter) || !/^description:\s*\S+/m.test(frontmatter))
           throw new Error('Invalid SKILL.md')
       }
     }
