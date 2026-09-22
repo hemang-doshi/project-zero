@@ -9,6 +9,7 @@ describe('validateOp', () => {
     expect(validateOp('prefs.get')).toBe(true)
     expect(validateOp('telemetry.sample')).toBe(true)
     expect(validateOp('artwork.fetch')).toBe(true)
+    expect(validateOp('projects.list')).toBe(true)
     expect(validateOp('fs.read')).toBe(false)
     expect(validateOp('exec')).toBe(false)
   })
@@ -38,7 +39,9 @@ describe('validateOp', () => {
         'prefs.get',
         'prefs.set',
         'project.get',
+        'projects.list',
         'skills.discover',
+        'skills.search',
         'snapshot.fetch',
         'telemetry.sample',
         'wallpaper.pick'

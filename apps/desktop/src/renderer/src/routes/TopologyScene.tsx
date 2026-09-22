@@ -7,6 +7,7 @@ import { ZERO_TOKENS, ZERO_TYPE } from '../../../shared/tokens'
 import {
   BREADBOARD,
   BREADBOARD_TOP_Y,
+  DESK_OVERVIEW_BOUNDS,
   DESK_CENTER,
   DESK_LAYOUT,
   DESK_SIZE,
@@ -21,6 +22,7 @@ import {
   buildDeskCables,
   buildJumperWires,
   easeInOutCubic,
+  fitDeskCamera,
   focusCameraFor,
   focusReduce,
   isWebGL2Available,
@@ -69,18 +71,18 @@ const INTRO_SECONDS = 1.2
 // Eases the camera from the wide establishing shot to the working position.
 // Runs inside invalidated frames only (see Ticker); suppressed once a focus
 // tween has ever taken over, and holds still otherwise at zero cost.
-function CameraRig({ suppressed }: { suppressed: boolean }): null {
+function CameraRig({
+  suppressed,
+  overview
+}: {
+  suppressed: boolean
+  overview: typeof OVERVIEW_CAMERA
+}): null {
   const camera = useThree((s) => s.camera)
+  const invalidate = useThree((s) => s.invalidate)
   const start = useRef<number | null>(null)
-  const introTo = useMemo(
-    () =>
-      new THREE.Vector3(
-        OVERVIEW_CAMERA.position[0],
-        OVERVIEW_CAMERA.position[1],
-        OVERVIEW_CAMERA.position[2]
-      ),
-    []
-  )
+  const introTo = useMemo(() => new THREE.Vector3(...overview.position), [overview])
+  useEffect(() => invalidate(), [introTo, invalidate])
   useFrame(({ clock }) => {
     if (suppressed) return
     if (start.current === null) {
@@ -90,7 +92,7 @@ function CameraRig({ suppressed }: { suppressed: boolean }): null {
     const t = Math.min(1, (clock.elapsedTime - (start.current ?? 0)) / INTRO_SECONDS)
     const eased = 1 - Math.pow(1 - t, 3)
     camera.position.lerpVectors(INTRO_FROM, introTo, eased)
-    camera.lookAt(0, 0.1, -0.2)
+    camera.lookAt(...overview.target)
   })
   return null
 }
@@ -236,6 +238,46 @@ function FocusController({
     }
   })
   return null
+}
+
+function SceneCameraControls({
+  focused,
+  focusNonce
+}: {
+  focused: SceneNode | null
+  focusNonce: number
+}): React.JSX.Element {
+  const size = useThree((s) => s.size)
+  const aspect = size.width > 0 && size.height > 0 ? size.width / size.height : 1
+  const overview = useMemo(() => fitDeskCamera(DESK_OVERVIEW_BOUNDS, aspect), [aspect])
+  const view = useMemo(
+    () => (focused !== null ? focusCameraFor(focused.position, radiusFor(focused)) : overview),
+    [focused, overview]
+  )
+  const viewKey = focused?.id ?? (focusNonce > 0 ? `__overview__:${aspect}` : '__overview__')
+  const overviewDistance = Math.hypot(
+    overview.position[0] - overview.target[0],
+    overview.position[1] - overview.target[1],
+    overview.position[2] - overview.target[2]
+  )
+  return (
+    <>
+      <CameraRig suppressed={focusNonce > 0} overview={overview} />
+      <FocusController viewKey={viewKey} view={view} />
+      <OrbitControls
+        enableDamping
+        dampingFactor={0.12}
+        autoRotate={false}
+        enablePan
+        enableZoom
+        enableRotate
+        minDistance={3}
+        maxDistance={Math.max(26, overviewDistance * 1.1)}
+        maxPolarAngle={Math.PI / 2 - 0.06}
+        makeDefault
+      />
+    </>
+  )
 }
 
 // Desk furniture: wood-tone neutral surface (canvasTan token), legs, the
@@ -585,7 +627,8 @@ function SceneNodeMesh({
 
 const sceneWrap: React.CSSProperties = {
   position: 'relative',
-  height: 300,
+  height: 'clamp(420px, 58vh, 680px)',
+  flexShrink: 0,
   borderRadius: 10,
   overflow: 'hidden',
   background: 'var(--z-card-cream)',
@@ -649,15 +692,6 @@ export const TopologyScene = memo(function TopologyScene({
   // A focused node that left the snapshot releases focus instead of pointing
   // at stale data (same honesty rule as the list selection).
   const activeFocused = focused !== null && focused.selectable ? focused : null
-  const view = useMemo(
-    () =>
-      activeFocused !== null
-        ? focusCameraFor(activeFocused.position, radiusFor(activeFocused))
-        : OVERVIEW_CAMERA,
-    [activeFocused]
-  )
-  const viewKey = activeFocused?.id ?? '__overview__'
-
   const exitFocus = (): void => {
     setFocus((s) => focusReduce(s, { type: 'empty' }, isSelectable))
   }
@@ -706,10 +740,9 @@ export const TopologyScene = memo(function TopologyScene({
         <ambientLight intensity={0.85} />
         <directionalLight position={[4, 6, 6]} intensity={1.1} />
         <directionalLight position={[-5, 3, -2]} intensity={0.25} />
-        <CameraRig suppressed={focusNonce > 0} />
         <Ticker animated={false} />
         <Invalidator graph={graph} selectedId={selectedId} focusedId={focus.focusedId} />
-        <FocusController viewKey={viewKey} view={view} />
+        <SceneCameraControls focused={activeFocused} focusNonce={focusNonce} />
         <DeskFurniture dots={dots} />
         {cables.map((c) => (
           <CableMesh key={c.id} cable={c} />
@@ -741,18 +774,6 @@ export const TopologyScene = memo(function TopologyScene({
             />
           </group>
         ))}
-        <OrbitControls
-          enableDamping
-          dampingFactor={0.12}
-          autoRotate={false}
-          enablePan
-          enableZoom
-          enableRotate
-          minDistance={3}
-          maxDistance={26}
-          maxPolarAngle={Math.PI / 2 - 0.06}
-          makeDefault
-        />
       </Canvas>
       <div style={vignetteStyle} />
       {activeFocused !== null && footprint !== null ? (

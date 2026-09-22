@@ -1,6 +1,17 @@
 # Current working snapshot
 
-Updated: **2026-09-09 12:33 IST**. Read [handoff.md](handoff.md) for project context and recovery details. Every agent must refresh both files after substantive work.
+Updated: **2026-09-22 18:23 IST**. Read [handoff.md](handoff.md) for project context and recovery details. Every agent must refresh both files after substantive work.
+
+## Current redesign implementation
+
+The user stopped repetitive audits and requested immediate code execution across the four redesign aspects. Work is in isolated `/Users/hemangdoshi/.codex/worktrees/zero-redesign/project-zero`, branch `codex/zero-redesign`, starting from `76905a0`; check `git log -1` and `git status` for the current implementation commit/dirty state. Original checkout dirty Go/Swift/firmware work remains untouched. The September 9 sections below are historical installation/incident context, not current measured state. This host has no Zero app/CLI/database at the documented installed paths and no Zero processes; installed versions and physical acceptance are unavailable. Source manifest is 0.2.0/build 0.2.0-7, wire 0.1, migration 2.
+
+- Network scene now has a non-shrinking 420–680px container, responsive camera fit, and a larger initial window. A real Chromium static preview exposed a previously crashing R3F `data-count` prop on instanced meshes; those props were removed, and mesh-count tests now inspect constructor args. The desk rendered in Chromium at 1024×768 with monitor, ESP32, laptop, keyboard, mouse pad and gated phone visible. Unregistered monitor/ESP32 models are explicitly labelled as such rather than claiming daemon enrollment. This is a static renderer check, not physical desk acceptance.
+- Zero Bot has read-only `projects.list`, project-first versus OpenCode sidebar modes, explicit `Unprojected`, larger initial workspace window, and one inline composer with model select, voice icon and send icon. Provider sending and voice remain visibly disabled. The inspector exposes current item/tool data and explicitly marks usage/cost and missing context unavailable.
+- Airlock has a bounded local scanner and main-only one-shot hold gateway with synthetic tests, but neither is wired to live provider dispatch yet. The Airlock page now separates outbound prompt holds from existing runtime approvals and states the current send block. Raw bridge event params are no longer appended to the disk mirror; the mirror is metadata-only and capped. Malformed RPC errors now settle pending requests.
+- Skills Lab uses a virtualized searchable local line wall, preserving existing skill files and discovery roots. Read-only skills.sh search is wired through exact `skills@1.7.0` CLI dependency with bounded output/timeout; remote installation remains unavailable until transactional staging and rollback are implemented. No skill was installed.
+
+Verification: desktop **847/847 tests**, typecheck, build, and lint with **0 errors / 29 warnings** (untouched formatting warnings) passed after the latest code. Static Chromium preview passed visual checks for Network, Zero Bot and Skills Lab; no live provider, production daemon, hardware, speech helper or skill installation was exercised. The preview browser/server were stopped, its generated screenshots removed, and no new processes remain. Next: finish safe catalog staging/install, provider adapters plus prompt IPC/UI hold decisions, local speech, and bounded inspector usage evidence before enabling sends or claiming completion.
 
 ## User’s latest direction
 

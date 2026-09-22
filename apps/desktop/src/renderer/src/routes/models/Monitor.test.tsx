@@ -117,7 +117,10 @@ describe('Monitor structure', () => {
       ['window-dots', '3'],
       ['dock-icons', '6']
     ] as Array<[string, string]>) {
-      expect(el.querySelector(`[name="${name}"]`)?.getAttribute('data-count'), name).toBe(count)
+      expect(
+        el.querySelector(`[name="${name}"]`)?.getAttribute('args')?.split(',').at(-1),
+        name
+      ).toBe(count)
     }
   })
 

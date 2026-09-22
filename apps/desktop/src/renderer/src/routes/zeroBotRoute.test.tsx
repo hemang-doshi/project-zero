@@ -159,6 +159,54 @@ const renderRoute = (): void => {
 }
 
 describe('ZeroBotRoute thread surface', () => {
+  it('shows registered projects first, unprojected at bottom, and only the selected provider tree', async () => {
+    const invoke = vi.fn(async (op: string) => {
+      if (op === 'projects.list') return [{ id: 'p1', name: 'Project One', path: '/repo/one' }]
+      if (op === 'codex.state') return { state: 'live', lastDiagnostic: null }
+      if (op === 'ocp.state') return { state: 'disconnected', lastDiagnostic: null }
+      if (op === 'codex.threads')
+        return {
+          threads: [
+            { id: 'bound', name: 'Bound thread', projectId: 'p1' },
+            { id: 'loose', name: 'Loose thread' }
+          ]
+        }
+      if (op === 'ocp.discover') return OPENCODE_FOLDERS_PAYLOAD
+      throw new Error(`unexpected op ${op}`)
+    })
+    stubZero(fakeZero({}))
+    ;(globalThis as unknown as { window: { zero: FakeZero } }).window.zero.invoke = invoke
+    renderRoute()
+    await vi.waitFor(() => expect(host?.textContent).toContain('Bound thread'))
+    const sidebar = host?.querySelector('[data-region="sidebar"]')
+    expect(sidebar?.textContent?.indexOf('Project One')).toBeLessThan(
+      sidebar?.textContent?.indexOf('UNPROJECTED') ?? 0
+    )
+    expect(sidebar?.textContent).not.toContain('Beta chat')
+    const openCode = Array.from(sidebar?.querySelectorAll('button') ?? []).find(
+      (b) => b.textContent === 'OpenCode'
+    )
+    await act(async () => {
+      openCode?.click()
+    })
+    expect(sidebar?.textContent).toContain('Beta chat')
+    expect(sidebar?.textContent).not.toContain('Bound thread')
+  })
+
+  it('keeps model, voice, and send in one trailing composer row while send stays blocked', () => {
+    stubZero(fakeZero({}))
+    renderRoute()
+    const composer = host?.querySelector('[data-region="composer"]')
+    const selector = composer?.querySelector('select[aria-label="Model selector"]')
+    const voice = composer?.querySelector('button[aria-label="Voice input"]')
+    const send = composer?.querySelector('button[aria-label="Send turn"]')
+    expect(selector?.parentElement).toBe(voice?.parentElement)
+    expect(voice?.parentElement).toBe(send?.parentElement)
+    expect(Array.from(voice?.parentElement?.children ?? [])).toEqual([selector, voice, send])
+    expect(voice?.querySelector('svg')).not.toBeNull()
+    expect(send?.querySelector('svg')).not.toBeNull()
+    expect(send?.hasAttribute('disabled')).toBe(true)
+  })
   it('renders thread rows after connect lists them via the read-only op', async () => {
     const invoke = vi.fn(async (op: string) => {
       if (op === 'codex.state') return { state: 'disconnected', lastDiagnostic: null }

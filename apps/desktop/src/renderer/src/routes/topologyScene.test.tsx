@@ -10,6 +10,7 @@ import { TopologyScene } from './TopologyScene'
 
 const canvasProps: { current: Record<string, unknown> | null } = { current: null }
 const controlsProps: { current: Record<string, unknown> | null } = { current: null }
+const canvasSize = { current: { width: 900, height: 420 } }
 const frameHooks = vi.hoisted(() => ({
   current: [] as Array<(state: unknown, delta: number) => void>
 }))
@@ -37,6 +38,7 @@ vi.mock('@react-three/fiber', () => ({
         lookAt: (): void => {}
       },
       controls: null,
+      size: canvasSize.current,
       clock: { elapsedTime: 0 }
     })
 }))
@@ -90,6 +92,7 @@ const mount = async (
 beforeEach(() => {
   canvasProps.current = null
   controlsProps.current = null
+  canvasSize.current = { width: 900, height: 420 }
   frameHooks.current = []
   // The fiber mock renders R3F intrinsics (<mesh>, <boxGeometry>, …) as plain
   // DOM tags, tripping React's casing validation. Real R3F resolves these
@@ -112,6 +115,13 @@ afterEach(async () => {
 })
 
 describe('TopologyScene', () => {
+  it('keeps a useful, non-shrinking desk height when the route is short', async () => {
+    const el = await mount(() => {})
+    const scene = el.querySelector('[data-testid="topology-scene"]') as HTMLElement
+    expect(scene.style.height).toBe('clamp(420px, 58vh, 680px)')
+    expect(scene.style.flexShrink).toBe('0')
+  })
+
   it('renders the canvas render-on-demand with high-performance WebGL', async () => {
     await mount(() => {})
     expect(canvasProps.current?.frameloop).toBe('demand')
@@ -134,6 +144,12 @@ describe('TopologyScene', () => {
     expect(controlsProps.current?.minDistance).toBe(3)
     expect(controlsProps.current?.maxDistance).toBe(26)
     expect(controlsProps.current?.maxPolarAngle).toBeLessThanOrEqual(Math.PI / 2)
+  })
+
+  it('allows the fitted overview distance when the canvas is narrow', async () => {
+    canvasSize.current = { width: 315, height: 420 }
+    await mount(() => {})
+    expect(controlsProps.current?.maxDistance).toBeGreaterThan(26)
   })
 
   it('carries no hub, router, or beam remnants', async () => {
