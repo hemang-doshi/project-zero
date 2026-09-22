@@ -1,6 +1,12 @@
 # Project Zero — full project handoff
 
-Updated: **2026-09-22 19:32 IST**. Start with [AGENTS.md](AGENTS.md) and [snapshot.md](snapshot.md). This document supplies durable context; the snapshot supplies the newest checkout/installation/test state. Every agent must maintain both. Pending items are not permission to resume a task the user stopped.
+Updated: **2026-09-22 23:35 IST**. Start with [AGENTS.md](AGENTS.md) and [snapshot.md](snapshot.md). This document supplies durable context; the snapshot supplies the newest checkout/installation/test state. Every agent must maintain both. Pending items are not permission to resume a task the user stopped.
+
+## Zero Bot harness recovery handoff
+
+The latest user-approved pass replaces the fragile OpenCode CLI export with bounded, read-only SQLite transcript reads and enables provider-owned text dispatch through Airlock for both harnesses. The main boundaries are now: Codex thread identity plus absolute provider cwd (no fabricated daemon `projectId`); OpenCode discovered session id plus directory, ACP `session/load`, advertised model option, optional `session/set_config_option`, then `session/prompt`; permission requests surface to the renderer and only bounded allow-once/reject responses cross IPC. New conversation creation requires a connected provider, a directory inherited from an explicitly selected conversation/project, and an advertised model. The inspector shows outcome counts and grouped tool names rather than every call, while detailed cards stay in the transcript. Stored OpenCode usage is shown only when numeric totals exist.
+
+The official Codex CLI 0.155.1 is now present in Zero's isolated toolchain and passed a no-turn app-server check (ChatGPT login, account read, model list, thread list, metadata thread read). The resolver now probes private toolchains and skips broken newer shims. No provider prompt was run. Production runtime installation is still blocked safely: this Mac has no valid code-signing identity, installed Zero app, daemon, or socket. Follow `docs/runbooks/v02-installation.md`; never substitute an ad-hoc identity or development daemon for registered-project recovery. Source verification and remaining acceptance gates are recorded at the top of snapshot.md.
 
 ## September 22 follow-up repair handoff
 

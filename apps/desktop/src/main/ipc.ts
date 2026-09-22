@@ -1,13 +1,15 @@
 import { ipcMain, type BrowserWindow } from 'electron'
 import { randomUUID } from 'node:crypto'
-import { join } from 'node:path'
+import { isAbsolute, join } from 'node:path'
 import {
   validateOp,
   type ArtworkPayload,
   type CommandPayload,
+  type ConversationNewPayload,
   type DevicesListPayload,
   type DevicesListResult,
   type ProjectPayload,
+  type ProviderPermissionPayload,
   type ProjectListItem,
   type PromptSubmitPayload,
   type PromptDecidePayload,
@@ -18,8 +20,11 @@ import {
 } from '../shared/ipc'
 import { applyPrefsPatch, type Prefs } from './prefs'
 import { createBridgePair, type BridgeDeps, type HarnessId, type RpcEvent } from './bridges'
-import { defaultOpenCodeDbPath, readOpenCodeSessionStore } from './opencode-sessions'
-import { exportOpenCodeSession } from './opencode-export'
+import {
+  defaultOpenCodeDbPath,
+  readOpenCodeSession,
+  readOpenCodeSessionStore
+} from './opencode-sessions'
 import { artworkDataUrl } from './artwork-image'
 import { searchSkillsCatalog, type CatalogSkill } from './skills-catalog'
 import { PromptGateway, type PromptRequest } from './prompt-gateway'
@@ -43,7 +48,6 @@ export type SocketDeps = {
   searchSkills?: (query: string) => Promise<CatalogSkill[]>
   providerDispatch?: (request: PromptRequest) => Promise<{ turnId: string }>
   openCodeDbPath?: string
-  exportOpenCodeSession?: (threadId: string) => Promise<unknown>
 }
 
 const prefsDir = join(process.env.HOME ?? '', 'Library', 'Application Support', 'ProjectZero')
@@ -126,23 +130,38 @@ function listOf(result: unknown): unknown[] {
   return Array.isArray(data) ? data : []
 }
 
-function promptRequest(value: unknown, decision = false): PromptRequest & Partial<PromptDecidePayload> {
+function promptRequest(
+  value: unknown,
+  decision = false
+): PromptRequest & Partial<PromptDecidePayload> {
   if (typeof value !== 'object' || value === null || Array.isArray(value))
     throw new Error('Malformed prompt')
   const row = value as Record<string, unknown>
   const required = decision
     ? ['provider', 'model', 'threadId', 'text', 'holdId', 'action']
     : ['provider', 'model', 'threadId', 'text']
-  if (Object.keys(row).length !== required.length || required.some((key) => !Object.hasOwn(row, key)))
+  if (
+    Object.keys(row).length !== required.length ||
+    required.some((key) => !Object.hasOwn(row, key))
+  )
     throw new Error('Malformed prompt')
   if (
-    row.provider !== 'codex' ||
-    typeof row.model !== 'string' || row.model.length < 1 || row.model.length > 120 ||
-    typeof row.threadId !== 'string' || row.threadId.length < 1 || row.threadId.length > 120 ||
-    typeof row.text !== 'string' || !row.text.trim() || Buffer.byteLength(row.text, 'utf8') > 32_000 ||
-    (decision && (typeof row.holdId !== 'string' || !/^[0-9a-f-]{36}$/i.test(row.holdId) ||
-      (row.action !== 'cancel' && row.action !== 'send-once')))
-  ) throw new Error('Malformed prompt')
+    (row.provider !== 'codex' && row.provider !== 'opencode') ||
+    typeof row.model !== 'string' ||
+    row.model.length < 1 ||
+    row.model.length > 120 ||
+    typeof row.threadId !== 'string' ||
+    row.threadId.length < 1 ||
+    row.threadId.length > 120 ||
+    typeof row.text !== 'string' ||
+    !row.text.trim() ||
+    Buffer.byteLength(row.text, 'utf8') > 32_000 ||
+    (decision &&
+      (typeof row.holdId !== 'string' ||
+        !/^[0-9a-f-]{36}$/i.test(row.holdId) ||
+        (row.action !== 'cancel' && row.action !== 'send-once')))
+  )
+    throw new Error('Malformed prompt')
   return row as PromptSubmitPayload & Partial<PromptDecidePayload>
 }
 
@@ -151,10 +170,19 @@ export function createDispatch(
   getBridgePair: () => BridgeDeps = getBridges
 ): (op: unknown, payload?: unknown) => Promise<unknown> {
   const gateway = new PromptGateway(
-    deps.providerDispatch ?? ((request) => dispatchProviderPrompt(request, {
-      codex: getBridgePair().codex,
-      projects: async () => projectList(await deps.fetchSnapshot(deps.socketPath, { path: '/v0.1/projects' }))
-    }))
+    deps.providerDispatch ??
+      ((request) =>
+        dispatchProviderPrompt(request, {
+          codex: getBridgePair().codex,
+          opencode: getBridgePair().ocp,
+          openCodeSession: (id) => {
+            const store = readOpenCodeSessionStore(deps.openCodeDbPath ?? defaultOpenCodeDbPath())
+            const session = store.groups
+              .flatMap((group) => group.sessions)
+              .find((row) => row.id === id)
+            return session ? { id: session.id, directory: session.directory } : null
+          }
+        }))
   )
   const bridgeState = async (harness: 'codex' | 'ocp'): Promise<unknown> => {
     const bridge = getBridgePair()[harness]
@@ -197,6 +225,121 @@ export function createDispatch(
     const root =
       typeof result === 'object' && result !== null ? (result as Record<string, unknown>) : {}
     return { harness: 'codex', thread: root['thread'] ?? null }
+  }
+  const prepareOpenCode = async (payload: unknown): Promise<unknown> => {
+    const { threadId } = (payload ?? {}) as Partial<ThreadGetPayload>
+    if (typeof threadId !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(threadId))
+      throw new Error('Malformed OpenCode session id')
+    const bridge = getBridgePair().ocp
+    if (bridge.state !== 'live') throw new Error('not connected')
+    const store = readOpenCodeSessionStore(deps.openCodeDbPath ?? defaultOpenCodeDbPath())
+    const session = store.groups
+      .flatMap((group) => group.sessions)
+      .find((row) => row.id === threadId)
+    if (!session) throw new Error('OpenCode session not found')
+    const result = await bridge.send('session/load', {
+      sessionId: threadId,
+      cwd: session.directory,
+      mcpServers: []
+    })
+    const root =
+      typeof result === 'object' && result !== null ? (result as Record<string, unknown>) : {}
+    const configs = Array.isArray(root['configOptions']) ? root['configOptions'] : []
+    const model = configs.find(
+      (value) =>
+        typeof value === 'object' &&
+        value !== null &&
+        (value as Record<string, unknown>)['id'] === 'model'
+    ) as Record<string, unknown> | undefined
+    const options = Array.isArray(model?.['options']) ? model.options : []
+    const models = options.flatMap((value) => {
+      if (typeof value !== 'object' || value === null) return []
+      const row = value as Record<string, unknown>
+      if (typeof row['value'] !== 'string' || row['value'] === '') return []
+      return [
+        { id: row['value'], name: typeof row['name'] === 'string' ? row['name'] : row['value'] }
+      ]
+    })
+    return {
+      sessionId: threadId,
+      cwd: session.directory,
+      currentModel: typeof model?.['currentValue'] === 'string' ? model.currentValue : null,
+      models
+    }
+  }
+  const newConversation = async (payload: unknown): Promise<unknown> => {
+    if (typeof payload !== 'object' || payload === null || Array.isArray(payload))
+      throw new Error('Malformed conversation request')
+    const { provider, cwd, model } = payload as Partial<ConversationNewPayload>
+    if (
+      (provider !== 'codex' && provider !== 'opencode') ||
+      typeof cwd !== 'string' ||
+      !isAbsolute(cwd) ||
+      typeof model !== 'string' ||
+      model === '' ||
+      model.length > 120
+    )
+      throw new Error('Malformed conversation request')
+    const bridge = provider === 'codex' ? getBridgePair().codex : getBridgePair().ocp
+    if (bridge.state !== 'live') throw new Error('not connected')
+    if (provider === 'codex') {
+      const result = await bridge.send('thread/start', {
+        cwd,
+        model,
+        approvalPolicy: 'on-request',
+        sandbox: { type: 'workspaceWrite' }
+      })
+      const root =
+        typeof result === 'object' && result !== null ? (result as Record<string, unknown>) : {}
+      const thread =
+        typeof root['thread'] === 'object' && root['thread'] !== null
+          ? (root['thread'] as Record<string, unknown>)
+          : {}
+      if (typeof thread['id'] !== 'string' || thread['id'] === '')
+        throw new Error('Malformed thread creation')
+      return { provider, threadId: thread['id'] }
+    }
+    const result = await bridge.send('session/new', { cwd, mcpServers: [] })
+    const root =
+      typeof result === 'object' && result !== null ? (result as Record<string, unknown>) : {}
+    if (typeof root['sessionId'] !== 'string' || root['sessionId'] === '')
+      throw new Error('Malformed session creation')
+    return { provider, threadId: root['sessionId'] }
+  }
+  const decideProviderPermission = (payload: unknown): { accepted: true } => {
+    if (typeof payload !== 'object' || payload === null || Array.isArray(payload))
+      throw new Error('Malformed permission decision')
+    const row = payload as Record<string, unknown>
+    const { provider, requestId, action, optionId } = row as Partial<ProviderPermissionPayload>
+    const expectedKeys =
+      action === 'allow-once' && provider === 'opencode'
+        ? ['provider', 'requestId', 'action', 'optionId']
+        : ['provider', 'requestId', 'action']
+    if (
+      Object.keys(row).length !== expectedKeys.length ||
+      expectedKeys.some((key) => !Object.hasOwn(row, key)) ||
+      (provider !== 'codex' && provider !== 'opencode') ||
+      (typeof requestId !== 'string' && typeof requestId !== 'number') ||
+      requestId === '' ||
+      (action !== 'allow-once' && action !== 'reject') ||
+      (provider === 'opencode' &&
+        action === 'allow-once' &&
+        (typeof optionId !== 'string' || optionId === ''))
+    )
+      throw new Error('Malformed permission decision')
+    const bridge = provider === 'codex' ? getBridgePair().codex : getBridgePair().ocp
+    if (bridge.state !== 'live') throw new Error('not connected')
+    if (provider === 'opencode') {
+      bridge.respond(
+        requestId,
+        action === 'allow-once'
+          ? { outcome: { outcome: 'selected', optionId } }
+          : { outcome: { outcome: 'cancelled' } }
+      )
+    } else {
+      bridge.respond(requestId, { decision: action === 'allow-once' ? 'accept' : 'decline' })
+    }
+    return { accepted: true }
   }
   // The daemon caches artwork by content digest (entities kind='artwork'); the
   // cockpit display projection deliberately omits the blob, so this op reads
@@ -259,6 +402,10 @@ export function createDispatch(
         const request = promptRequest(payload, true)
         return gateway.decide(request.holdId!, request.action!, request)
       }
+      case 'conversation.new':
+        return newConversation(payload)
+      case 'provider.permission.decide':
+        return decideProviderPermission(payload)
       case 'ocp.state':
         return bridgeState('ocp')
       case 'ocp.discover':
@@ -268,11 +415,18 @@ export function createDispatch(
         if (typeof threadId !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(threadId))
           throw new Error('Malformed OpenCode session id')
         const store = readOpenCodeSessionStore(deps.openCodeDbPath ?? defaultOpenCodeDbPath())
-        if (!store.groups.some((group) => group.sessions.some((session) => session.id === threadId)))
+        if (
+          !store.groups.some((group) => group.sessions.some((session) => session.id === threadId))
+        )
           throw new Error('OpenCode session not found')
-        const session = await (deps.exportOpenCodeSession ?? exportOpenCodeSession)(threadId)
+        const session = readOpenCodeSession(
+          deps.openCodeDbPath ?? defaultOpenCodeDbPath(),
+          threadId
+        )
         return { harness: 'opencode', session }
       }
+      case 'ocp.thread.prepare':
+        return prepareOpenCode(payload)
       case 'snapshot.fetch':
         return deps.fetchSnapshot(deps.socketPath)
       case 'command.send': {

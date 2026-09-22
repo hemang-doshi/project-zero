@@ -81,7 +81,11 @@ function fakeChild(script?: (req: ParsedReq, fake: FakeChild) => void): {
 
 function writeCodexToolchain(dir: string, version: string): void {
   fs.mkdirSync(path.join(dir, `codex-${version}`), { recursive: true })
-  fs.writeFileSync(path.join(dir, `codex-${version}`, 'codex'), '', { mode: 0o755 })
+  fs.writeFileSync(
+    path.join(dir, `codex-${version}`, 'codex'),
+    `#!/bin/sh\necho 'codex-cli ${version}'\n`,
+    { mode: 0o755 }
+  )
 }
 
 const codexInitialize = (req: ParsedReq, fake: FakeChild): void => {
@@ -141,6 +145,26 @@ describe('JsonRpcStdio request correlation', () => {
     expect(settled).toBe(false)
     fake.out(JSON.stringify({ id: 1, result: { right: true } }))
     await expect(p).resolves.toEqual({ right: true })
+  })
+
+  it('responds to a provider-initiated permission request with the exact request id', async () => {
+    const { fake, spawnFn } = fakeChild()
+    const io = new JsonRpcStdio({
+      harness: 'opencode',
+      prefsDir: os.tmpdir(),
+      spawnFn,
+      jsonrpc: true
+    })
+    await io.connect('opencode', ['acp'])
+    fake.out(
+      JSON.stringify({ jsonrpc: '2.0', id: 42, method: 'session/request_permission', params: {} })
+    )
+    io.respond(42, { outcome: { outcome: 'selected', optionId: 'allow-once' } })
+    expect(JSON.parse(fake.writes[0] ?? '{}')).toEqual({
+      jsonrpc: '2.0',
+      id: 42,
+      result: { outcome: { outcome: 'selected', optionId: 'allow-once' } }
+    })
   })
 })
 
@@ -359,10 +383,24 @@ describe('CodexBridge toolchain resolution', () => {
     fs.chmodSync(cli, 0o700)
     expect(() => resolveCodexToolchain(path.join(dir, 'missing'), [cli])).toThrow(/not found/i)
   })
+  it('skips a broken newer private toolchain and uses the newest runnable version', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'zero-tool-'))
+    writeCodexToolchain(dir, '0.154.0')
+    writeCodexToolchain(dir, '0.155.1')
+    fs.writeFileSync(path.join(dir, 'codex-0.155.1', 'codex'), '#!/bin/sh\nexit 1\n', {
+      mode: 0o755
+    })
+    expect(resolveCodexToolchain(dir)).toBe(path.join(dir, 'codex-0.154.0', 'codex'))
+  })
   it('fails with a clear message and never spawns when no toolchain exists', async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'zero-tool-'))
     const { records, spawnFn } = fakeChild()
-    const bridge = new CodexBridge({ prefsDir: dir, toolchainsDir: dir, systemCandidates: [], spawnFn })
+    const bridge = new CodexBridge({
+      prefsDir: dir,
+      toolchainsDir: dir,
+      systemCandidates: [],
+      spawnFn
+    })
     await expect(bridge.connect()).rejects.toThrow(/CLI not found/i)
     expect(records).toHaveLength(0)
   })
@@ -394,6 +432,9 @@ describe('OpenCodeBridge ACP invocation', () => {
     const req = JSON.parse(fake.writes[0]) as Record<string, unknown>
     expect(req['jsonrpc']).toBe('2.0')
     expect(req['method']).toBe('initialize')
+    expect(req['params']).toMatchObject({
+      clientCapabilities: { _meta: { 'terminal-auth': true } }
+    })
     expect(bridge.state).toBe('live')
     await expect(bridge.connect()).rejects.toThrow(/already connected/)
     expect(bridge.disconnect()).toBe('disconnected')

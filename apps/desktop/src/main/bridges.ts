@@ -175,6 +175,13 @@ export class JsonRpcStdio {
     }
   }
 
+  respond(id: string | number, result: unknown): void {
+    if (this._state !== 'connecting' && this._state !== 'live') throw new Error('disconnected')
+    if ((typeof id !== 'string' && typeof id !== 'number') || id === '')
+      throw new Error('invalid request id')
+    this.write({ id, result })
+  }
+
   disconnect(): BridgeState {
     this.failAll(this.session, new Error('disconnected'))
     return this._state
@@ -367,7 +374,10 @@ export class CodexBridge {
     this.toolchainsDir =
       opts.toolchainsDir ??
       join(process.env.HOME ?? '', 'Library', 'Application Support', 'ProjectZero', 'toolchains')
-    this.systemCandidates = opts.systemCandidates ?? ['/usr/local/bin/codex', '/opt/homebrew/bin/codex']
+    this.systemCandidates = opts.systemCandidates ?? [
+      '/usr/local/bin/codex',
+      '/opt/homebrew/bin/codex'
+    ]
     this.io = new JsonRpcStdio({
       harness: 'codex',
       prefsDir: opts.prefsDir,
@@ -405,6 +415,10 @@ export class CodexBridge {
     return this.io.send(method, params)
   }
 
+  respond(id: string | number, result: unknown): void {
+    this.io.respond(id, result)
+  }
+
   onEvent(cb: (ev: RpcEvent) => void): () => void {
     return this.io.onEvent(cb)
   }
@@ -432,7 +446,7 @@ export class OpenCodeBridge {
       handshake: async (io) => {
         await io.send('initialize', {
           protocolVersion: 1,
-          clientCapabilities: {},
+          clientCapabilities: { _meta: { 'terminal-auth': true } },
           clientInfo: { name: 'project_zero', version: io.version }
         })
       }
@@ -462,6 +476,10 @@ export class OpenCodeBridge {
     return this.io.send(method, params)
   }
 
+  respond(id: string | number, result: unknown): void {
+    this.io.respond(id, result)
+  }
+
   onEvent(cb: (ev: RpcEvent) => void): () => void {
     return this.io.onEvent(cb)
   }
@@ -489,7 +507,8 @@ export function resolveCodexToolchain(dir: string, systemCandidates: string[] = 
     const exe = join(dir, name, 'codex')
     try {
       fs.accessSync(exe, fs.constants.X_OK)
-      return exe
+      const probe = spawnSync(exe, ['--version'], { timeout: 3_000, encoding: 'utf8' })
+      if (probe.status === 0 && /^codex-cli\s+\S+/m.test(probe.stdout)) return exe
     } catch {
       /* try the next candidate */
     }

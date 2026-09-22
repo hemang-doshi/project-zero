@@ -102,3 +102,44 @@ export function turnItemCounts(items: ChatItem[]): TurnItemCounts {
   }
   return { messages, thinking, tools, notices }
 }
+
+export type ToolOutcomeSummary = {
+  total: number
+  completed: number
+  failed: number
+  running: number
+  groups: Array<{ name: string; count: number }>
+}
+
+export function toolOutcomeSummary(items: ChatItem[]): ToolOutcomeSummary {
+  let completed = 0
+  let failed = 0
+  let running = 0
+  const groups = new Map<string, number>()
+  for (const item of items) {
+    if (item.kind !== 'tool' && item.kind !== 'exec') continue
+    const name = item.kind === 'exec' ? 'terminal' : item.tool
+    groups.set(name, (groups.get(name) ?? 0) + 1)
+    const status = item.status.toLowerCase()
+    if (
+      status === 'error' ||
+      status === 'failed' ||
+      (item.kind === 'exec' && item.exitCode !== null && item.exitCode !== 0)
+    )
+      failed += 1
+    else if (
+      status === 'inprogress' ||
+      status === 'pending' ||
+      (item.kind === 'exec' && item.exitCode === null)
+    )
+      running += 1
+    else completed += 1
+  }
+  return {
+    total: completed + failed + running,
+    completed,
+    failed,
+    running,
+    groups: [...groups].map(([name, count]) => ({ name, count }))
+  }
+}

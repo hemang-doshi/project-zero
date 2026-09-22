@@ -6,12 +6,17 @@ import {
   summarizeToolItem,
   streamingLabel,
   turnItemCounts,
+  toolOutcomeSummary,
   projectErrorMessage
 } from './zeroBot.presentation'
 import type { ChatItem } from './chat.model'
 
 it('explains a missing Zero daemon without hiding independent chat history', () => {
-  expect(projectErrorMessage(new Error('connect ENOENT /Users/me/Library/Application Support/ProjectZero/zero.sock'))).toContain('Codex and OpenCode history')
+  expect(
+    projectErrorMessage(
+      new Error('connect ENOENT /Users/me/Library/Application Support/ProjectZero/zero.sock')
+    )
+  ).toContain('Codex and OpenCode history')
 })
 
 describe('formatViaAttribution', () => {
@@ -194,6 +199,59 @@ describe('turnItemCounts', () => {
       { kind: 'notice', text: 'plan', id: 'n1' }
     ]
     expect(turnItemCounts(items)).toEqual({ messages: 2, thinking: 1, tools: 2, notices: 1 })
+  })
+})
+
+describe('toolOutcomeSummary', () => {
+  it('condenses repeated calls and separates completed, failed and running outcomes', () => {
+    const items: ChatItem[] = [
+      {
+        kind: 'tool',
+        tool: 'websearch',
+        server: null,
+        detail: '',
+        result: null,
+        status: 'completed',
+        id: 'a'
+      },
+      {
+        kind: 'tool',
+        tool: 'websearch',
+        server: null,
+        detail: '',
+        result: null,
+        status: 'error',
+        id: 'b'
+      },
+      {
+        kind: 'exec',
+        command: 'npm test',
+        cwd: '',
+        output: null,
+        exitCode: 0,
+        status: 'completed',
+        id: 'c'
+      },
+      {
+        kind: 'exec',
+        command: 'npm run build',
+        cwd: '',
+        output: null,
+        exitCode: null,
+        status: 'inProgress',
+        id: 'd'
+      }
+    ]
+    expect(toolOutcomeSummary(items)).toEqual({
+      total: 4,
+      completed: 2,
+      failed: 1,
+      running: 1,
+      groups: [
+        { name: 'websearch', count: 2 },
+        { name: 'terminal', count: 2 }
+      ]
+    })
   })
 })
 

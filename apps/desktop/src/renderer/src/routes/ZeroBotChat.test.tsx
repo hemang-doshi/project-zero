@@ -108,6 +108,14 @@ describe('ThinkingBlock', () => {
     })
     expect(host?.innerHTML).not.toContain('raw internal reasoning text')
   })
+
+  it('labels provider-withheld reasoning without implying a missing generated summary', () => {
+    const html = mount(
+      createElement(ThinkingBlock, { item: { ...thinking, text: '', summary: '' } })
+    )
+    expect(html).toContain('reasoning unavailable')
+    expect(html).not.toContain('no summary available')
+  })
 })
 
 describe('MarkdownText via ChatRow messages', () => {

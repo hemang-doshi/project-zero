@@ -5,6 +5,7 @@ import * as path from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import {
   groupSessionsByFolder,
+  readOpenCodeSession,
   readOpenCodeSessionStore,
   type OpenCodeSessionRow
 } from './opencode-sessions'
@@ -41,6 +42,85 @@ function fixtureDb(rows: Array<Record<string, unknown>>): string {
       (r['model'] as string | null) ?? null,
       (r['time_created'] as number) ?? 0,
       (r['time_updated'] as number) ?? 0
+    )
+  }
+  db.close()
+  return dbPath
+}
+
+function transcriptDb(text: string): string {
+  const dbPath = fixtureDb([
+    { id: 's1', directory: '/repo/alpha', title: 'Large session', time_created: 1, time_updated: 2 }
+  ])
+  const db = new DatabaseSync(dbPath)
+  db.exec(`
+    CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT NOT NULL, time_created INTEGER NOT NULL, time_updated INTEGER NOT NULL, data TEXT NOT NULL);
+    CREATE TABLE part (id TEXT PRIMARY KEY, message_id TEXT NOT NULL, session_id TEXT NOT NULL, time_created INTEGER NOT NULL, time_updated INTEGER NOT NULL, data TEXT NOT NULL);
+  `)
+  db.prepare('INSERT INTO message VALUES (?, ?, ?, ?, ?)').run(
+    'm-user',
+    's1',
+    10,
+    10,
+    JSON.stringify({
+      role: 'user',
+      model: { providerID: 'anthropic', modelID: 'claude-sonnet-4-5' }
+    })
+  )
+  db.prepare('INSERT INTO part VALUES (?, ?, ?, ?, ?, ?)').run(
+    'p-text',
+    'm-user',
+    's1',
+    10,
+    10,
+    JSON.stringify({ type: 'text', text })
+  )
+  db.prepare('INSERT INTO message VALUES (?, ?, ?, ?, ?)').run(
+    'm-assistant',
+    's1',
+    20,
+    20,
+    JSON.stringify({
+      role: 'assistant',
+      providerID: 'anthropic',
+      modelID: 'claude-sonnet-4-5',
+      cost: 0.25,
+      tokens: { input: 120, output: 45, reasoning: 10 }
+    })
+  )
+  for (const [id, data, at] of [
+    ['p-reasoning', { type: 'reasoning', text: '' }, 21],
+    [
+      'p-ok',
+      {
+        type: 'tool',
+        tool: 'bash',
+        state: {
+          status: 'completed',
+          input: { command: 'npm test', workdir: '/repo/alpha' },
+          output: 'ok',
+          metadata: { exitCode: 0 }
+        }
+      },
+      22
+    ],
+    [
+      'p-fail',
+      {
+        type: 'tool',
+        tool: 'websearch',
+        state: { status: 'error', input: { query: 'docs' }, output: 'network failed' }
+      },
+      23
+    ]
+  ] as const) {
+    db.prepare('INSERT INTO part VALUES (?, ?, ?, ?, ?, ?)').run(
+      id,
+      'm-assistant',
+      's1',
+      at,
+      at,
+      JSON.stringify(data)
     )
   }
   db.close()
@@ -195,5 +275,38 @@ describe('readOpenCodeSessionStore', () => {
     expect(result.ok).toBe(false)
     expect(result.groups).toEqual([])
     expect(result.note).toContain('No OpenCode sessions found')
+  })
+})
+
+describe('readOpenCodeSession', () => {
+  it('reads complete local messages larger than the CLI export truncation boundary', () => {
+    const text = 'x'.repeat(70_000)
+    const result = readOpenCodeSession(transcriptDb(text), 's1')
+    expect(result.info).toMatchObject({ id: 's1', directory: '/repo/alpha' })
+    expect(result.messages[0]?.parts[0]).toMatchObject({ type: 'text', text })
+  })
+
+  it('preserves unavailable reasoning and successful and failed tool outcomes', () => {
+    const result = readOpenCodeSession(transcriptDb('hello'), 's1')
+    expect(result.messages[1]?.info).toMatchObject({ role: 'assistant', cost: 0.25 })
+    expect(result.messages[1]?.parts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ type: 'reasoning', text: '' }),
+        expect.objectContaining({
+          type: 'tool',
+          tool: 'bash',
+          state: expect.objectContaining({ status: 'completed' })
+        }),
+        expect.objectContaining({
+          type: 'tool',
+          tool: 'websearch',
+          state: expect.objectContaining({ status: 'error' })
+        })
+      ])
+    )
+  })
+
+  it('rejects sessions that are not present in the local store', () => {
+    expect(() => readOpenCodeSession(transcriptDb('hello'), 'missing')).toThrow(/not found/i)
   })
 })

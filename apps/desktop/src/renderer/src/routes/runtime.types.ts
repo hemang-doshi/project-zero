@@ -740,21 +740,21 @@ export type Harness = 'codex' | 'opencode'
 export type BridgeConnState = 'unknown' | 'disconnected' | 'connecting' | 'live'
 
 export const HARNESS_MODELS: Record<Harness, string[]> = {
-  codex: ['gpt-5.6-luna', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-6-astra'],
-  opencode: ['muse-spark-1.3']
+  codex: [],
+  opencode: []
 }
 
 export const HARNESS_DEFAULT_MODEL: Record<Harness, string> = {
   codex: 'gpt-5.6-luna',
-  opencode: 'muse-spark-1.3'
+  opencode: ''
 }
 
 export const mirrorLabel = (harness: Harness): string => `zero-meta/${harness}/events.jsonl`
 
 export function harnessLockWarning(model: string, harness: Harness): string | null {
   if (HARNESS_MODELS[harness].includes(model)) return null
-  const home = harness === 'codex' ? 'Codex (GPT only)' : 'OpenCode (Muse Spark only)'
-  return `Model ${model} is not allowed in the ${harness} harness. It stays locked to its home harness (${home}); this mismatch is mirrored, not sent.`
+  if (model === '') return null
+  return `Model ${model} has not been advertised by the active ${harness} session and cannot be sent.`
 }
 
 export type BridgeEvent = {
@@ -924,7 +924,7 @@ const folderOptions = (rows: unknown[]): OpenCodeFolderGroup[] => {
 }
 
 export const SEND_BLOCKED_NOTICE =
-  'Send is honestly blocked in this build: the daemon command path has no conversational send yet.'
+  'Connect the provider, open a conversation with a verified directory, and choose an advertised model to send.'
 
 export const VOICE_DISABLED_NOTICE =
   'Voice input is disabled in this build; use system dictation instead.'

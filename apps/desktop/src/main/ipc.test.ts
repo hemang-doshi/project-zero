@@ -17,6 +17,7 @@ type FakeBridge = {
   onEvent: (cb: (ev: RpcEvent) => void) => () => void
   connect: () => Promise<'live'>
   disconnect: () => 'disconnected'
+  respond: (id: string | number, result: unknown) => void
 }
 
 function fakeBridge(state: FakeBridge['state']): FakeBridge {
@@ -40,7 +41,8 @@ function fakeBridge(state: FakeBridge['state']): FakeBridge {
       return () => {}
     },
     connect: () => Promise.resolve('live'),
-    disconnect: () => 'disconnected'
+    disconnect: () => 'disconnected',
+    respond: vi.fn()
   }
 }
 
@@ -122,20 +124,35 @@ describe('skills.search', () => {
 
 describe('prompt gateway IPC', () => {
   const clean = {
-    provider: 'codex', model: 'gpt-5.6-sol', threadId: 't1', text: 'hello Zero'
+    provider: 'codex',
+    model: 'gpt-5.6-sol',
+    threadId: 't1',
+    text: 'hello Zero'
   }
   it('dispatches only through the gateway and rejects malformed or extra fields', async () => {
     const d = deps()
     const providerDispatch = vi.fn(async () => ({ turnId: 'turn-1' }))
     d.providerDispatch = providerDispatch
     const invoke = createDispatch(d)
-    await expect(invoke('prompt.submit', clean)).resolves.toEqual({ state: 'accepted', turnId: 'turn-1' })
+    await expect(invoke('prompt.submit', clean)).resolves.toEqual({
+      state: 'accepted',
+      turnId: 'turn-1'
+    })
     expect(providerDispatch).toHaveBeenCalledOnce()
-    await expect(invoke('prompt.submit', { ...clean, bypass: true })).rejects.toThrow('Malformed prompt')
-    await expect(invoke('prompt.submit', { ...clean, text: 'x'.repeat(32_001) })).rejects.toThrow('Malformed prompt')
-    await expect(invoke('prompt.submit', { ...clean, provider: 'other' })).rejects.toThrow('Malformed prompt')
-    await expect(invoke('prompt.submit', { ...clean, provider: 'opencode' })).rejects.toThrow('Malformed prompt')
-    expect(providerDispatch).toHaveBeenCalledOnce()
+    await expect(invoke('prompt.submit', { ...clean, bypass: true })).rejects.toThrow(
+      'Malformed prompt'
+    )
+    await expect(invoke('prompt.submit', { ...clean, text: 'x'.repeat(32_001) })).rejects.toThrow(
+      'Malformed prompt'
+    )
+    await expect(invoke('prompt.submit', { ...clean, provider: 'other' })).rejects.toThrow(
+      'Malformed prompt'
+    )
+    await expect(invoke('prompt.submit', { ...clean, provider: 'opencode' })).resolves.toEqual({
+      state: 'accepted',
+      turnId: 'turn-1'
+    })
+    expect(providerDispatch).toHaveBeenCalledTimes(2)
   })
 
   it('holds sensitive text until one exact-bound approval, and consumes the hold', async () => {
@@ -144,14 +161,93 @@ describe('prompt gateway IPC', () => {
     d.providerDispatch = providerDispatch
     const invoke = createDispatch(d)
     const sensitive = { ...clean, text: 'password = synthetic-secret-123' }
-    const held = await invoke('prompt.submit', sensitive) as { state: string; holdId: string }
+    const held = (await invoke('prompt.submit', sensitive)) as { state: string; holdId: string }
     expect(held.state).toBe('held')
     expect(providerDispatch).not.toHaveBeenCalled()
-    await expect(invoke('prompt.decide', { ...sensitive, holdId: held.holdId, action: 'send-once' }))
-      .resolves.toEqual({ state: 'accepted', turnId: 'turn-2' })
-    await expect(invoke('prompt.decide', { ...sensitive, holdId: held.holdId, action: 'send-once' }))
-      .resolves.toMatchObject({ state: 'blocked' })
+    await expect(
+      invoke('prompt.decide', { ...sensitive, holdId: held.holdId, action: 'send-once' })
+    ).resolves.toEqual({ state: 'accepted', turnId: 'turn-2' })
+    await expect(
+      invoke('prompt.decide', { ...sensitive, holdId: held.holdId, action: 'send-once' })
+    ).resolves.toMatchObject({ state: 'blocked' })
     expect(providerDispatch).toHaveBeenCalledOnce()
+  })
+})
+
+describe('conversation.new', () => {
+  it('starts a Codex thread in the explicitly selected absolute cwd', async () => {
+    const codex = fakeBridge('live')
+    codex.send = vi.fn(async () => ({ thread: { id: 'new-codex' } }))
+    const invoke = createDispatch(deps(), () => fakePair(codex, fakeBridge('disconnected')))
+    await expect(
+      invoke('conversation.new', {
+        provider: 'codex',
+        cwd: '/repo/one',
+        model: 'gpt-5.6-sol'
+      })
+    ).resolves.toEqual({ provider: 'codex', threadId: 'new-codex' })
+    expect(codex.send).toHaveBeenCalledWith(
+      'thread/start',
+      expect.objectContaining({
+        cwd: '/repo/one',
+        model: 'gpt-5.6-sol',
+        approvalPolicy: 'on-request'
+      })
+    )
+  })
+
+  it('starts an OpenCode ACP session without sending a prompt', async () => {
+    const ocp = fakeBridge('live')
+    ocp.send = vi.fn(async () => ({ sessionId: 'new-ocp' }))
+    const invoke = createDispatch(deps(), () => fakePair(fakeBridge('disconnected'), ocp))
+    await expect(
+      invoke('conversation.new', {
+        provider: 'opencode',
+        cwd: '/repo/two',
+        model: 'anthropic/claude-sonnet'
+      })
+    ).resolves.toEqual({ provider: 'opencode', threadId: 'new-ocp' })
+    expect(ocp.send).toHaveBeenCalledWith('session/new', { cwd: '/repo/two', mcpServers: [] })
+    expect(ocp.send).not.toHaveBeenCalledWith('session/prompt', expect.anything())
+  })
+})
+
+describe('provider.permission.decide', () => {
+  it('maps an explicit OpenCode allow-once decision to its ACP request response', async () => {
+    const ocp = fakeBridge('live')
+    const invoke = createDispatch(deps(), () => fakePair(fakeBridge('disconnected'), ocp))
+    await expect(
+      invoke('provider.permission.decide', {
+        provider: 'opencode',
+        requestId: 42,
+        action: 'allow-once',
+        optionId: 'allow-tool'
+      })
+    ).resolves.toEqual({ accepted: true })
+    expect(ocp.respond).toHaveBeenCalledWith(42, {
+      outcome: { outcome: 'selected', optionId: 'allow-tool' }
+    })
+  })
+
+  it('maps a Codex rejection without allowing arbitrary response payloads', async () => {
+    const codex = fakeBridge('live')
+    const invoke = createDispatch(deps(), () => fakePair(codex, fakeBridge('disconnected')))
+    await expect(
+      invoke('provider.permission.decide', {
+        provider: 'codex',
+        requestId: 'approval-1',
+        action: 'reject'
+      })
+    ).resolves.toEqual({ accepted: true })
+    expect(codex.respond).toHaveBeenCalledWith('approval-1', { decision: 'decline' })
+    await expect(
+      invoke('provider.permission.decide', {
+        provider: 'codex',
+        requestId: 'approval-2',
+        action: 'allow-once',
+        raw: { decision: 'acceptForSession' }
+      })
+    ).rejects.toThrow('Malformed permission decision')
   })
 })
 
@@ -282,21 +378,52 @@ describe('discovery ops', () => {
 })
 
 describe('thread read ops', () => {
-  it('opens only a discovered OpenCode session through bounded read-only export', async () => {
+  it('opens only a discovered OpenCode session from the bounded local store', async () => {
     const { DatabaseSync } = await import('node:sqlite')
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'zero-ocp-export-'))
     const dbPath = path.join(dir, 'opencode.db')
     const db = new DatabaseSync(dbPath)
-    db.exec('CREATE TABLE session (id TEXT PRIMARY KEY, directory TEXT NOT NULL, title TEXT, agent TEXT, model TEXT, time_created INTEGER, time_updated INTEGER)')
-    db.prepare('INSERT INTO session VALUES (?, ?, ?, ?, ?, ?, ?)').run('s-existing', '/repo', 'Existing', null, null, 1, 2)
+    db.exec(`
+      CREATE TABLE session (id TEXT PRIMARY KEY, directory TEXT NOT NULL, title TEXT, agent TEXT, model TEXT, time_created INTEGER, time_updated INTEGER);
+      CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT NOT NULL, time_created INTEGER, time_updated INTEGER, data TEXT NOT NULL);
+      CREATE TABLE part (id TEXT PRIMARY KEY, message_id TEXT NOT NULL, session_id TEXT NOT NULL, time_created INTEGER, time_updated INTEGER, data TEXT NOT NULL);
+    `)
+    db.prepare('INSERT INTO session VALUES (?, ?, ?, ?, ?, ?, ?)').run(
+      's-existing',
+      '/repo',
+      'Existing',
+      null,
+      null,
+      1,
+      2
+    )
+    db.prepare('INSERT INTO message VALUES (?, ?, ?, ?, ?)').run(
+      'm1',
+      's-existing',
+      1,
+      1,
+      JSON.stringify({ role: 'user' })
+    )
+    db.prepare('INSERT INTO part VALUES (?, ?, ?, ?, ?, ?)').run(
+      'p1',
+      'm1',
+      's-existing',
+      1,
+      1,
+      JSON.stringify({ type: 'text', text: 'hello' })
+    )
     db.close()
     const d = deps()
     d.openCodeDbPath = dbPath
-    d.exportOpenCodeSession = vi.fn(async () => ({ info: { id: 's-existing' }, messages: [] }))
     const invoke = createDispatch(d)
-    await expect(invoke('ocp.thread.get', { threadId: 's-existing' })).resolves.toMatchObject({ harness: 'opencode', session: { info: { id: 's-existing' } } })
+    await expect(invoke('ocp.thread.get', { threadId: 's-existing' })).resolves.toMatchObject({
+      harness: 'opencode',
+      session: {
+        info: { id: 's-existing', directory: '/repo' },
+        messages: [{ parts: [{ text: 'hello' }] }]
+      }
+    })
     await expect(invoke('ocp.thread.get', { threadId: 'unknown' })).rejects.toThrow(/not found/i)
-    expect(d.exportOpenCodeSession).toHaveBeenCalledTimes(1)
   })
   it('codex.threads lists threads via a bounded read-only thread/list probe', async () => {
     const codex = fakeBridge('live')
@@ -306,6 +433,57 @@ describe('thread read ops', () => {
       threads: [{ id: 't1', name: 'Thread one' }]
     })
     expect(codex.sends).toEqual([{ method: 'thread/list', params: { limit: 100 } }])
+  })
+
+  it('prepares a live OpenCode session and returns only its advertised models', async () => {
+    const { DatabaseSync } = await import('node:sqlite')
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'zero-ocp-prepare-'))
+    const dbPath = path.join(dir, 'opencode.db')
+    const db = new DatabaseSync(dbPath)
+    db.exec(
+      'CREATE TABLE session (id TEXT PRIMARY KEY, directory TEXT NOT NULL, title TEXT, agent TEXT, model TEXT, time_created INTEGER, time_updated INTEGER)'
+    )
+    db.prepare('INSERT INTO session VALUES (?, ?, ?, ?, ?, ?, ?)').run(
+      's1',
+      '/repo',
+      'Existing',
+      null,
+      null,
+      1,
+      2
+    )
+    db.close()
+    const d = deps()
+    d.openCodeDbPath = dbPath
+    const ocp = fakeBridge('live')
+    ocp.send = vi.fn(async () => ({
+      sessionId: 's1',
+      configOptions: [
+        {
+          id: 'model',
+          currentValue: 'openai/gpt-5',
+          options: [
+            { value: 'openai/gpt-5', name: 'GPT-5' },
+            { value: 'anthropic/claude-sonnet', name: 'Claude Sonnet' }
+          ]
+        }
+      ]
+    }))
+    const invoke = createDispatch(d, () => fakePair(fakeBridge('disconnected'), ocp))
+    await expect(invoke('ocp.thread.prepare', { threadId: 's1' })).resolves.toEqual({
+      sessionId: 's1',
+      cwd: '/repo',
+      currentModel: 'openai/gpt-5',
+      models: [
+        { id: 'openai/gpt-5', name: 'GPT-5' },
+        { id: 'anthropic/claude-sonnet', name: 'Claude Sonnet' }
+      ]
+    })
+    expect(ocp.send).toHaveBeenCalledWith('session/load', {
+      sessionId: 's1',
+      cwd: '/repo',
+      mcpServers: []
+    })
   })
 
   it('codex.threads rejects while not connected and sends nothing', async () => {

@@ -57,7 +57,12 @@ export const ThinkingBlock = memo(function ThinkingBlock({
   item: ThinkingItem
 }): React.JSX.Element {
   const [open, setOpen] = useState(false)
-  const summary = item.summary !== '' ? item.summary : 'no summary available'
+  const summary =
+    item.summary !== ''
+      ? item.summary
+      : item.text !== ''
+        ? 'details available'
+        : 'reasoning unavailable from provider'
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0 }}>
       <button
