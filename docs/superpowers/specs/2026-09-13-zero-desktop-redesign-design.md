@@ -1,7 +1,7 @@
 # Project Zero Desktop Redesign — Design Specification
 
 Date: 2026-09-13  
-Status: Approved in conversation; awaiting written-spec review  
+Status: Written specification approved by owner on 2026-09-22; implementation plans awaiting review
 Target: `apps/desktop` Electron application, with repository-wide audit coverage
 
 ## Purpose
