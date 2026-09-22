@@ -144,8 +144,8 @@ describe('MacBookAir detail pass', () => {
     const fn = el.querySelector('[data-testid="macbook-fn-keys"]')
     expect(main).not.toBeNull()
     expect(fn).not.toBeNull()
-    const mainCount = Number(main?.getAttribute('data-count'))
-    const fnCount = Number(fn?.getAttribute('data-count'))
+    const mainCount = Number(main?.getAttribute('args')?.split(',').at(-1))
+    const fnCount = Number(fn?.getAttribute('args')?.split(',').at(-1))
     expect(mainCount).toBeGreaterThanOrEqual(60)
     expect(mainCount).toBeLessThanOrEqual(80)
     expect(fnCount).toBeGreaterThanOrEqual(10)
@@ -159,7 +159,7 @@ describe('MacBookAir detail pass', () => {
     for (const testid of ['macbook-grille-left', 'macbook-grille-right']) {
       const dots = el.querySelector(`[data-testid="${testid}"]`)
       expect(dots, testid).not.toBeNull()
-      expect(Number(dots?.getAttribute('data-count'))).toBeGreaterThanOrEqual(30)
+      expect(Number(dots?.getAttribute('args')?.split(',').at(-1))).toBeGreaterThanOrEqual(30)
     }
   })
 
@@ -185,12 +185,12 @@ describe('MacBookAir detail pass', () => {
     const el = await mount({ status: 'online' })
     const screws = el.querySelector('[data-testid="macbook-screws"]')
     expect(screws).not.toBeNull()
-    expect(Number(screws?.getAttribute('data-count'))).toBeGreaterThanOrEqual(6)
+    expect(Number(screws?.getAttribute('args')?.split(',').at(-1))).toBeGreaterThanOrEqual(6)
     expect(el.querySelector('[name="trackpad-seam"]')).not.toBeNull()
     expect(el.querySelector('[name="keyboard-backlight"]')).not.toBeNull()
     const icons = el.querySelector('[data-testid="macbook-dock-icons"]')
     expect(icons).not.toBeNull()
-    expect(Number(icons?.getAttribute('data-count'))).toBeGreaterThanOrEqual(4)
+    expect(Number(icons?.getAttribute('args')?.split(',').at(-1))).toBeGreaterThanOrEqual(4)
     expect(el.querySelector('[data-testid="macbook-menubar-dots"]')).not.toBeNull()
   })
 

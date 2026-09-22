@@ -236,7 +236,7 @@ describe('ZeroBotRoute', () => {
 
   it('renders the read-only discovery and conversation surfaces', () => {
     const html = renderToString(createElement(ZeroBotRoute))
-    expect(html).toContain('DISCOVERY')
+    expect(html).toContain('REGISTERED PROJECTS')
     expect(html).toContain('CONVERSATION')
     expect(html).toContain('No bridge events in this window yet')
   })

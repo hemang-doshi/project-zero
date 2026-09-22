@@ -409,7 +409,6 @@ function KeyboardInner({
         <instancedMesh
           name="tilt-legs"
           data-testid="keyboard-tilt-legs"
-          data-count={TILT_LEG_COUNT}
           ref={tiltRef}
           args={[undefined, undefined, TILT_LEG_COUNT]}
           frustumCulled={false}
@@ -467,7 +466,6 @@ function KeyboardInner({
         <instancedMesh
           name="legends"
           data-testid="keyboard-legends"
-          data-count={LEGEND_COUNT}
           ref={legendsRef}
           args={[undefined, undefined, LEGEND_COUNT]}
           frustumCulled={false}
@@ -486,7 +484,6 @@ function KeyboardInner({
         <instancedMesh
           name="stabilizers"
           data-testid="keyboard-stabilizers"
-          data-count={STAB_COUNT}
           ref={stabRef}
           args={[undefined, undefined, STAB_COUNT]}
           frustumCulled={false}
@@ -505,7 +502,6 @@ function KeyboardInner({
         <instancedMesh
           name="media-hints"
           data-testid="keyboard-media-hints"
-          data-count={MEDIA_COUNT}
           ref={mediaRef}
           args={[undefined, undefined, MEDIA_COUNT]}
           frustumCulled={false}
@@ -608,7 +604,6 @@ function KeyboardInner({
         <instancedMesh
           name="braid-rings"
           data-testid="keyboard-braid-rings"
-          data-count={BRAID_N}
           ref={braidRef}
           args={[undefined, undefined, BRAID_N]}
           frustumCulled={false}

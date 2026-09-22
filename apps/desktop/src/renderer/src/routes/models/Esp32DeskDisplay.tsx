@@ -292,7 +292,6 @@ function Esp32DeskDisplayInner({
         <instancedMesh
           name="mounting-holes"
           data-testid="esp32-mounting-holes"
-          data-count={MOUNT_SPOTS.length}
           ref={mountsRef}
           args={[undefined, undefined, MOUNT_SPOTS.length]}
           frustumCulled={false}
@@ -350,7 +349,6 @@ function Esp32DeskDisplayInner({
         <instancedMesh
           name="solder-joints"
           data-testid="esp32-solder-joints"
-          data-count={SOLDER_N}
           ref={solderRef}
           args={[undefined, undefined, SOLDER_N]}
           frustumCulled={false}
@@ -402,7 +400,6 @@ function Esp32DeskDisplayInner({
         <instancedMesh
           name="capacitors"
           data-testid="esp32-capacitors"
-          data-count={CAP_SPOTS.length}
           ref={capsRef}
           args={[undefined, undefined, CAP_SPOTS.length]}
           frustumCulled={false}
@@ -488,7 +485,6 @@ function Esp32DeskDisplayInner({
         <instancedMesh
           name="silkscreen"
           data-testid="esp32-silkscreen"
-          data-count={SILK_LINES.length}
           ref={silkRef}
           args={[undefined, undefined, SILK_LINES.length]}
           frustumCulled={false}
@@ -557,7 +553,6 @@ function Esp32DeskDisplayInner({
         <instancedMesh
           name="bezel-screws"
           data-testid="esp32-bezel-screws"
-          data-count={BEZEL_SCREW_SPOTS.length}
           ref={screwsRef}
           args={[undefined, undefined, BEZEL_SCREW_SPOTS.length]}
           frustumCulled={false}
@@ -569,7 +564,6 @@ function Esp32DeskDisplayInner({
         <instancedMesh
           name="standoffs"
           data-testid="esp32-standoffs"
-          data-count={BEZEL_SCREW_SPOTS.length}
           ref={standoffsRef}
           args={[undefined, undefined, BEZEL_SCREW_SPOTS.length]}
           frustumCulled={false}
@@ -712,7 +706,6 @@ function Esp32DeskDisplayInner({
         <instancedMesh
           name="button-legends"
           data-testid="esp32-button-legends"
-          data-count={LEGEND_X.length}
           ref={legendsRef}
           args={[undefined, undefined, LEGEND_X.length]}
           frustumCulled={false}

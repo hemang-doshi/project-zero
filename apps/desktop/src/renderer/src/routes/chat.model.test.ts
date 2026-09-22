@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  groupThreadsByRegisteredProject,
   MAX_CHAT_ITEMS,
   MAX_BRIDGE_EVENTS,
   applyBridgeEvent,
@@ -82,6 +83,30 @@ describe('parseThreadRows', () => {
     expect(threadTimestamp(rows[0])).toBe(900)
     expect(threadTimestamp(rows[1])).toBe(300)
     expect(threadTimestamp(rows[2])).toBe(200)
+  })
+})
+
+describe('groupThreadsByRegisteredProject', () => {
+  it('groups only explicit registered ids, keeps duplicate names separate, and sorts unprojected last', () => {
+    const projects = [
+      { id: 'p1', name: 'App', path: '/one' },
+      { id: 'p2', name: 'App', path: '/two' }
+    ]
+    const rows = parseThreadRows({
+      threads: [
+        { id: 'a', projectId: 'p1', recencyAt: 2 },
+        { id: 'b', projectId: 'p2', recencyAt: 4 },
+        { id: 'c', projectId: 'unknown', recencyAt: 5 },
+        { id: 'd', cwd: '/one', recencyAt: 3 },
+        { id: 'e', projectId: 'p1', recencyAt: 6 }
+      ]
+    })
+    const result = groupThreadsByRegisteredProject(projects, rows)
+    expect(result.groups.map((g) => [g.project.id, g.rows.map((r) => r.id)])).toEqual([
+      ['p1', ['e', 'a']],
+      ['p2', ['b']]
+    ])
+    expect(result.unprojected.map((r) => r.id)).toEqual(['c', 'd'])
   })
 })
 

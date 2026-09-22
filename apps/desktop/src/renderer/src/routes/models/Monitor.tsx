@@ -342,7 +342,6 @@ function MonitorInner({
       <instancedMesh
         name="vesa-screws"
         data-testid="monitor-vesa-screws"
-        data-count={VESA_SCREW_SPOTS.length}
         ref={vesaScrewsRef}
         args={[undefined, undefined, VESA_SCREW_SPOTS.length]}
         frustumCulled={false}
@@ -355,7 +354,6 @@ function MonitorInner({
       <instancedMesh
         name="vent-slots"
         data-testid="monitor-vent-slots"
-        data-count={VENT_N}
         ref={ventSlotsRef}
         args={[undefined, undefined, VENT_N]}
         frustumCulled={false}
@@ -390,7 +388,6 @@ function MonitorInner({
       <instancedMesh
         name="port-usba"
         data-testid="monitor-port-usba"
-        data-count={USBA_X.length}
         ref={usbaRef}
         args={[undefined, undefined, USBA_X.length]}
         frustumCulled={false}
@@ -401,7 +398,6 @@ function MonitorInner({
       <instancedMesh
         name="port-usba-tongues"
         data-testid="monitor-port-usba-tongues"
-        data-count={USBA_X.length}
         ref={usbaTonguesRef}
         args={[undefined, undefined, USBA_X.length]}
         frustumCulled={false}
@@ -484,7 +480,6 @@ function MonitorInner({
       <instancedMesh
         name="menubar-dots"
         data-testid="monitor-menubar-dots"
-        data-count={MENUBAR_DOT_N}
         ref={menubarDotsRef}
         args={[undefined, undefined, MENUBAR_DOT_N]}
         frustumCulled={false}
@@ -519,7 +514,6 @@ function MonitorInner({
       <instancedMesh
         name="window-dots"
         data-testid="monitor-window-dots"
-        data-count={WINDOW_DOT_N}
         ref={windowDotsRef}
         args={[undefined, undefined, WINDOW_DOT_N]}
         frustumCulled={false}
@@ -559,7 +553,6 @@ function MonitorInner({
       <instancedMesh
         name="dock-icons"
         data-testid="monitor-dock-icons"
-        data-count={DOCK_ICON_N}
         ref={dockIconsRef}
         args={[undefined, undefined, DOCK_ICON_N]}
         frustumCulled={false}
@@ -630,7 +623,6 @@ function MonitorInner({
       <instancedMesh
         name="osd-buttons"
         data-testid="monitor-osd-buttons"
-        data-count={OSD_N}
         ref={osdButtonsRef}
         args={[undefined, undefined, OSD_N]}
         frustumCulled={false}

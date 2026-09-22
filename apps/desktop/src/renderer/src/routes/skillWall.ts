@@ -1,22 +1,4 @@
 import type { PluginGroup, SkillSummary } from './skillPlugins'
-import { verifiedSkillBrand } from './skillBrands'
-
-export function skillIcon(skill: SkillSummary): string | null {
-  return skill.icon?.trim() || null
-}
-
-export type SkillIdentityMark =
-  | { kind: 'skill'; text: string; label: string }
-  | { kind: 'brand'; src: string; label: string }
-  | { kind: 'unknown'; label: string }
-
-export function skillIdentityMark(skill: SkillSummary): SkillIdentityMark {
-  const suppliedIcon = skillIcon(skill)
-  if (suppliedIcon !== null) return { kind: 'skill', text: suppliedIcon, label: `Icon supplied by ${skill.name}` }
-  const brand = skill.pluginId === null ? null : verifiedSkillBrand(skill.pluginId)
-  if (brand !== null) return { kind: 'brand', src: brand.src, label: brand.alt }
-  return { kind: 'unknown', label: `No verified icon for ${skill.name}` }
-}
 
 export type SkillWallRow = { key: string; group: string; skill: SkillSummary }
 

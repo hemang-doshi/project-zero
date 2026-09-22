@@ -4,7 +4,9 @@ export const OPS = {
   'snapshot.fetch': true,
   'command.send': true,
   'project.get': true,
+  'projects.list': true,
   'skills.discover': true,
+  'skills.search': true,
   'codex.connect': true,
   'codex.disconnect': true,
   'codex.send': true,
@@ -27,6 +29,7 @@ export type OpName = keyof typeof OPS
 export const validateOp = (op: string): op is OpName => Object.hasOwn(OPS, op)
 export type CommandPayload = { op: string; body?: Record<string, unknown> }
 export type ProjectPayload = { id: string }
+export type ProjectListItem = { id: string; name: string; path: string }
 export type ArtworkPayload = { id: string }
 export type CodexSendPayload = { method: string; params?: unknown }
 export type ThreadGetPayload = { threadId: string }

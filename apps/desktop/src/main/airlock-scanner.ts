@@ -12,7 +12,7 @@ export type ScanResult =
   | { state: 'held'; hits: ScanHit[] }
   | { state: 'blocked'; reason: 'too-large' | 'invalid-input' }
 
-const MAX_PROMPT_BYTES = 32_000
+const MAX_PROMPT_CHARS = 32_000
 const MAX_HITS = 20
 
 function luhn(digits: string): boolean {
@@ -29,8 +29,7 @@ function luhn(digits: string): boolean {
 
 export function scanPrompt(text: unknown): ScanResult {
   if (typeof text !== 'string') return { state: 'blocked', reason: 'invalid-input' }
-  if (Buffer.byteLength(text, 'utf8') > MAX_PROMPT_BYTES)
-    return { state: 'blocked', reason: 'too-large' }
+  if (text.length > MAX_PROMPT_CHARS) return { state: 'blocked', reason: 'too-large' }
   const hits: ScanHit[] = []
   const add = (
     category: SensitiveCategory,

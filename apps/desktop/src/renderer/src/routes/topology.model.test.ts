@@ -1,5 +1,6 @@
 // @vitest-environment node
 import { describe, expect, it } from 'vitest'
+import { PerspectiveCamera, Vector3 } from 'three'
 import type { RuntimeConnState } from '../../../shared/protocol'
 import { ZERO_TOKENS } from '../../../shared/tokens'
 import { nodeTone } from './runtime.types'
@@ -40,6 +41,7 @@ import { MODEL_FOOTPRINT as KEYBOARD_FOOTPRINT } from './models/Keyboard'
 import { MODEL_FOOTPRINT as LAPTOP_FOOTPRINT } from './models/MacBookAir'
 import { MODEL_FOOTPRINT as MONITOR_FOOTPRINT } from './models/Monitor'
 import { MODEL_FOOTPRINT as MOUSEPAD_FOOTPRINT } from './models/MousePad'
+import * as topology from './topology.model'
 const LIVE: RuntimeConnState = 'live'
 
 const node = (over: Partial<CockpitNode> & { id: string }): CockpitNode => ({
@@ -53,7 +55,48 @@ const node = (over: Partial<CockpitNode> & { id: string }): CockpitNode => ({
 const dist = (a: [number, number, number], b: [number, number, number]): number =>
   Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2])
 
+describe('responsive desk camera', () => {
+  it.each([0.75, 2.1])('keeps all desk bounds inside the overview at aspect %s', (aspect) => {
+    const fit = (
+      topology as typeof topology & {
+        fitDeskCamera?: (
+          bounds: { min: [number, number, number]; max: [number, number, number] },
+          aspect: number
+        ) => typeof OVERVIEW_CAMERA
+      }
+    ).fitDeskCamera
+    expect(fit).toBeTypeOf('function')
+    if (!fit) return
+    const bounds = {
+      min: [-7.4, -0.5, -4.0] as [number, number, number],
+      max: [7.4, 3.4, 3.8] as [number, number, number]
+    }
+    const view = fit(bounds, aspect)
+    const camera = new PerspectiveCamera(42, aspect, 0.1, 100)
+    camera.position.set(...view.position)
+    camera.lookAt(...view.target)
+    camera.updateMatrixWorld()
+    for (const x of [bounds.min[0], bounds.max[0]]) {
+      for (const y of [bounds.min[1], bounds.max[1]]) {
+        for (const z of [bounds.min[2], bounds.max[2]]) {
+          const point = new Vector3(x, y, z).project(camera)
+          expect(Math.abs(point.x)).toBeLessThan(0.94)
+          expect(Math.abs(point.y)).toBeLessThan(0.94)
+        }
+      }
+    }
+  })
+})
+
 describe('desk scene graph', () => {
+  it('keeps the physical monitor and ESP32 visible without pretending they are enrolled', () => {
+    const graph = buildSceneGraph([], 'reconnecting')
+    for (const kind of ['monitor', 'esp32']) {
+      const node = graph.nodes.find((entry) => entry.kind === kind)
+      expect(node?.status).toBe('UNREGISTERED')
+      expect(node?.selectable).toBe(false)
+    }
+  })
   it('carries no hub node and no edges: the desk has cables, not data beams', () => {
     const graph = buildSceneGraph(
       [

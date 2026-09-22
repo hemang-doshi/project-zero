@@ -1,4 +1,5 @@
 import type { Harness } from './runtime.types'
+import type { ProjectListItem } from '../../../shared/ipc'
 
 // Wire shapes are the Codex app-server ThreadItem variants (schema generated
 // from the pinned toolchain binary; see task-22-report.md for the schema
@@ -14,6 +15,7 @@ export type ThreadRow = {
   model: string | null
   provider: string
   status: string
+  projectId?: string | null
 }
 
 export type ChatItem =
@@ -63,11 +65,30 @@ export function parseThreadRows(value: unknown): ThreadRow[] {
       recencyAt: isNum(r.recencyAt) ? r.recencyAt : null,
       model: isStr(r.model) ? r.model : null,
       provider: isStr(r.modelProvider) ? r.modelProvider : '',
-      status: isStr(r.status) ? r.status : ''
+      status: isStr(r.status) ? r.status : '',
+      projectId: isStr(r.projectId) && r.projectId !== '' ? r.projectId : null
     })
   }
   rows.sort((a, b) => threadTimestamp(b) - threadTimestamp(a))
   return rows
+}
+
+export function groupThreadsByRegisteredProject(
+  projects: ProjectListItem[],
+  threads: ThreadRow[]
+): {
+  groups: Array<{ project: ProjectListItem; rows: ThreadRow[] }>
+  unprojected: ThreadRow[]
+} {
+  const groups = projects.map((project) => ({ project, rows: [] as ThreadRow[] }))
+  const byId = new Map(groups.map((group) => [group.project.id, group]))
+  const unprojected: ThreadRow[] = []
+  for (const row of [...threads].sort((a, b) => threadTimestamp(b) - threadTimestamp(a))) {
+    const group = row.projectId ? byId.get(row.projectId) : undefined
+    if (group) group.rows.push(row)
+    else unprojected.push(row)
+  }
+  return { groups, unprojected }
 }
 
 export function threadTimestamp(row: ThreadRow): number {

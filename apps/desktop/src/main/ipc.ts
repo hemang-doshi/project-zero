@@ -8,6 +8,7 @@ import {
   type DevicesListPayload,
   type DevicesListResult,
   type ProjectPayload,
+  type ProjectListItem,
   type SkillsDiscoverPayload,
   type SkillsDiscoverResult,
   type TelemetrySample,
@@ -17,6 +18,7 @@ import { applyPrefsPatch, type Prefs } from './prefs'
 import { createBridgePair, type BridgeDeps, type HarnessId, type RpcEvent } from './bridges'
 import { defaultOpenCodeDbPath, readOpenCodeSessionStore } from './opencode-sessions'
 import { artworkDataUrl } from './artwork-image'
+import { searchSkillsCatalog } from './skills-catalog'
 import type { CockpitModel, ModelUpdate } from './cockpit-model'
 
 export type PrefsStoreLike = {
@@ -75,6 +77,30 @@ export function attachBridgePush(bridges: BridgeDeps, win: BrowserWindow): () =>
 
 function projectPath(id: string): string {
   return `/v0.1/projects/${encodeURIComponent(id)}`
+}
+
+function projectList(value: unknown): ProjectListItem[] {
+  if (typeof value !== 'object' || value === null) {
+    throw new Error('Malformed projects response')
+  }
+  const raw = (value as { projects?: unknown }).projects
+  if (raw === null) return [] // Go encodes a nil slice as null for a valid empty registry.
+  if (!Array.isArray(raw)) throw new Error('Malformed projects response')
+  const projects = raw
+  if (projects.length > 500) throw new Error('Projects response too large')
+  return projects.flatMap((project) => {
+    if (typeof project !== 'object' || project === null) throw new Error('Malformed project row')
+    const row = project as Record<string, unknown>
+    if (
+      typeof row.id !== 'string' ||
+      !row.id ||
+      typeof row.name !== 'string' ||
+      typeof row.path !== 'string'
+    ) {
+      throw new Error('Malformed project row')
+    }
+    return row.removed === true ? [] : [{ id: row.id, name: row.name, path: row.path }]
+  })
 }
 
 function buildCommand(
@@ -210,6 +236,8 @@ export function createDispatch(
         if (typeof id !== 'string') throw new Error('Malformed project payload')
         return deps.fetchSnapshot(deps.socketPath, { path: projectPath(id) })
       }
+      case 'projects.list':
+        return projectList(await deps.fetchSnapshot(deps.socketPath, { path: '/v0.1/projects' }))
       case 'telemetry.sample':
         return deps.sampleTelemetry()
       case 'devices.list': {
@@ -233,6 +261,11 @@ export function createDispatch(
             note: 'Skill discovery failed; the vial grid is honestly empty.'
           } satisfies SkillsDiscoverResult
         }
+      }
+      case 'skills.search': {
+        const query = (payload as { query?: unknown } | null)?.query
+        if (typeof query !== 'string') throw new Error('Malformed catalog query')
+        return searchSkillsCatalog(query)
       }
     }
   }

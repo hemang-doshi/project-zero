@@ -226,7 +226,7 @@ describe('JsonRpcStdio response bounds', () => {
         error: { code: -32601, message: 'unknown method' }
       })
     )
-    await expect(p).rejects.toThrow(/unknown method/)
+    await expect(p).rejects.toThrow(/rpc -32601: provider rejected request/)
     expect(io.state).toBe('live')
   })
 
@@ -237,6 +237,16 @@ describe('JsonRpcStdio response bounds', () => {
     const p = io.send('ping')
     fake.out(JSON.stringify({ jsonrpc: '2.0', id: 1 }))
     await expect(p).rejects.toThrow(/invalid response/)
+    expect(io.state).toBe('disconnected')
+  })
+
+  it('settles the pending request when an RPC error object is malformed', async () => {
+    const { fake, spawnFn } = fakeChild()
+    const io = new JsonRpcStdio({ harness: 'codex', prefsDir: os.tmpdir(), spawnFn })
+    await io.connect('codex', ['app-server', '--stdio'])
+    const pending = io.send('ping')
+    fake.out(JSON.stringify({ jsonrpc: '2.0', id: 1, error: { code: -1 } }))
+    await expect(pending).rejects.toThrow('invalid response')
     expect(io.state).toBe('disconnected')
   })
 })
@@ -251,7 +261,9 @@ describe('JsonRpcStdio event mirror', () => {
     io.onEvent((ev) => {
       seen.push(ev.method)
     })
-    fake.out(JSON.stringify({ method: 'turn/started', params: { x: 1 } }))
+    fake.out(
+      JSON.stringify({ method: 'turn/started', params: { password: 'synthetic-secret-123' } })
+    )
     fake.out(JSON.stringify({ method: 'thread/started', params: {} }))
     await new Promise((r) => setTimeout(r, 10))
     expect(seen).toEqual(['turn/started', 'thread/started'])
@@ -261,6 +273,8 @@ describe('JsonRpcStdio event mirror', () => {
     const first = JSON.parse(lines[0]) as { harness: string; event: { method: string } }
     expect(first.harness).toBe('codex')
     expect(first.event.method).toBe('turn/started')
+    expect(first.event).not.toHaveProperty('params')
+    expect(fs.readFileSync(file, 'utf8')).not.toContain('synthetic-secret-123')
   })
 
   it('keeps operating when the mirror cannot be written', async () => {

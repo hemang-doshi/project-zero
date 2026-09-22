@@ -192,7 +192,10 @@ describe('MousePad detail pass 2', () => {
       ['braid-rings', '6'],
       ['stitches', '62']
     ] as Array<[string, string]>) {
-      expect(el.querySelector(`[name="${name}"]`)?.getAttribute('data-count'), name).toBe(count)
+      expect(
+        el.querySelector(`[name="${name}"]`)?.getAttribute('args')?.split(',').at(-1),
+        name
+      ).toBe(count)
     }
   })
 

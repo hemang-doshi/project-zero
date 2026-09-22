@@ -196,7 +196,10 @@ describe('Keyboard detail pass 2', () => {
       ['braid-rings', '8'],
       ['tilt-legs', '2']
     ] as Array<[string, string]>) {
-      expect(el.querySelector(`[name="${name}"]`)?.getAttribute('data-count'), name).toBe(count)
+      expect(
+        el.querySelector(`[name="${name}"]`)?.getAttribute('args')?.split(',').at(-1),
+        name
+      ).toBe(count)
     }
   })
 

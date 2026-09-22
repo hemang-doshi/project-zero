@@ -69,6 +69,35 @@ const deps = (): SocketDeps => ({
   discoverSkills: vi.fn(() => Promise.resolve({ ok: true, groups: [], selfLearnt: [], note: null }))
 })
 
+describe('projects.list', () => {
+  it('reads only the registered-project endpoint and returns bounded active fields', async () => {
+    const d = deps()
+    d.fetchSnapshot = vi.fn(async () => ({
+      projects: [
+        { id: 'p1', name: 'Zero', path: '/code/zero', aliases: ['secret'] },
+        { id: 'p2', name: 'Old', path: '/code/old', removed: true }
+      ]
+    }))
+    const invoke = createDispatch(d)
+    await expect(invoke('projects.list')).resolves.toEqual([
+      { id: 'p1', name: 'Zero', path: '/code/zero' }
+    ])
+    expect(d.fetchSnapshot).toHaveBeenCalledWith(d.socketPath, { path: '/v0.1/projects' })
+  })
+
+  it('rejects malformed responses rather than inventing an empty list', async () => {
+    const d = deps()
+    d.fetchSnapshot = vi.fn(async () => ({ projects: [{ id: 'p1', name: 'Zero' }] }))
+    await expect(createDispatch(d)('projects.list')).rejects.toThrow('Malformed project row')
+  })
+
+  it('accepts a daemon nil slice as an empty registered-project list', async () => {
+    const d = deps()
+    d.fetchSnapshot = vi.fn(async () => ({ projects: null }))
+    await expect(createDispatch(d)('projects.list')).resolves.toEqual([])
+  })
+})
+
 function fakePair(codex: FakeBridge, ocp: FakeBridge): BridgeDeps {
   return {
     codex: codex as unknown as BridgeDeps['codex'],

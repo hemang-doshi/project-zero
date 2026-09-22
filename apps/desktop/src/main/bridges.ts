@@ -281,6 +281,7 @@ export class JsonRpcStdio {
         !isPlainObject(errObj) ||
         typeof (errObj as Record<string, unknown>)['message'] !== 'string'
       ) {
+        entry.reject(new Error('invalid response'))
         this.failAll(session, new Error('invalid response'))
         return
       }
@@ -288,8 +289,8 @@ export class JsonRpcStdio {
         typeof (errObj as Record<string, unknown>)['code'] === 'number'
           ? (errObj as Record<string, number>)['code']
           : 0
-      const message = (errObj as Record<string, string>)['message']
-      entry.reject(new Error(`rpc ${code}: ${message}`))
+      // Provider messages may echo the prompt. Preserve only the numeric code.
+      entry.reject(new Error(`rpc ${code}: provider rejected request`))
     } else {
       entry.resolve(fields['result'])
     }
@@ -302,11 +303,19 @@ export class JsonRpcStdio {
 
   private mirror(ev: RpcEvent): void {
     try {
+      // The wire event can include prompts, credentials and tool output. The
+      // disk mirror is metadata only and bounded; existing history is left intact.
+      if (!/^[a-zA-Z][a-zA-Z0-9/._-]{0,100}$/.test(ev.method)) return
       const file = join(this.prefsDir, 'zero-meta', this.harness, 'events.jsonl')
       fs.mkdirSync(join(this.prefsDir, 'zero-meta', this.harness), { recursive: true })
+      if (fs.existsSync(file) && fs.statSync(file).size >= 512_000) return
       fs.appendFileSync(
         file,
-        JSON.stringify({ ts: new Date().toISOString(), harness: this.harness, event: ev }) + '\n'
+        JSON.stringify({
+          ts: new Date().toISOString(),
+          harness: this.harness,
+          event: { method: ev.method }
+        }) + '\n'
       )
     } catch {
       /* fail-soft: a read-only mirror must never wedge the bridge */

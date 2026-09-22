@@ -1,6 +1,24 @@
 # Project Zero — full project handoff
 
-Updated: **2026-09-09 12:33 IST**. Start with [AGENTS.md](AGENTS.md) and [snapshot.md](snapshot.md). This document supplies durable context; the snapshot supplies the newest checkout/installation/test state. Every agent must maintain both. Pending items are not permission to resume a task the user stopped.
+Updated: **2026-09-22 18:23 IST**. Start with [AGENTS.md](AGENTS.md) and [snapshot.md](snapshot.md). This document supplies durable context; the snapshot supplies the newest checkout/installation/test state. Every agent must maintain both. Pending items are not permission to resume a task the user stopped.
+
+## September 22 redesign implementation handoff
+
+The user explicitly stopped repetitive audit/re-review and directed immediate execution of the four targeted redesign aspects. All current implementation is in the isolated `codex/zero-redesign` worktree at `/Users/hemangdoshi/.codex/worktrees/zero-redesign/project-zero`, starting from commit `76905a0`; check `git log -1` and `git status` for the current commit/dirty state. Original checkout work is untouched. Read the updated snapshot for exact code scope and verification. The three approved implementation plans remain under `docs/superpowers/plans/2026-09-22-zero-{desk-bot-shell,airlock-inspector-voice,skills-lab}.md`. Do not resume the audit plan as a new loop.
+
+The largest visual defect was not only container height: real Chromium showed the R3F scene crashed on test-only `data-count` props attached to instanced meshes. Removing them restored a visible desk; a wider default Network window, camera fit and honest unregistered physical monitor/ESP32 placeholders made the full layout visible. Static preview is not a live Electron/daemon/hardware acceptance test.
+
+Airlock scanning and one-shot hold semantics exist as main-only code and tests, but there is **no live prompt IPC/provider adapter yet**. Keep `codex.send`/`ocp.send` blocked. The current host's pinned Codex binary was absent; `/usr/local/bin/codex` failed ENOENT, so provider method compatibility and local voice helper packaging cannot be claimed. The bridge disk mirror is now bounded metadata-only; preserve existing historical event files, which may still contain raw content. Skills Lab can search skills.sh via pinned `skills@1.7.0`, but staging/install/remove are not implemented; never present search hits as installed or mutate user-managed skill paths. Inspector usage/cost and context remain unavailable unless verified provider evidence is added.
+
+Desktop tests (847), typecheck and build passed; lint had 0 errors and 29 untouched formatting warnings. The isolated static browser/server were stopped. Next implementation sequence: verified provider adapter and prompt IPC/hold UI without raw event leakage; skill staging/transactional install with isolated temp provider dirs; local speech only after packaging/offline proof; honest usage evidence; then visual/physical acceptance. Do not start live provider turns, install skills, or deploy as a side effect of tests.
+
+## September 22 audit supersession
+
+The installation/process statements and September 9 implementation inventory below are historical. Current measured baseline and architecture findings are in [the redesign audit](docs/evidence/2026-09-22-zero-redesign-audit.md). The isolated `codex/zero-redesign` worktree baseline is `0bf0438`; known installed app/CLI/database are absent and no Zero processes were found, so do not use the older installed-health claims as recovery evidence. No service was changed. Restore/recover production only under separately authorized scope.
+
+Current code supersedes two older architecture claims: `nodes/esp32-desk/main/main.c:463` now stop/destroys the real WebSocket and flushes queues on requested local reset; the historical overflow-only-flips-connected diagnosis is not the current implementation. This does not prove physical recovery. `apps/macos/Sources/ZeroCockpit/CockpitApp.swift:16` now contains real cockpit windows plus a menu companion; Electron also owns a desktop/tray, requiring release ownership clarification. Preserve older physical failure evidence and keep the display band parked.
+
+Task 2 confirmed unredacted, unbounded bridge-event file persistence and an unsettled promise for malformed RPC errors using synthetic fake children; 48 bridge/IPC tests passed. Provider sends remain unconditionally blocked through renderer IPC. Fix persistence and bridge correctness before enabling dispatch, then perform the approved Airlock/Inspector/Skills/Network work with the audit's bounded owner plans. Source-only audit did not validate compact/default/large visual behavior, actual keyboard flows, installed signing/rollback, or physical latency. Snapshot/handoff edits remain unstaged for the controller; only canonical audit evidence is committed by this task.
 
 ## 1. Current user direction and project purpose
 

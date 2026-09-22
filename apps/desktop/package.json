@@ -32,6 +32,7 @@
     "react-markdown": "10.1.0",
     "react-rnd": "^10.5.3",
     "remark-gfm": "4.0.1",
+    "skills": "1.7.0",
     "three": "0.186.0",
     "zustand": "^5.0.15"
   },

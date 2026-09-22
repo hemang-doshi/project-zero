@@ -1,10 +1,12 @@
 import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import { ZERO_TYPE } from '../../../shared/tokens'
+import type { ProjectListItem } from '../../../shared/ipc'
 import { Chip } from './Chip'
 import { ChatRow, ThreadList } from './ZeroBotChat'
 import type { Tone } from './runtime.types'
 import {
   applyBridgeEvent,
+  groupThreadsByRegisteredProject,
   EMPTY_HARNESS_LOG,
   mergeTranscript,
   parseThreadRows,
@@ -65,7 +67,7 @@ const sidebarStyle: React.CSSProperties = {
   padding: '14px 12px',
   borderRight: '1px solid var(--z-line)',
   background: 'color-mix(in srgb, var(--z-card-cream) 45%, transparent)',
-  overflowY: 'auto',
+  overflow: 'hidden',
   minHeight: 0
 }
 
@@ -101,6 +103,15 @@ const composerStyle: React.CSSProperties = {
   display: 'flex',
   flexDirection: 'column',
   gap: 8,
+  background: 'var(--z-card-white)'
+}
+
+const composerBox: React.CSSProperties = {
+  border: '1px solid var(--z-line)',
+  borderRadius: 10,
+  padding: '8px 10px',
+  display: 'flex',
+  flexDirection: 'column',
   background: 'var(--z-card-white)'
 }
 
@@ -152,14 +163,6 @@ const warnNotice: React.CSSProperties = {
   margin: 0
 }
 
-const providerHead: React.CSSProperties = {
-  display: 'flex',
-  alignItems: 'center',
-  justifyContent: 'space-between',
-  gap: 8,
-  minWidth: 0
-}
-
 const providerButton: React.CSSProperties = {
   fontFamily: ZERO_TYPE.body,
   fontSize: 12,
@@ -176,7 +179,7 @@ const providerButton: React.CSSProperties = {
 
 const providerActive: React.CSSProperties = {
   ...providerButton,
-  borderColor: 'var(--z-line)',
+  border: '1px solid var(--z-line)',
   background: 'var(--z-card-white)'
 }
 
@@ -224,12 +227,6 @@ const modelChip: React.CSSProperties = {
   cursor: 'pointer'
 }
 
-const modelSelected: React.CSSProperties = {
-  ...modelChip,
-  background: 'var(--z-marker-yellow)',
-  borderColor: 'var(--z-secondary-ink)'
-}
-
 const eventRow: React.CSSProperties = {
   display: 'grid',
   gridTemplateColumns: '90px 120px 1fr',
@@ -273,11 +270,11 @@ const composerInput: React.CSSProperties = {
   lineHeight: 1.5,
   color: 'var(--z-ink)',
   background: 'transparent',
-  border: '1px solid var(--z-line)',
-  borderRadius: 8,
-  padding: '8px 10px',
-  resize: 'vertical',
-  minHeight: 56,
+  border: 'none',
+  outline: 'none',
+  padding: '2px 0',
+  resize: 'none',
+  minHeight: 66,
   width: '100%',
   boxSizing: 'border-box'
 }
@@ -459,11 +456,23 @@ export const ZeroBotRoute = memo(function ZeroBotRoute(): React.JSX.Element {
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [inspectorOpen, setInspectorOpen] = useState(true)
+  const workspaceRef = useRef<HTMLDivElement>(null)
   const [composerText, setComposerText] = useState('')
+  const [projects, setProjects] = useState<ProjectListItem[]>([])
+  const [projectsError, setProjectsError] = useState<string | null>(null)
   const lanesRef = useRef<HarnessState>(EMPTY_LANES)
   const logsRef = useRef<Record<Harness, HarnessEventLog>>(EMPTY_HARNESS_LOG)
   const openRef = useRef<Record<Harness, string | null>>({ codex: null, opencode: null })
   const aliveRef = useRef(true)
+
+  useEffect(() => {
+    if (typeof ResizeObserver === 'undefined' || workspaceRef.current === null) return
+    const observer = new ResizeObserver(([entry]) => {
+      if (entry.contentRect.width < 820) setInspectorOpen(false)
+    })
+    observer.observe(workspaceRef.current)
+    return () => observer.disconnect()
+  }, [])
 
   useEffect(() => {
     aliveRef.current = true
@@ -472,6 +481,14 @@ export const ZeroBotRoute = memo(function ZeroBotRoute(): React.JSX.Element {
         aliveRef.current = false
       }
     }
+    void window.zero
+      .invoke('projects.list')
+      .then((value) => {
+        if (aliveRef.current && Array.isArray(value)) setProjects(value as ProjectListItem[])
+      })
+      .catch((err: unknown) => {
+        if (aliveRef.current) setProjectsError(err instanceof Error ? err.message : String(err))
+      })
     const refresh = (h: Harness): void => {
       window.zero
         .invoke(h === 'codex' ? 'codex.state' : 'ocp.state')
@@ -705,12 +722,15 @@ export const ZeroBotRoute = memo(function ZeroBotRoute(): React.JSX.Element {
       : `${PROVIDER_DISPLAY[harness]} · ${selectedModel}`
 
   const codexRows = lanes.codex.rows
+  const projectThreads = useMemo(
+    () => groupThreadsByRegisteredProject(projects, codexRows),
+    [projects, codexRows]
+  )
   const codexInfo = states.codex
-  const opencodeInfo = states.opencode
   const opencodeResult = discovery.opencode ?? null
 
   return (
-    <div className="zw-route" data-region="workspace" style={workspaceStyle}>
+    <div ref={workspaceRef} className="zw-route" data-region="workspace" style={workspaceStyle}>
       <aside data-region="sidebar" style={sidebarStyle} aria-label="Conversations">
         <span data-voice="human" style={sectionLabel}>
           PROJECT ZERO — ZERO BOT
@@ -719,55 +739,91 @@ export const ZeroBotRoute = memo(function ZeroBotRoute(): React.JSX.Element {
           New conversation
         </button>
 
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0 }}>
-          <div style={providerHead}>
-            <button
-              type="button"
-              style={harness === 'codex' ? providerActive : providerButton}
-              aria-pressed={harness === 'codex'}
-              onClick={() => setHarness('codex')}
-            >
-              Codex
-            </button>
-            <Chip label={STATE_LABEL[codexInfo.state]} tone={STATE_TONE[codexInfo.state]} />
-          </div>
-          <span data-voice="human" style={sectionLabel}>
-            DISCOVERY · THREADS
-          </span>
-          {codexRows.length === 0 ? (
-            <EmptyState
-              title="No conversations yet"
-              explanation={
-                codexInfo.state === 'live'
-                  ? 'Connected — the read-only thread list returned no threads yet.'
-                  : 'Connect Codex to load the read-only thread list.'
-              }
-            />
-          ) : (
-            <ThreadList
-              rows={codexRows}
-              selectedId={lanes.codex.threadId}
-              onSelect={(id) => {
-                setHarness('codex')
-                openThread(id)
-              }}
-            />
-          )}
+        <div
+          role="group"
+          aria-label="Conversation source"
+          style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 4 }}
+        >
+          <button
+            type="button"
+            style={harness === 'codex' ? providerActive : providerButton}
+            aria-pressed={harness === 'codex'}
+            onClick={() => setHarness('codex')}
+          >
+            Projects
+          </button>
+          <button
+            type="button"
+            style={harness === 'opencode' ? providerActive : providerButton}
+            aria-pressed={harness === 'opencode'}
+            onClick={() => setHarness('opencode')}
+          >
+            OpenCode
+          </button>
         </div>
 
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0 }}>
-          <div style={providerHead}>
-            <button
-              type="button"
-              style={harness === 'opencode' ? providerActive : providerButton}
-              aria-pressed={harness === 'opencode'}
-              onClick={() => setHarness('opencode')}
-            >
-              OpenCode
-            </button>
-            <Chip label={STATE_LABEL[opencodeInfo.state]} tone={STATE_TONE[opencodeInfo.state]} />
-          </div>
-          {opencodeResult !== null && opencodeResult.folders.length > 0 ? (
+        <div
+          style={{
+            flex: 1,
+            overflowY: 'auto',
+            minHeight: 0,
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 10
+          }}
+        >
+          {harness === 'codex' ? (
+            <>
+              <span data-voice="human" style={sectionLabel}>
+                REGISTERED PROJECTS
+              </span>
+              {projectsError !== null ? (
+                <p style={warnNotice}>Projects unavailable: {projectsError}</p>
+              ) : null}
+              {projectThreads.groups.map(({ project, rows }) => (
+                <section
+                  key={project.id}
+                  aria-label={`Project ${project.name}`}
+                  style={{ display: 'flex', flexDirection: 'column', gap: 4 }}
+                >
+                  <span data-voice="human" style={sectionLabel}>
+                    {project.name} · {rows.length}
+                  </span>
+                  <span data-voice="machine" style={machineMeta}>
+                    {project.path}
+                  </span>
+                  <ThreadList rows={rows} selectedId={lanes.codex.threadId} onSelect={openThread} />
+                </section>
+              ))}
+              {projects.length === 0 && projectsError === null ? (
+                <p style={bodyText}>No registered projects yet.</p>
+              ) : null}
+              <section
+                aria-label="Unprojected conversations"
+                style={{ marginTop: 'auto', display: 'flex', flexDirection: 'column', gap: 4 }}
+              >
+                <span data-voice="human" style={sectionLabel}>
+                  UNPROJECTED · {projectThreads.unprojected.length}
+                </span>
+                {projectThreads.unprojected.length > 0 ? (
+                  <ThreadList
+                    rows={projectThreads.unprojected}
+                    selectedId={lanes.codex.threadId}
+                    onSelect={openThread}
+                  />
+                ) : (
+                  <EmptyState
+                    title="No conversations yet"
+                    explanation={
+                      codexInfo.state === 'live'
+                        ? 'Connected — no unprojected threads in the read-only list.'
+                        : 'Connect Codex to load the read-only thread list.'
+                    }
+                  />
+                )}
+              </section>
+            </>
+          ) : opencodeResult !== null && opencodeResult.folders.length > 0 ? (
             <FolderGroupList groups={opencodeResult.folders} />
           ) : (
             <EmptyState
@@ -786,7 +842,7 @@ export const ZeroBotRoute = memo(function ZeroBotRoute(): React.JSX.Element {
           )}
         </div>
 
-        <div style={{ marginTop: 'auto', display: 'flex', flexDirection: 'column', gap: 6 }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, flexShrink: 0 }}>
           <span data-voice="human" style={sectionLabel}>
             {harness === 'codex' ? 'CODEX APP-SERVER' : 'OPENCODE ACP'} BRIDGE
           </span>
@@ -934,46 +990,85 @@ export const ZeroBotRoute = memo(function ZeroBotRoute(): React.JSX.Element {
               {contextLine}
             </span>
           </div>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }} aria-label="Model selector">
-            {modelOptions.map((m) => (
-              <button
-                key={m}
-                type="button"
-                style={selectedModel === m ? modelSelected : modelChip}
-                aria-pressed={selectedModel === m}
-                onClick={() => setModels((s) => ({ ...s, [harness]: m }))}
-              >
-                {m}
-              </button>
-            ))}
-          </div>
           {mismatch !== null ? (
             <p data-voice="human" style={warnNotice}>
               {mismatch} Mirror: {mirrorLabel(harness)}
             </p>
           ) : null}
-          <textarea
-            data-voice="human"
-            style={composerInput}
-            rows={3}
-            value={composerText}
-            onChange={(e) => setComposerText(e.target.value)}
-            placeholder="Describe the work for Zero…"
-            aria-label="Message Zero"
-          />
-          <p data-voice="human" style={bodyText}>
-            {SEND_BLOCKED_NOTICE}
-          </p>
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-            <button type="button" style={disabledSend} disabled aria-label="Send turn">
-              Send
-            </button>
-            <button type="button" style={disabledAction} disabled aria-label="Voice input">
-              Voice
-            </button>
+          <div style={composerBox}>
+            <textarea
+              data-voice="human"
+              style={composerInput}
+              rows={3}
+              value={composerText}
+              onChange={(e) => setComposerText(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && e.metaKey) {
+                  e.preventDefault()
+                  setNotice(SEND_BLOCKED_NOTICE)
+                }
+              }}
+              placeholder="Describe the work for Zero…"
+              aria-label="Message Zero"
+            />
+            <div
+              style={{ display: 'flex', gap: 8, alignItems: 'center', justifyContent: 'flex-end' }}
+            >
+              <select
+                aria-label="Model selector"
+                style={{ ...modelChip, borderRadius: 6, maxWidth: 180 }}
+                value={selectedModel}
+                onChange={(e) => setModels((s) => ({ ...s, [harness]: e.target.value }))}
+              >
+                {Array.from(new Set([...modelOptions, selectedModel])).map((m) => (
+                  <option key={m} value={m}>
+                    {m}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                style={disabledAction}
+                disabled
+                aria-label="Voice input"
+                title={VOICE_DISABLED_NOTICE}
+              >
+                <svg
+                  aria-hidden="true"
+                  width="16"
+                  height="16"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                >
+                  <rect x="9" y="2" width="6" height="12" rx="3" />
+                  <path d="M5 10a7 7 0 0 0 14 0M12 17v5m-4 0h8" />
+                </svg>
+              </button>
+              <button
+                type="button"
+                style={disabledSend}
+                disabled
+                aria-label="Send turn"
+                title={SEND_BLOCKED_NOTICE}
+              >
+                <svg
+                  aria-hidden="true"
+                  width="16"
+                  height="16"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                >
+                  <path d="M12 19V5m-6 6 6-6 6 6" />
+                </svg>
+              </button>
+            </div>
           </div>
           <p data-voice="human" style={bodyText}>
-            {VOICE_DISABLED_NOTICE}
+            {SEND_BLOCKED_NOTICE}
           </p>
         </div>
       </main>
@@ -1044,6 +1139,21 @@ export const ZeroBotRoute = memo(function ZeroBotRoute(): React.JSX.Element {
             Project and branch context, provider handoff and automatic routing are designed but
             pending — this build has no context-packet backend, so every turn stays inside its own
             provider thread.
+          </p>
+
+          <span data-voice="human" style={sectionLabel}>
+            USAGE & COST
+          </span>
+          <p data-voice="human" style={bodyText}>
+            Token usage and cost: Unavailable. This bridge view has no verified usage totals or
+            versioned price source; item counts above are not token counts.
+          </p>
+
+          <span data-voice="human" style={sectionLabel}>
+            AIRLOCK
+          </span>
+          <p data-voice="human" style={bodyText}>
+            Prompt screening is not connected to provider dispatch yet. Sending remains blocked.
           </p>
 
           <span data-voice="human" style={sectionLabel}>

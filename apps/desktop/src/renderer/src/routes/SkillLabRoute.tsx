@@ -1,19 +1,13 @@
-import { memo, useCallback, useEffect, useState } from 'react'
+import { memo, useCallback, useEffect, useMemo, useState } from 'react'
 import { ZERO_TYPE } from '../../../shared/tokens'
 import { type OpName } from '../../../shared/ipc'
 import { Chip } from './Chip'
-import { SkillLabScene } from './SkillLabScene'
 import type { PluginGroup, SkillSummary } from './skillPlugins'
-import {
-  SKILL_FIXTURES,
-  SKILL_INJECTION_CONTRACT,
-  skillSummary,
-  type SkillFixture
-} from './runtime.types'
+import { localSkillRows, searchSkillRows, skillWindow } from './skillWall'
 
 const routeStyle: React.CSSProperties = {
   height: '100%',
-  overflowY: 'auto',
+  overflow: 'hidden',
   padding: '20px 22px',
   display: 'flex',
   flexDirection: 'column',
@@ -57,14 +51,6 @@ const noticeStyle: React.CSSProperties = {
   margin: 0
 }
 
-const errorNotice: React.CSSProperties = {
-  fontFamily: ZERO_TYPE.mono,
-  fontSize: 10.5,
-  color: 'var(--z-error-red)',
-  lineHeight: 1.6,
-  margin: 0
-}
-
 const refreshStyle: React.CSSProperties = {
   fontFamily: ZERO_TYPE.mono,
   fontSize: 10,
@@ -78,29 +64,10 @@ const refreshStyle: React.CSSProperties = {
   cursor: 'pointer'
 }
 
-const cardStyle: React.CSSProperties = {
-  background: 'var(--z-card-cream)',
-  border: '1px solid var(--z-line)',
-  borderRadius: 8,
-  padding: '12px 14px',
-  display: 'flex',
-  flexDirection: 'column',
-  gap: 8,
-  minWidth: 0
-}
-
 const skillName: React.CSSProperties = {
   fontSize: 13,
   fontWeight: 600,
   color: 'var(--z-ink)'
-}
-
-const skillDetail: React.CSSProperties = {
-  fontFamily: ZERO_TYPE.mono,
-  fontSize: 10.5,
-  color: 'var(--z-secondary-ink)',
-  lineHeight: 1.6,
-  margin: 0
 }
 
 // Live plugin discovery rides the skills.discover IPC op (Task 37D): the main
@@ -113,9 +80,9 @@ const skillDetail: React.CSSProperties = {
 const SKILLS_DISCOVER_OP: OpName = 'skills.discover'
 
 type SkillDiscovery = { groups: PluginGroup[]; selfLearnt: SkillSummary[] }
+type CatalogSkill = { id: string; source: string; skill: string; url: string; installs: string }
 
-const isRecord = (v: unknown): v is Record<string, unknown> =>
-  typeof v === 'object' && v !== null
+const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null
 
 const asTrimmedString = (v: unknown): string | null =>
   typeof v === 'string' && v.trim().length > 0 ? v.trim() : null
@@ -183,66 +150,33 @@ const parseNote = (raw: unknown): string | null => {
   return asTrimmedString(raw.note)
 }
 
-const initialChipStyle: React.CSSProperties = {
-  width: 20,
-  height: 20,
-  borderRadius: 10,
-  flexShrink: 0,
-  display: 'inline-flex',
-  alignItems: 'center',
-  justifyContent: 'center',
-  fontFamily: ZERO_TYPE.mono,
-  fontSize: 11,
-  fontWeight: 700,
-  color: '#FFFFFF',
-  background: 'var(--z-secondary-ink)'
-}
-
-function SelfLearntRow({ skill }: { skill: SkillSummary }): React.JSX.Element {
-  const initial = skill.name.trim().charAt(0).toUpperCase() || '?'
-  return (
-    <div data-testid={`selflearn-row-${skill.id}`} style={{ ...cardStyle, padding: '9px 12px' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-        <span title={skill.icon ?? 'initial'} style={initialChipStyle}>
-          {initial}
-        </span>
-        <span style={skillName}>{skill.name}</span>
-        <Chip label={skill.source.toUpperCase()} tone="neutral" />
-      </div>
-      <span style={skillDetail}>
-        {skill.description?.trim() ? skill.description : 'No description.'}
-      </span>
-    </div>
-  )
-}
-
-function SkillRow({ skill }: { skill: SkillFixture }): React.JSX.Element {
-  return (
-    <div style={{ ...cardStyle, padding: '9px 12px' }}>
-      <div style={headerRow}>
-        <span style={skillName}>{skill.name}</span>
-        <Chip
-          label={skill.isUsable ? skill.source.toUpperCase() : 'UNUSABLE'}
-          tone={skill.isUsable ? 'neutral' : 'error'}
-        />
-      </div>
-      {skill.isUsable ? (
-        <span style={skillDetail}>{skillSummary(skill)}</span>
-      ) : (
-        <span style={errorNotice}>{skill.rejectionReason ?? 'Unusable skill.'}</span>
-      )}
-      <span style={skillDetail}>{skill.enabled ? 'ENABLED' : 'DISABLED'}</span>
-    </div>
-  )
-}
-
 export const SkillLabRoute = memo(function SkillLabRoute(): React.JSX.Element {
-  const enabled = SKILL_FIXTURES.filter((s) => s.enabled && s.isUsable).length
   const hasBridge = typeof window !== 'undefined' && window.zero !== undefined
   const [groups, setGroups] = useState<PluginGroup[]>([])
   const [selfLearnt, setSelfLearnt] = useState<SkillSummary[]>([])
   const [note, setNote] = useState<string | null>(null)
   const [refreshing, setRefreshing] = useState(false)
+  const [query, setQuery] = useState('')
+  const [filter, setFilter] = useState<'All' | 'Installed' | 'Self-learnt'>('All')
+  const [selectedKey, setSelectedKey] = useState<string | null>(null)
+  const [scrollTop, setScrollTop] = useState(0)
+  const [catalog, setCatalog] = useState<CatalogSkill[]>([])
+  const [catalogError, setCatalogError] = useState<string | null>(null)
+  const [catalogSelection, setCatalogSelection] = useState<CatalogSkill | null>(null)
+  const rows = useMemo(() => localSkillRows(groups, selfLearnt), [groups, selfLearnt])
+  const filtered = useMemo(
+    () =>
+      searchSkillRows(rows, query).filter(
+        (row) =>
+          filter === 'All' ||
+          (filter === 'Installed'
+            ? row.skill.source === 'installed'
+            : row.skill.source === 'self-learnt')
+      ),
+    [rows, query, filter]
+  )
+  const selected = rows.find((row) => row.key === selectedKey) ?? null
+  const { start, end } = skillWindow(filtered.length, scrollTop, 420)
 
   // Applies one discovery result; state sets ride promise callbacks (never
   // synchronous effect bodies) per the hooks lint.
@@ -271,6 +205,30 @@ export const SkillLabRoute = memo(function SkillLabRoute(): React.JSX.Element {
     }
   }, [hasBridge, applyDiscovery])
 
+  useEffect(() => {
+    if (!hasBridge || query.trim().length < 2) return
+    let active = true
+    const timer = window.setTimeout(() => {
+      void window.zero
+        .invoke('skills.search', { query: query.trim() })
+        .then((value) => {
+          if (!active) return
+          setCatalog(Array.isArray(value) ? (value as CatalogSkill[]) : [])
+          setCatalogError(null)
+        })
+        .catch(() => {
+          if (active) {
+            setCatalog([])
+            setCatalogError('Catalog unavailable; local search still works.')
+          }
+        })
+    }, 350)
+    return () => {
+      active = false
+      window.clearTimeout(timer)
+    }
+  }, [hasBridge, query])
+
   const onRefresh = (): void => {
     if (!hasBridge || refreshing) return
     setRefreshing(true)
@@ -290,35 +248,17 @@ export const SkillLabRoute = memo(function SkillLabRoute(): React.JSX.Element {
     <div className="zw-route" style={routeStyle}>
       <div style={headerRow}>
         <span style={microStyle}>PROJECT ZERO — SKILL LAB</span>
-        <Chip label="READ-ONLY" tone="neutral" />
+        <Chip label="LOCAL INVENTORY" tone="neutral" />
       </div>
       <div>
-        <span style={headingStyle}>Skill Lab: Shared Provider Skills</span>
+        <span style={headingStyle}>Skills Lab</span>
         <p style={summaryStyle}>
-          Zero-owned skills from the owner-controlled skills directory. Skills enabled once apply to
-          both providers’ future sessions. Nothing here executes skill code.
+          Explore your existing skills. Select a line for details; nothing here executes skill code.
         </p>
       </div>
       <div style={headerRow}>
-        <Chip label="SHARED BY BOTH PROVIDERS" tone="neutral" />
-        <Chip label={`${enabled} ENABLED`} tone={enabled === 0 ? 'neutral' : 'healthy'} />
-      </div>
-      <div style={headerRow}>
-        <span style={microStyle}>SELF-LEARNING</span>
-        <Chip label={`${selfLearnt.length} SELF-LEARNT`} tone="neutral" />
-      </div>
-      {selfLearnt.length > 0 ? (
-        selfLearnt.map((s) => <SelfLearntRow key={s.id} skill={s} />)
-      ) : (
-        <span style={noticeStyle}>No self-learnt skills yet.</span>
-      )}
-      <div style={headerRow}>
-        <span style={microStyle}>INSTALLED BY PLUGIN</span>
+        <span style={microStyle}>{filtered.length} LOCAL SKILLS</span>
         <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-          <Chip
-            label={`${groups.length} PLUGINS`}
-            tone={groups.length === 0 ? 'neutral' : 'healthy'}
-          />
           <button
             type="button"
             data-testid="skills-refresh"
@@ -330,26 +270,179 @@ export const SkillLabRoute = memo(function SkillLabRoute(): React.JSX.Element {
           </button>
         </span>
       </div>
-      <SkillLabScene groups={groups} selfLearnt={selfLearnt} />
+      <input
+        type="search"
+        aria-label="Search skills"
+        placeholder="Search skills by name, description, or source…"
+        value={query}
+        onChange={(e) => {
+          setQuery(e.target.value)
+          setScrollTop(0)
+        }}
+        style={{
+          border: '1px solid var(--z-line)',
+          borderRadius: 6,
+          padding: '9px 12px',
+          fontFamily: ZERO_TYPE.body,
+          fontSize: 13
+        }}
+      />
+      <div role="group" aria-label="Skill filters" style={{ display: 'flex', gap: 6 }}>
+        {(['All', 'Installed', 'Self-learnt'] as const).map((option) => (
+          <button
+            key={option}
+            type="button"
+            aria-pressed={filter === option}
+            style={refreshStyle}
+            onClick={() => {
+              setFilter(option)
+              setScrollTop(0)
+            }}
+          >
+            {option}
+          </button>
+        ))}
+      </div>
+      <div style={{ display: 'flex', gap: 14, flex: 1, minHeight: 0 }}>
+        <div
+          role="listbox"
+          aria-label="Skill wall"
+          tabIndex={0}
+          onScroll={(e) => setScrollTop(e.currentTarget.scrollTop)}
+          onKeyDown={(e) => {
+            if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return
+            e.preventDefault()
+            const current = filtered.findIndex((row) => row.key === selectedKey)
+            const next = Math.min(
+              filtered.length - 1,
+              Math.max(0, current + (e.key === 'ArrowDown' ? 1 : -1))
+            )
+            if (filtered[next]) {
+              setSelectedKey(filtered[next].key)
+              e.currentTarget.scrollTop = next * 56
+            }
+          }}
+          style={{
+            flex: 1,
+            overflowY: 'auto',
+            minHeight: 0,
+            borderTop: '1px solid var(--z-line)',
+            borderBottom: '1px solid var(--z-line)'
+          }}
+        >
+          <div style={{ height: filtered.length * 56, position: 'relative' }}>
+            {filtered.slice(start, end).map((row, index) => (
+              <button
+                key={row.key}
+                type="button"
+                role="option"
+                aria-selected={selectedKey === row.key}
+                onClick={() => setSelectedKey(row.key)}
+                style={{
+                  position: 'absolute',
+                  top: (start + index) * 56,
+                  left: 0,
+                  right: 0,
+                  width: '100%',
+                  height: 56,
+                  border: 'none',
+                  borderBottom: '1px solid var(--z-line)',
+                  background: selectedKey === row.key ? 'var(--z-card-cream)' : 'transparent',
+                  textAlign: 'left',
+                  padding: '7px 10px',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 3,
+                  cursor: 'pointer'
+                }}
+              >
+                <span style={skillName}>{row.skill.name}</span>
+                <span style={noticeStyle}>
+                  {row.group} · {row.skill.source} · {row.skill.description ?? 'No description'}
+                </span>
+              </button>
+            ))}
+          </div>
+          {filtered.length === 0 ? (
+            <span style={noticeStyle}>
+              {query ? 'No skills match this search.' : 'No local skills found.'}
+            </span>
+          ) : null}
+        </div>
+        <aside
+          aria-label="Skill details"
+          style={{
+            width: 260,
+            overflowY: 'auto',
+            border: '1px solid var(--z-line)',
+            borderRadius: 8,
+            padding: 12
+          }}
+        >
+          {catalogSelection ? (
+            <>
+              <span style={skillName}>{catalogSelection.skill}</span>
+              <p style={noticeStyle}>AVAILABLE FROM SKILLS.SH · NOT INSTALLED</p>
+              <p style={noticeStyle}>{catalogSelection.source}</p>
+              <p style={noticeStyle}>
+                {catalogSelection.installs} reported installs · audit unknown
+              </p>
+              <p style={noticeStyle}>
+                Installation requires a reviewed staging transaction and is unavailable in this
+                build.
+              </p>
+            </>
+          ) : selected ? (
+            <>
+              <span style={skillName}>{selected.skill.name}</span>
+              <p style={summaryStyle}>
+                {selected.skill.description ?? 'No description available.'}
+              </p>
+              <p style={noticeStyle}>SOURCE · {selected.skill.source}</p>
+              <p style={noticeStyle}>GROUP · {selected.group}</p>
+              <p style={noticeStyle}>AUDIT · Unknown</p>
+            </>
+          ) : (
+            <span style={noticeStyle}>Select a skill to view its details.</span>
+          )}
+        </aside>
+      </div>
+      {query.trim().length >= 2 ? (
+        <section
+          aria-label="skills.sh catalog"
+          style={{
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 4,
+            maxHeight: 160,
+            overflowY: 'auto'
+          }}
+        >
+          <span style={microStyle}>SKILLS.SH · {catalog.length} AVAILABLE</span>
+          {catalogError !== null ? <span style={noticeStyle}>{catalogError}</span> : null}
+          {catalog.map((candidate) => (
+            <button
+              key={candidate.id}
+              type="button"
+              style={{ ...refreshStyle, textAlign: 'left' }}
+              onClick={() => {
+                setCatalogSelection(candidate)
+                setSelectedKey(null)
+              }}
+            >
+              {candidate.id} · {candidate.installs} installs
+            </button>
+          ))}
+        </section>
+      ) : null}
       {note !== null ? (
         <span data-testid="skills-note" style={noticeStyle}>
           {note}
         </span>
       ) : null}
-      <div style={headerRow}>
-        <span style={microStyle}>ALL SKILLS (SHARED FIXTURES)</span>
-      </div>
-      {SKILL_FIXTURES.map((s) => (
-        <SkillRow key={s.id} skill={s} />
-      ))}
-      <div style={cardStyle}>
-        <span style={noticeStyle}>INJECTION CONTRACT — SHOWN BEFORE USE</span>
-        <span style={noticeStyle}>{SKILL_INJECTION_CONTRACT}</span>
-      </div>
       <span style={noticeStyle}>
-        Fixture data in this build: the daemon exposes no skill store and the sandboxed renderer has
-        no filesystem op, so the list above stays fixture data while the live grid is scanned by the
-        main process.
+        Catalog results are read-only. Installing a remote skill is unavailable until the reviewed
+        staging path ships.
       </span>
     </div>
   )
