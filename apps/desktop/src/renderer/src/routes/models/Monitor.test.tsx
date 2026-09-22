@@ -58,6 +58,13 @@ describe('Monitor footprint', () => {
 })
 
 describe('Monitor structure', () => {
+  it('keeps the stand neck below the bottom of the panel', async () => {
+    const el = await mount({ status: 'online' })
+    const stand = el.querySelector('[data-testid="monitor-stand"]')
+    const position = (stand?.getAttribute('position') ?? '').split(',').map(Number)
+    const geometry = (stand?.querySelector('boxgeometry')?.getAttribute('args') ?? '').split(',').map(Number)
+    expect(position[1] + geometry[1] / 2).toBeLessThanOrEqual(0.62)
+  })
   it('renders the named meshes (panel, screen, chin, stand, base, back)', async () => {
     const el = await mount({ status: 'online' })
     for (const name of ['panel', 'screen', 'chin', 'stand', 'base', 'back']) {

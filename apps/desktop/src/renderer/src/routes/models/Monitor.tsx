@@ -242,8 +242,8 @@ function MonitorInner({
       </mesh>
 
       {/* center stand neck rising from the foot to the panel */}
-      <mesh name="stand" data-testid="monitor-stand" position={[0, 0.45, -0.03]}>
-        <boxGeometry args={[0.22, 0.8, 0.14]} />
+      <mesh name="stand" data-testid="monitor-stand" position={[0, 0.32, -0.03]}>
+        <boxGeometry args={[0.22, 0.6, 0.14]} />
         <meshStandardMaterial
           color={BODY}
           metalness={0.8}

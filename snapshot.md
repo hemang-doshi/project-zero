@@ -1,8 +1,10 @@
 # Current working snapshot
 
-Updated: **2026-09-22 19:21 IST**. Read [handoff.md](handoff.md) for project context and recovery details. Every agent must refresh both files after substantive work.
+Updated: **2026-09-22 19:26 IST**. Read [handoff.md](handoff.md) for project context and recovery details. Every agent must refresh both files after substantive work.
 
 ## September 22 follow-up fixes
+
+The first patch was transferred as `b9d0a12`; full worktree desktop tests passed 866/866, typecheck and `build:unpack` passed, and the rebuilt app was launched. Live Electron clicks confirmed monitor and ESP32 focus/details, with both labeled UNREGISTERED. A follow-up red-green test identified the reported black rod as the monitor stand neck protruding 0.23 scene units into the panel; the geometry correction in the writable clone still needs transfer and rebuild. The Dock-pinned app path is unchanged. The Mac still has no Zero daemon/socket or working Codex CLI; Spotify cross-device OAuth is not implemented or authorized. No live provider turn or physical hardware test ran.
 
 The user reported compact Skills Lab overflow, unclickable monitor/ESP32, undersized monitor, missing Codex/OpenCode chats, missing daemon socket, and absent hardware/Spotify media. A focused implementation was prepared in a writable clone of `codex/zero-redesign` at `/private/tmp/project-zero-fixes-2` for transfer back into the isolated redesign worktree. Skills Lab now stacks its detail pane at compact width, clips long row text, shows per-skill/group fallback glyphs, and names the genuinely absent self-learnt store. Network placeholders remain explicitly UNREGISTERED but can be selected/focused; the 27-inch monitor is 1.6× its previous render size, and cables for unregistered monitor/ESP32 are hidden. Desk shows an explicitly virtual 128×160-style preview when no display node is present. Zero Bot can open listed OpenCode sessions through its official sanitized `opencode export <sessionID>` command, bounded to 8 MiB and 10 seconds, with messages/reasoning/commands/tools parsed in memory. Missing `zero.sock` is explained plainly. Codex bridge searches installed CLI paths only if a `--version` preflight succeeds, rather than trusting an executable-looking broken shim.
 
