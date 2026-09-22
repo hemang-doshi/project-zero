@@ -7,6 +7,8 @@ export const OPS = {
   'projects.list': true,
   'skills.discover': true,
   'skills.search': true,
+  'prompt.submit': true,
+  'prompt.decide': true,
   'codex.connect': true,
   'codex.disconnect': true,
   'codex.send': true,
@@ -34,6 +36,16 @@ export type ArtworkPayload = { id: string }
 export type CodexSendPayload = { method: string; params?: unknown }
 export type ThreadGetPayload = { threadId: string }
 export type SkillsDiscoverPayload = { refresh?: boolean }
+export type PromptSubmitPayload = {
+  provider: 'codex' | 'opencode'
+  model: string
+  threadId: string
+  text: string
+}
+export type PromptDecidePayload = PromptSubmitPayload & {
+  holdId: string
+  action: 'cancel' | 'send-once'
+}
 
 // Wire result of the skills.discover op, produced by the main-process skill
 // discoverer (Task 37D) over lane B's pure discovery layer. Shapes mirror

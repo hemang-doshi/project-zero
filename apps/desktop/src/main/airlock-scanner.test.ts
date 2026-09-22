@@ -31,5 +31,6 @@ describe('scanPrompt', () => {
   it('fails closed on invalid or oversized input', () => {
     expect(scanPrompt(null)).toEqual({ state: 'blocked', reason: 'invalid-input' })
     expect(scanPrompt('x'.repeat(32001))).toEqual({ state: 'blocked', reason: 'too-large' })
+    expect(scanPrompt('🔐'.repeat(9000))).toEqual({ state: 'blocked', reason: 'too-large' })
   })
 })

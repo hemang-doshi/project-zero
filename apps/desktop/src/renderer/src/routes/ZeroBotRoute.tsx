@@ -1,6 +1,7 @@
 import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import { ZERO_TYPE } from '../../../shared/tokens'
 import type { ProjectListItem } from '../../../shared/ipc'
+import type { PromptSubmitPayload } from '../../../shared/ipc'
 import { Chip } from './Chip'
 import { ChatRow, ThreadList } from './ZeroBotChat'
 import type { Tone } from './runtime.types'
@@ -458,6 +459,9 @@ export const ZeroBotRoute = memo(function ZeroBotRoute(): React.JSX.Element {
   const [inspectorOpen, setInspectorOpen] = useState(true)
   const workspaceRef = useRef<HTMLDivElement>(null)
   const [composerText, setComposerText] = useState('')
+  const [promptBusy, setPromptBusy] = useState(false)
+  const [promptHold, setPromptHold] = useState<{ id: string; categories: string[]; positions: number[] } | null>(null)
+  const activePromptRef = useRef<string | null>(null)
   const [projects, setProjects] = useState<ProjectListItem[]>([])
   const [projectsError, setProjectsError] = useState<string | null>(null)
   const lanesRef = useRef<HarnessState>(EMPTY_LANES)
@@ -616,6 +620,8 @@ export const ZeroBotRoute = memo(function ZeroBotRoute(): React.JSX.Element {
   }
 
   const openThread = (threadId: string): void => {
+    activePromptRef.current = null
+    setPromptHold(null)
     // Codex-only by construction: it reads the codex lane and the read-only
     // codex.thread.get op. Callers switch the harness focus themselves, so no
     // stale-state guard here (a harness check would read the pre-click lane).
@@ -649,6 +655,8 @@ export const ZeroBotRoute = memo(function ZeroBotRoute(): React.JSX.Element {
   }
 
   const newConversation = (): void => {
+    activePromptRef.current = null
+    setPromptHold(null)
     // Local view only: no session/new exists on the backend, and the composer
     // is honestly blocked, so this clears the open thread without creating
     // anything on any provider.
@@ -707,6 +715,56 @@ export const ZeroBotRoute = memo(function ZeroBotRoute(): React.JSX.Element {
   )
 
   const openRow = lane.rows.find((r) => r.id === lane.threadId) ?? null
+  const openProject = openRow?.projectId ? projects.find((p) => p.id === openRow.projectId) : null
+  const canSend = harness === 'codex' && live && lane.threadId !== null && composerText.trim() !== '' && !promptBusy
+  const promptRequest = (): PromptSubmitPayload | null =>
+    lane.threadId === null ? null : { provider: harness, model: selectedModel, threadId: lane.threadId, text: composerText }
+  const promptResult = (value: unknown, request: PromptSubmitPayload): void => {
+    const result = value as { state?: string; turnId?: string; holdId?: string; categories?: string[]; positions?: number[]; reason?: string }
+    if (activePromptRef.current !== JSON.stringify(request)) {
+      if (result.state === 'held' && typeof result.holdId === 'string') {
+        void window.zero.invoke('prompt.decide', { ...request, holdId: result.holdId, action: 'cancel' }).catch(() => {})
+      }
+      setNotice(result.state === 'accepted'
+        ? 'The original turn was accepted; your newer edit was not sent.'
+        : 'Prompt changed during Airlock review. Your current text was not sent; submit it again.')
+      return
+    }
+    if (result.state === 'held' && typeof result.holdId === 'string') {
+      setPromptHold({ id: result.holdId, categories: result.categories ?? [], positions: result.positions ?? [] })
+      setNotice('Airlock paused this prompt before provider dispatch. Review the categories below.')
+    } else if (result.state === 'accepted' && typeof result.turnId === 'string') {
+      setPromptHold(null)
+      activePromptRef.current = null
+      setComposerText((current) => current === request.text ? '' : current)
+      setNotice('Provider accepted the turn. Completion and cost are not yet verified.')
+    } else {
+      setPromptHold(null)
+      setNotice('Prompt was not sent. Review the destination and try again.')
+    }
+  }
+  const submitPrompt = (): void => {
+    const request = promptRequest()
+    if (!canSend || request === null) return
+    activePromptRef.current = JSON.stringify(request)
+    setPromptBusy(true)
+    setError(null)
+    void window.zero.invoke('prompt.submit', request)
+      .then((value) => promptResult(value, request))
+      .catch(() => setNotice('Prompt was not sent. The Airlock or provider is unavailable.'))
+      .finally(() => setPromptBusy(false))
+  }
+  const decidePrompt = (action: 'cancel' | 'send-once'): void => {
+    const request = promptRequest()
+    if (promptHold === null || request === null || promptBusy) return
+    const holdId = promptHold.id
+    setPromptHold(null)
+    setPromptBusy(true)
+    void window.zero.invoke('prompt.decide', { ...request, holdId, action })
+      .then((value) => action === 'cancel' ? setNotice('Airlock hold cancelled; nothing was sent.') : promptResult(value, request))
+      .catch(() => setNotice('Prompt was not sent. The Airlock decision failed.'))
+      .finally(() => setPromptBusy(false))
+  }
   const activity = streamingLabel(lane.items)
   const counts = useMemo(() => turnItemCounts(lane.items), [lane.items])
   const toolItems = useMemo(
@@ -748,7 +806,7 @@ export const ZeroBotRoute = memo(function ZeroBotRoute(): React.JSX.Element {
             type="button"
             style={harness === 'codex' ? providerActive : providerButton}
             aria-pressed={harness === 'codex'}
-            onClick={() => setHarness('codex')}
+            onClick={() => { activePromptRef.current = null; setPromptHold(null); setHarness('codex') }}
           >
             Projects
           </button>
@@ -756,7 +814,7 @@ export const ZeroBotRoute = memo(function ZeroBotRoute(): React.JSX.Element {
             type="button"
             style={harness === 'opencode' ? providerActive : providerButton}
             aria-pressed={harness === 'opencode'}
-            onClick={() => setHarness('opencode')}
+            onClick={() => { activePromptRef.current = null; setPromptHold(null); setHarness('opencode') }}
           >
             OpenCode
           </button>
@@ -1001,11 +1059,12 @@ export const ZeroBotRoute = memo(function ZeroBotRoute(): React.JSX.Element {
               style={composerInput}
               rows={3}
               value={composerText}
-              onChange={(e) => setComposerText(e.target.value)}
+              onChange={(e) => { activePromptRef.current = null; setPromptHold(null); setComposerText(e.target.value) }}
               onKeyDown={(e) => {
                 if (e.key === 'Enter' && e.metaKey) {
                   e.preventDefault()
-                  setNotice(SEND_BLOCKED_NOTICE)
+                  if (canSend && promptHold === null) submitPrompt()
+                  else setNotice(SEND_BLOCKED_NOTICE)
                 }
               }}
               placeholder="Describe the work for Zero…"
@@ -1018,7 +1077,7 @@ export const ZeroBotRoute = memo(function ZeroBotRoute(): React.JSX.Element {
                 aria-label="Model selector"
                 style={{ ...modelChip, borderRadius: 6, maxWidth: 180 }}
                 value={selectedModel}
-                onChange={(e) => setModels((s) => ({ ...s, [harness]: e.target.value }))}
+                onChange={(e) => { activePromptRef.current = null; setPromptHold(null); setModels((s) => ({ ...s, [harness]: e.target.value })) }}
               >
                 {Array.from(new Set([...modelOptions, selectedModel])).map((m) => (
                   <option key={m} value={m}>
@@ -1049,9 +1108,10 @@ export const ZeroBotRoute = memo(function ZeroBotRoute(): React.JSX.Element {
               <button
                 type="button"
                 style={disabledSend}
-                disabled
+                disabled={!canSend || promptHold !== null}
+                onClick={submitPrompt}
                 aria-label="Send turn"
-                title={SEND_BLOCKED_NOTICE}
+                title={canSend ? 'Send through Airlock' : SEND_BLOCKED_NOTICE}
               >
                 <svg
                   aria-hidden="true"
@@ -1067,9 +1127,19 @@ export const ZeroBotRoute = memo(function ZeroBotRoute(): React.JSX.Element {
               </button>
             </div>
           </div>
-          <p data-voice="human" style={bodyText}>
-            {SEND_BLOCKED_NOTICE}
-          </p>
+          {promptHold !== null ? (
+            <div role="alert" aria-label="Airlock hold" style={warnNotice}>
+              <p>Sensitive data detected: {promptHold.categories.join(', ')}. Positions: {promptHold.positions.join(', ')}. No prompt has been sent.</p>
+              <button type="button" onClick={() => decidePrompt('cancel')} disabled={promptBusy}>Cancel</button>
+              <button type="button" onClick={() => decidePrompt('send-once')} disabled={promptBusy}>Send once</button>
+            </div>
+          ) : (
+            <p data-voice="human" style={bodyText}>
+              {harness === 'codex' && live && lane.threadId !== null
+                ? 'Send runs through the local Airlock. Sensitive prompts pause for approval.'
+                : SEND_BLOCKED_NOTICE}
+            </p>
+          )}
         </div>
       </main>
 
@@ -1124,6 +1194,9 @@ export const ZeroBotRoute = memo(function ZeroBotRoute(): React.JSX.Element {
             CONTEXT
           </span>
           <p data-voice="human" style={bodyText}>
+            Provider: {PROVIDER_DISPLAY[harness]} · Model: {selectedModel} · Project: {openProject?.name ?? 'Unavailable'}
+          </p>
+          <p data-voice="human" style={bodyText}>
             {counts.messages} message{counts.messages === 1 ? '' : 's'} · {counts.thinking} thinking
             · {counts.tools} tool call{counts.tools === 1 ? '' : 's'}
             {counts.notices > 0
@@ -1153,7 +1226,9 @@ export const ZeroBotRoute = memo(function ZeroBotRoute(): React.JSX.Element {
             AIRLOCK
           </span>
           <p data-voice="human" style={bodyText}>
-            Prompt screening is not connected to provider dispatch yet. Sending remains blocked.
+            {harness === 'codex'
+              ? 'Codex prompts pass through local screening. Detected sensitive text requires a one-time Send once decision; no approval applies to later edits.'
+              : 'OpenCode prompt dispatch is unavailable until an active ACP session is verified.'}
           </p>
 
           <span data-voice="human" style={sectionLabel}>

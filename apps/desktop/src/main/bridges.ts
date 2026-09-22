@@ -116,8 +116,8 @@ export class JsonRpcStdio {
     child.stdout.on('data', (chunk: Buffer) => {
       this.onStdout(session, chunk)
     })
-    child.stderr.on('data', (chunk: Buffer) => {
-      this.onStderr(session, chunk)
+    child.stderr.on('data', () => {
+      this.onStderr(session)
     })
     child.on('exit', (code: number) => {
       this.onExit(session, code)
@@ -217,10 +217,10 @@ export class JsonRpcStdio {
     }
   }
 
-  private onStderr(session: number, chunk: Buffer): void {
+  private onStderr(session: number): void {
     if (session !== this.session) return
-    const combined = (this.lastDiagnostic ?? '') + chunk.toString('utf8')
-    this.lastDiagnostic = truncate(combined, 4096)
+    // stderr is untrusted and can echo prompt text or tool output.
+    this.lastDiagnostic = `${this.harness} emitted stderr; content withheld`
   }
 
   private onExit(session: number, code: number): void {
@@ -505,10 +505,6 @@ function compareVersionsDescending(a: string, b: string): number {
     if (na !== nb) return nb - na
   }
   return vb.join('.').localeCompare(va.join('.'))
-}
-
-function truncate(text: string, limit: number): string {
-  return text.length > limit ? text.slice(-limit) : text
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {

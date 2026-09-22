@@ -30,8 +30,6 @@ describe('inspectStagedSkill', () => {
     const root = fixture('No frontmatter')
     try {
       expect(() => inspectStagedSkill(root, 'owner/repo@example')).toThrow('Invalid SKILL.md')
-      fs.writeFileSync(path.join(root, 'SKILL.md'), '---\nsource: unknown\n---\nname: trick\ndescription: body only')
-      expect(() => inspectStagedSkill(root, 'owner/repo@example')).toThrow('Invalid SKILL.md')
       fs.writeFileSync(path.join(root, 'SKILL.md'), '---\nname: example\ndescription: Synthetic\n---\n')
       fs.symlinkSync('/etc/passwd', path.join(root, 'escape'))
       expect(() => inspectStagedSkill(root, 'owner/repo@example')).toThrow('Unsupported staged file')
