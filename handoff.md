@@ -1,10 +1,10 @@
 # Project Zero — full project handoff
 
-Updated: **2026-09-22 18:42 IST**. Start with [AGENTS.md](AGENTS.md) and [snapshot.md](snapshot.md). This document supplies durable context; the snapshot supplies the newest checkout/installation/test state. Every agent must maintain both. Pending items are not permission to resume a task the user stopped.
+Updated: **2026-09-22 18:46 IST**. Start with [AGENTS.md](AGENTS.md) and [snapshot.md](snapshot.md). This document supplies durable context; the snapshot supplies the newest checkout/installation/test state. Every agent must maintain both. Pending items are not permission to resume a task the user stopped.
 
 ## September 22 redesign implementation handoff
 
-The user explicitly stopped repetitive audit/re-review and directed immediate execution of the four targeted redesign aspects. All current implementation is in the isolated `codex/zero-redesign` worktree at `/Users/hemangdoshi/.codex/worktrees/zero-redesign/project-zero`, starting from commit `76905a0`; check `git log -1` and `git status` for the current commit/dirty state. Original checkout work is untouched. Read the updated snapshot for exact code scope and verification. The three approved implementation plans remain under `docs/superpowers/plans/2026-09-22-zero-{desk-bot-shell,airlock-inspector-voice,skills-lab}.md`. Do not resume the audit plan as a new loop.
+The user explicitly stopped repetitive audit/re-review and directed immediate execution of the four targeted redesign aspects. All current implementation is in the isolated `codex/zero-redesign` worktree at `/Users/hemangdoshi/.codex/worktrees/zero-redesign/project-zero`, starting from commit `76905a0`; source tip `c53bb7e` follows checkpoints `26a5899` and `215c8b7`. Check `git log -1` and `git status` for later state. Original checkout work is untouched. Read the updated snapshot for exact code scope and verification. The three approved implementation plans remain under `docs/superpowers/plans/2026-09-22-zero-{desk-bot-shell,airlock-inspector-voice,skills-lab}.md`. Do not resume the audit plan as a new loop.
 
 The largest visual defect was not only container height: real Chromium showed the R3F scene crashed on test-only `data-count` props attached to instanced meshes. Removing them restored a visible desk; a wider default Network window, camera fit and honest unregistered physical monitor/ESP32 placeholders made the full layout visible. Static preview is not a live Electron/daemon/hardware acceptance test.
 
