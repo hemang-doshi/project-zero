@@ -16,6 +16,7 @@ export type ThreadRow = {
   provider: string
   status: string
   projectId?: string | null
+  cwd?: string | null
 }
 
 export type ChatItem =
@@ -66,7 +67,8 @@ export function parseThreadRows(value: unknown): ThreadRow[] {
       model: isStr(r.model) ? r.model : null,
       provider: isStr(r.modelProvider) ? r.modelProvider : '',
       status: isStr(r.status) ? r.status : '',
-      projectId: isStr(r.projectId) && r.projectId !== '' ? r.projectId : null
+      projectId: isStr(r.projectId) && r.projectId !== '' ? r.projectId : null,
+      cwd: isStr(r.cwd) && r.cwd !== '' ? r.cwd : null
     })
   }
   rows.sort((a, b) => threadTimestamp(b) - threadTimestamp(a))
@@ -82,11 +84,30 @@ export function groupThreadsByRegisteredProject(
 } {
   const groups = projects.map((project) => ({ project, rows: [] as ThreadRow[] }))
   const byId = new Map(groups.map((group) => [group.project.id, group]))
+  const byPath = [...groups].sort((a, b) => b.project.path.length - a.project.path.length)
   const unprojected: ThreadRow[] = []
   for (const row of [...threads].sort((a, b) => threadTimestamp(b) - threadTimestamp(a))) {
-    const group = row.projectId ? byId.get(row.projectId) : undefined
-    if (group) group.rows.push(row)
-    else unprojected.push(row)
+    const explicit = row.projectId ? byId.get(row.projectId) : undefined
+    const fromCwd = row.cwd
+      ? byPath.find(
+          ({ project }) => row.cwd === project.path || row.cwd?.startsWith(`${project.path}/`)
+        )
+      : undefined
+    const group = explicit ?? fromCwd
+    if (group) {
+      group.rows.push(row)
+    } else if (row.cwd) {
+      let providerGroup = groups.find(({ project }) => project.id === `cwd:${row.cwd}`)
+      if (!providerGroup) {
+        const parts = row.cwd.split('/').filter(Boolean)
+        providerGroup = {
+          project: { id: `cwd:${row.cwd}`, name: parts.at(-1) ?? row.cwd, path: row.cwd },
+          rows: []
+        }
+        groups.push(providerGroup)
+      }
+      providerGroup.rows.push(row)
+    } else unprojected.push(row)
   }
   return { groups, unprojected }
 }

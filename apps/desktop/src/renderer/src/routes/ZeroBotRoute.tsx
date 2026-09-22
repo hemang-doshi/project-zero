@@ -4,7 +4,7 @@ import type { ProjectListItem } from '../../../shared/ipc'
 import type { PromptSubmitPayload } from '../../../shared/ipc'
 import { Chip } from './Chip'
 import { ChatRow, ThreadList } from './ZeroBotChat'
-import { parseOpenCodeTranscript } from './opencodeTranscript'
+import { parseOpenCodeTranscript, type TranscriptUsage } from './opencodeTranscript'
 import type { Tone } from './runtime.types'
 import {
   applyBridgeEvent,
@@ -41,8 +41,7 @@ import {
   PROVIDER_DISPLAY,
   projectErrorMessage,
   streamingLabel,
-  summarizeExecItem,
-  summarizeToolItem,
+  toolOutcomeSummary,
   turnItemCounts
 } from './zeroBot.presentation'
 
@@ -332,7 +331,15 @@ const threadTime = (seconds: number): string => {
   return Number.isNaN(d.getTime()) ? '—' : d.toISOString().slice(0, 16).replace('T', ' ')
 }
 
-export function FolderGroupList({ groups, selectedId, onSelect }: { groups: OpenCodeFolderGroup[]; selectedId: string | null; onSelect: (id: string) => void }): React.JSX.Element {
+export function FolderGroupList({
+  groups,
+  selectedId,
+  onSelect
+}: {
+  groups: OpenCodeFolderGroup[]
+  selectedId: string | null
+  onSelect: (id: string) => void
+}): React.JSX.Element {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 10, minWidth: 0 }}>
       {groups.map((g) => (
@@ -346,7 +353,20 @@ export function FolderGroupList({ groups, selectedId, onSelect }: { groups: Open
             </span>
           </div>
           {g.sessions.map((s) => (
-            <button key={s.id} type="button" style={{ ...sessionRow, width: '100%', border: 'none', background: selectedId === s.id ? 'var(--z-card-white)' : 'transparent', cursor: 'pointer', textAlign: 'left' }} onClick={() => onSelect(s.id)} aria-current={selectedId === s.id ? 'true' : undefined}>
+            <button
+              key={s.id}
+              type="button"
+              style={{
+                ...sessionRow,
+                width: '100%',
+                border: 'none',
+                background: selectedId === s.id ? 'var(--z-card-white)' : 'transparent',
+                cursor: 'pointer',
+                textAlign: 'left'
+              }}
+              onClick={() => onSelect(s.id)}
+              aria-current={selectedId === s.id ? 'true' : undefined}
+            >
               <span data-voice="human" style={{ ...bodyText, fontSize: 12 }}>
                 {s.title === '' ? s.id : s.title}
               </span>
@@ -434,11 +454,19 @@ type ThreadLane = {
   items: ChatItem[]
   dropped: number
   threadId: string | null
+  usage: TranscriptUsage | null
 }
 
-const EMPTY_LANE: ThreadLane = { rows: [], items: [], dropped: 0, threadId: null }
+const EMPTY_LANE: ThreadLane = { rows: [], items: [], dropped: 0, threadId: null, usage: null }
 
 type HarnessState = Record<Harness, ThreadLane>
+
+type PendingPermission = {
+  provider: Harness
+  requestId: string | number
+  title: string
+  allowOptionId?: string
+}
 
 const EMPTY_LANES: HarnessState = { codex: { ...EMPTY_LANE }, opencode: { ...EMPTY_LANE } }
 
@@ -462,7 +490,12 @@ export const ZeroBotRoute = memo(function ZeroBotRoute(): React.JSX.Element {
   const workspaceRef = useRef<HTMLDivElement>(null)
   const [composerText, setComposerText] = useState('')
   const [promptBusy, setPromptBusy] = useState(false)
-  const [promptHold, setPromptHold] = useState<{ id: string; categories: string[]; positions: number[] } | null>(null)
+  const [promptHold, setPromptHold] = useState<{
+    id: string
+    categories: string[]
+    positions: number[]
+  } | null>(null)
+  const [pendingPermission, setPendingPermission] = useState<PendingPermission | null>(null)
   const activePromptRef = useRef<string | null>(null)
   const [projects, setProjects] = useState<ProjectListItem[]>([])
   const [projectsError, setProjectsError] = useState<string | null>(null)
@@ -521,6 +554,21 @@ export const ZeroBotRoute = memo(function ZeroBotRoute(): React.JSX.Element {
               .catch(() => {
                 /* fail-soft: the state card still shows the live bridge */
               })
+            void window.zero
+              .invoke('codex.discover')
+              .then((value) => {
+                if (!aliveRef.current) return
+                const parsed = parseDiscovery(value)
+                if (parsed === null) return
+                setDiscovery((current) => ({ ...current, codex: parsed }))
+                setModels((current) => ({
+                  ...current,
+                  codex: parsed.models.some((model) => model.id === current.codex)
+                    ? current.codex
+                    : (parsed.models[0]?.id ?? '')
+                }))
+              })
+              .catch(() => {})
           }
           // OpenCode discovery is a local read-only store scan, not a bridge
           // probe: it runs on mount with no connection and never sends.
@@ -546,11 +594,41 @@ export const ZeroBotRoute = memo(function ZeroBotRoute(): React.JSX.Element {
     refresh('codex')
     refresh('opencode')
     const unsubscribe = window.zero.subscribe('bridge', (u) => {
-      const push = u as { harness?: unknown; event?: { method?: unknown; params?: unknown } }
+      const push = u as {
+        harness?: unknown
+        event?: { id?: unknown; method?: unknown; params?: unknown }
+      }
       const h = push.harness === 'codex' || push.harness === 'opencode' ? push.harness : null
       const method = typeof push.event?.method === 'string' ? push.event.method : null
       if (h === null || method === null || !aliveRef.current) return
       const ev: BridgeEvent = { harness: h, method, params: push.event?.params }
+      if (
+        (method === 'session/request_permission' || method.includes('requestApproval')) &&
+        (typeof push.event?.id === 'string' || typeof push.event?.id === 'number')
+      ) {
+        const permissionParams =
+          typeof push.event.params === 'object' && push.event.params !== null
+            ? (push.event.params as Record<string, unknown>)
+            : {}
+        const options = Array.isArray(permissionParams['options'])
+          ? permissionParams['options']
+          : []
+        const allow = options.find(
+          (value) =>
+            typeof value === 'object' &&
+            value !== null &&
+            (value as Record<string, unknown>)['kind'] === 'allow_once'
+        ) as Record<string, unknown> | undefined
+        setPendingPermission({
+          provider: h,
+          requestId: push.event.id,
+          title:
+            typeof permissionParams['title'] === 'string'
+              ? permissionParams['title']
+              : 'Provider requests permission for a tool action.',
+          ...(typeof allow?.['optionId'] === 'string' ? { allowOptionId: allow.optionId } : {})
+        })
+      }
       const nextLogs = pushHarnessEvent(logsRef.current, ev)
       logsRef.current = nextLogs
       setLogs(nextLogs)
@@ -596,7 +674,10 @@ export const ZeroBotRoute = memo(function ZeroBotRoute(): React.JSX.Element {
   const info = states[harness]
   const result = discovery[harness] ?? null
   const selectedModel = models[harness]
-  const mismatch = harnessLockWarning(selectedModel, harness)
+  const mismatch =
+    result !== null && result.models.some((model) => model.id === selectedModel)
+      ? null
+      : harnessLockWarning(selectedModel, harness)
   const lane = lanes[harness]
   const log = logs[harness]
   const shownEvents = useMemo(() => visibleBridgeEvents(log.events, harness), [log.events, harness])
@@ -661,28 +742,81 @@ export const ZeroBotRoute = memo(function ZeroBotRoute(): React.JSX.Element {
     const laneNow = lanesRef.current.opencode
     const opened: HarnessState = {
       ...lanesRef.current,
-      opencode: { ...laneNow, threadId, items: [], dropped: 0 }
+      opencode: { ...laneNow, threadId, items: [], dropped: 0, usage: null }
     }
     lanesRef.current = opened
     setLanes(opened)
     setError(null)
     setNotice(null)
+    const saved = discovery.opencode?.folders
+      .flatMap((group) => group.sessions)
+      .find((session) => session.id === threadId)
+    if (saved?.model) setModels((current) => ({ ...current, opencode: saved.model ?? '' }))
+    if (states.opencode.state === 'live') {
+      void window.zero
+        .invoke('ocp.thread.prepare', { threadId })
+        .then((value) => {
+          if (openRef.current.opencode !== threadId || typeof value !== 'object' || value === null)
+            return
+          const prepared = value as { currentModel?: unknown; models?: unknown }
+          const providerModels = Array.isArray(prepared.models)
+            ? prepared.models.flatMap((item) => {
+                if (typeof item !== 'object' || item === null) return []
+                const row = item as { id?: unknown; name?: unknown }
+                return typeof row.id === 'string'
+                  ? [
+                      {
+                        id: row.id,
+                        label: typeof row.name === 'string' ? row.name : row.id,
+                        advertised: true
+                      }
+                    ]
+                  : []
+              })
+            : []
+          setDiscovery((current) => ({
+            ...current,
+            opencode: {
+              ...(current.opencode ?? {
+                harness: 'opencode',
+                models: [],
+                threads: [],
+                folders: [],
+                note: null
+              }),
+              models: providerModels
+            }
+          }))
+          if (typeof prepared.currentModel === 'string')
+            setModels((current) => ({ ...current, opencode: prepared.currentModel as string }))
+        })
+        .catch((err: unknown) => setError(err instanceof Error ? err.message : String(err)))
+    }
     window.zero.invoke('ocp.thread.get', { threadId }).then(
       (value) => {
         if (openRef.current.opencode !== threadId) return
-        const session = typeof value === 'object' && value !== null ? (value as { session?: unknown }).session : null
+        const session =
+          typeof value === 'object' && value !== null
+            ? (value as { session?: unknown }).session
+            : null
         const parsed = parseOpenCodeTranscript(session)
         const current = lanesRef.current.opencode
         const next: HarnessState = {
           ...lanesRef.current,
-          opencode: { ...current, items: parsed.items, dropped: parsed.dropped }
+          opencode: {
+            ...current,
+            items: parsed.items,
+            dropped: parsed.dropped,
+            usage: parsed.usage
+          }
         }
         lanesRef.current = next
         setLanes(next)
         if (parsed.items.length === 0) setNotice('The OpenCode session has no readable messages.')
       },
       (err: unknown) => {
-        if (openRef.current.opencode === threadId) setError(err instanceof Error ? err.message : String(err))
+        if (openRef.current.opencode === threadId)
+          setError(err instanceof Error ? err.message : String(err))
       }
     )
   }
@@ -690,21 +824,42 @@ export const ZeroBotRoute = memo(function ZeroBotRoute(): React.JSX.Element {
   const newConversation = (): void => {
     activePromptRef.current = null
     setPromptHold(null)
-    // Local view only: no session/new exists on the backend, and the composer
-    // is honestly blocked, so this clears the open thread without creating
-    // anything on any provider.
-    openRef.current = { ...openRef.current, [harness]: null }
-    const laneNow = lanesRef.current[harness]
-    const next: HarnessState = {
-      ...lanesRef.current,
-      [harness]: { ...laneNow, threadId: null, items: [], dropped: 0 }
-    }
-    lanesRef.current = next
-    setLanes(next)
     setError(null)
-    setNotice(
-      'Cleared the open view. Nothing was created on any provider — describe the work below and Zero will hold it here until sending exists.'
-    )
+    const currentId = openRef.current[harness]
+    const codexRow = lanesRef.current.codex.rows.find((row) => row.id === currentId)
+    const codexProject = codexRow?.projectId
+      ? projects.find((project) => project.id === codexRow.projectId)
+      : null
+    const openCodeRow = discovery.opencode?.folders
+      .flatMap((group) => group.sessions)
+      .find((session) => session.id === currentId)
+    const cwd = harness === 'codex' ? (codexRow?.cwd ?? codexProject?.path) : openCodeRow?.directory
+    if (!live || !cwd || selectedModel === '') {
+      setNotice(
+        'Select a connected conversation with a verified directory and advertised model before creating a new one.'
+      )
+      return
+    }
+    setInFlight(true)
+    void window.zero
+      .invoke('conversation.new', { provider: harness, cwd, model: selectedModel })
+      .then((value) => {
+        const result =
+          typeof value === 'object' && value !== null ? (value as { threadId?: unknown }) : {}
+        if (typeof result.threadId !== 'string') throw new Error('Malformed conversation creation')
+        setNotice('New provider conversation created. No prompt was sent.')
+        if (harness === 'codex') {
+          void loadThreads('codex').then(() => openThread(result.threadId as string))
+        } else {
+          void window.zero.invoke('ocp.discover').then((discovered) => {
+            const parsed = parseDiscovery(discovered)
+            if (parsed !== null) setDiscovery((current) => ({ ...current, opencode: parsed }))
+            openOpenCodeThread(result.threadId as string)
+          })
+        }
+      })
+      .catch((err: unknown) => setError(err instanceof Error ? err.message : String(err)))
+      .finally(() => setInFlight(false))
   }
 
   const run = (action: 'connect' | 'disconnect' | 'discover'): void => {
@@ -737,6 +892,22 @@ export const ZeroBotRoute = memo(function ZeroBotRoute(): React.JSX.Element {
           // The codex-only guard lives inside loadThreads itself, so the
           // call site can delegate without duplicating the harness check.
           if (action === 'connect') void loadThreads(harness)
+          if (action === 'connect' && harness === 'codex') {
+            void window.zero
+              .invoke('codex.discover')
+              .then((value) => {
+                const parsed = parseDiscovery(value)
+                if (parsed === null) return
+                setDiscovery((current) => ({ ...current, codex: parsed }))
+                setModels((current) => ({
+                  ...current,
+                  codex: parsed.models.some((model) => model.id === current.codex)
+                    ? current.codex
+                    : (parsed.models[0]?.id ?? '')
+                }))
+              })
+              .catch(() => {})
+          }
         }
       })
       .catch((err: unknown) => setError(err instanceof Error ? err.message : String(err)))
@@ -749,27 +920,50 @@ export const ZeroBotRoute = memo(function ZeroBotRoute(): React.JSX.Element {
 
   const openRow = lane.rows.find((r) => r.id === lane.threadId) ?? null
   const openProject = openRow?.projectId ? projects.find((p) => p.id === openRow.projectId) : null
-  const canSend = harness === 'codex' && live && lane.threadId !== null && Boolean(openProject) && composerText.trim() !== '' && !promptBusy
+  const canSend =
+    live &&
+    lane.threadId !== null &&
+    selectedModel !== '' &&
+    (harness === 'opencode' || Boolean(openProject)) &&
+    composerText.trim() !== '' &&
+    !promptBusy
   const promptRequest = (): PromptSubmitPayload | null =>
-    lane.threadId === null ? null : { provider: harness, model: selectedModel, threadId: lane.threadId, text: composerText }
+    lane.threadId === null
+      ? null
+      : { provider: harness, model: selectedModel, threadId: lane.threadId, text: composerText }
   const promptResult = (value: unknown, request: PromptSubmitPayload): void => {
-    const result = value as { state?: string; turnId?: string; holdId?: string; categories?: string[]; positions?: number[]; reason?: string }
+    const result = value as {
+      state?: string
+      turnId?: string
+      holdId?: string
+      categories?: string[]
+      positions?: number[]
+      reason?: string
+    }
     if (activePromptRef.current !== JSON.stringify(request)) {
       if (result.state === 'held' && typeof result.holdId === 'string') {
-        void window.zero.invoke('prompt.decide', { ...request, holdId: result.holdId, action: 'cancel' }).catch(() => {})
+        void window.zero
+          .invoke('prompt.decide', { ...request, holdId: result.holdId, action: 'cancel' })
+          .catch(() => {})
       }
-      setNotice(result.state === 'accepted'
-        ? 'The original turn was accepted; your newer edit was not sent.'
-        : 'Prompt changed during Airlock review. Your current text was not sent; submit it again.')
+      setNotice(
+        result.state === 'accepted'
+          ? 'The original turn was accepted; your newer edit was not sent.'
+          : 'Prompt changed during Airlock review. Your current text was not sent; submit it again.'
+      )
       return
     }
     if (result.state === 'held' && typeof result.holdId === 'string') {
-      setPromptHold({ id: result.holdId, categories: result.categories ?? [], positions: result.positions ?? [] })
+      setPromptHold({
+        id: result.holdId,
+        categories: result.categories ?? [],
+        positions: result.positions ?? []
+      })
       setNotice('Airlock paused this prompt before provider dispatch. Review the categories below.')
     } else if (result.state === 'accepted' && typeof result.turnId === 'string') {
       setPromptHold(null)
       activePromptRef.current = null
-      setComposerText((current) => current === request.text ? '' : current)
+      setComposerText((current) => (current === request.text ? '' : current))
       setNotice('Provider accepted the turn. Completion and cost are not yet verified.')
     } else {
       setPromptHold(null)
@@ -782,7 +976,8 @@ export const ZeroBotRoute = memo(function ZeroBotRoute(): React.JSX.Element {
     activePromptRef.current = JSON.stringify(request)
     setPromptBusy(true)
     setError(null)
-    void window.zero.invoke('prompt.submit', request)
+    void window.zero
+      .invoke('prompt.submit', request)
       .then((value) => promptResult(value, request))
       .catch(() => setNotice('Prompt was not sent. The Airlock or provider is unavailable.'))
       .finally(() => setPromptBusy(false))
@@ -793,10 +988,30 @@ export const ZeroBotRoute = memo(function ZeroBotRoute(): React.JSX.Element {
     const holdId = promptHold.id
     setPromptHold(null)
     setPromptBusy(true)
-    void window.zero.invoke('prompt.decide', { ...request, holdId, action })
-      .then((value) => action === 'cancel' ? setNotice('Airlock hold cancelled; nothing was sent.') : promptResult(value, request))
+    void window.zero
+      .invoke('prompt.decide', { ...request, holdId, action })
+      .then((value) =>
+        action === 'cancel'
+          ? setNotice('Airlock hold cancelled; nothing was sent.')
+          : promptResult(value, request)
+      )
       .catch(() => setNotice('Prompt was not sent. The Airlock decision failed.'))
       .finally(() => setPromptBusy(false))
+  }
+  const decidePermission = (action: 'allow-once' | 'reject'): void => {
+    const permission = pendingPermission
+    if (permission === null) return
+    setPendingPermission(null)
+    void window.zero
+      .invoke('provider.permission.decide', {
+        provider: permission.provider,
+        requestId: permission.requestId,
+        action,
+        ...(action === 'allow-once' && permission.allowOptionId
+          ? { optionId: permission.allowOptionId }
+          : {})
+      })
+      .catch((err: unknown) => setError(err instanceof Error ? err.message : String(err)))
   }
   const activity = streamingLabel(lane.items)
   const counts = useMemo(() => turnItemCounts(lane.items), [lane.items])
@@ -804,6 +1019,7 @@ export const ZeroBotRoute = memo(function ZeroBotRoute(): React.JSX.Element {
     () => lane.items.filter((i) => i.kind === 'tool' || i.kind === 'exec'),
     [lane.items]
   )
+  const toolSummary = useMemo(() => toolOutcomeSummary(lane.items), [lane.items])
   // Context indicator from real lane data only: provider, selected model and
   // the items actually in view. Project and branch need the context-packet
   // backend (spec §§32-34), which does not exist — marked pending below.
@@ -819,7 +1035,10 @@ export const ZeroBotRoute = memo(function ZeroBotRoute(): React.JSX.Element {
   )
   const codexInfo = states.codex
   const opencodeResult = discovery.opencode ?? null
-  const openOpenCodeRow = opencodeResult?.folders.flatMap((group) => group.sessions).find((session) => session.id === lanes.opencode.threadId) ?? null
+  const openOpenCodeRow =
+    opencodeResult?.folders
+      .flatMap((group) => group.sessions)
+      .find((session) => session.id === lanes.opencode.threadId) ?? null
 
   return (
     <div ref={workspaceRef} className="zw-route" data-region="workspace" style={workspaceStyle}>
@@ -840,7 +1059,11 @@ export const ZeroBotRoute = memo(function ZeroBotRoute(): React.JSX.Element {
             type="button"
             style={harness === 'codex' ? providerActive : providerButton}
             aria-pressed={harness === 'codex'}
-            onClick={() => { activePromptRef.current = null; setPromptHold(null); setHarness('codex') }}
+            onClick={() => {
+              activePromptRef.current = null
+              setPromptHold(null)
+              setHarness('codex')
+            }}
           >
             Projects
           </button>
@@ -848,7 +1071,11 @@ export const ZeroBotRoute = memo(function ZeroBotRoute(): React.JSX.Element {
             type="button"
             style={harness === 'opencode' ? providerActive : providerButton}
             aria-pressed={harness === 'opencode'}
-            onClick={() => { activePromptRef.current = null; setPromptHold(null); setHarness('opencode') }}
+            onClick={() => {
+              activePromptRef.current = null
+              setPromptHold(null)
+              setHarness('opencode')
+            }}
           >
             OpenCode
           </button>
@@ -916,7 +1143,11 @@ export const ZeroBotRoute = memo(function ZeroBotRoute(): React.JSX.Element {
               </section>
             </>
           ) : opencodeResult !== null && opencodeResult.folders.length > 0 ? (
-            <FolderGroupList groups={opencodeResult.folders} selectedId={lanes.opencode.threadId} onSelect={openOpenCodeThread} />
+            <FolderGroupList
+              groups={opencodeResult.folders}
+              selectedId={lanes.opencode.threadId}
+              onSelect={openOpenCodeThread}
+            />
           ) : (
             <EmptyState
               title={
@@ -1020,6 +1251,23 @@ export const ZeroBotRoute = memo(function ZeroBotRoute(): React.JSX.Element {
         </div>
 
         <div style={transcriptStyle}>
+          {pendingPermission !== null ? (
+            <div role="alert" aria-label="Provider permission" style={warnNotice}>
+              <p>{pendingPermission.title}</p>
+              <button type="button" onClick={() => decidePermission('reject')}>
+                Reject
+              </button>
+              <button
+                type="button"
+                disabled={
+                  pendingPermission.provider === 'opencode' && !pendingPermission.allowOptionId
+                }
+                onClick={() => decidePermission('allow-once')}
+              >
+                Allow once
+              </button>
+            </div>
+          ) : null}
           {error !== null ? (
             <ErrorPanel
               harness={harness}
@@ -1093,7 +1341,11 @@ export const ZeroBotRoute = memo(function ZeroBotRoute(): React.JSX.Element {
               style={composerInput}
               rows={3}
               value={composerText}
-              onChange={(e) => { activePromptRef.current = null; setPromptHold(null); setComposerText(e.target.value) }}
+              onChange={(e) => {
+                activePromptRef.current = null
+                setPromptHold(null)
+                setComposerText(e.target.value)
+              }}
               onKeyDown={(e) => {
                 if (e.key === 'Enter' && e.metaKey) {
                   e.preventDefault()
@@ -1111,7 +1363,11 @@ export const ZeroBotRoute = memo(function ZeroBotRoute(): React.JSX.Element {
                 aria-label="Model selector"
                 style={{ ...modelChip, borderRadius: 6, maxWidth: 180 }}
                 value={selectedModel}
-                onChange={(e) => { activePromptRef.current = null; setPromptHold(null); setModels((s) => ({ ...s, [harness]: e.target.value })) }}
+                onChange={(e) => {
+                  activePromptRef.current = null
+                  setPromptHold(null)
+                  setModels((s) => ({ ...s, [harness]: e.target.value }))
+                }}
               >
                 {Array.from(new Set([...modelOptions, selectedModel])).map((m) => (
                   <option key={m} value={m}>
@@ -1163,13 +1419,20 @@ export const ZeroBotRoute = memo(function ZeroBotRoute(): React.JSX.Element {
           </div>
           {promptHold !== null ? (
             <div role="alert" aria-label="Airlock hold" style={warnNotice}>
-              <p>Sensitive data detected: {promptHold.categories.join(', ')}. Positions: {promptHold.positions.join(', ')}. No prompt has been sent.</p>
-              <button type="button" onClick={() => decidePrompt('cancel')} disabled={promptBusy}>Cancel</button>
-              <button type="button" onClick={() => decidePrompt('send-once')} disabled={promptBusy}>Send once</button>
+              <p>
+                Sensitive data detected: {promptHold.categories.join(', ')}. Positions:{' '}
+                {promptHold.positions.join(', ')}. No prompt has been sent.
+              </p>
+              <button type="button" onClick={() => decidePrompt('cancel')} disabled={promptBusy}>
+                Cancel
+              </button>
+              <button type="button" onClick={() => decidePrompt('send-once')} disabled={promptBusy}>
+                Send once
+              </button>
             </div>
           ) : (
             <p data-voice="human" style={bodyText}>
-              {harness === 'codex' && live && Boolean(openProject)
+              {live && (harness === 'opencode' || Boolean(openProject))
                 ? 'Send runs through the local Airlock. Sensitive prompts pause for approval.'
                 : SEND_BLOCKED_NOTICE}
             </p>
@@ -1212,15 +1475,20 @@ export const ZeroBotRoute = memo(function ZeroBotRoute(): React.JSX.Element {
             </p>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0 }}>
-              {toolItems.map((item, n) => (
-                <p
-                  key={item.id === '' ? `tool-anon-${n}` : item.id}
-                  data-voice="human"
-                  style={{ ...bodyText, fontSize: 12 }}
-                >
-                  {item.kind === 'exec' ? summarizeExecItem(item) : summarizeToolItem(item)}
-                </p>
-              ))}
+              <p data-voice="human" style={{ ...bodyText, fontSize: 12 }}>
+                {toolSummary.completed} completed · {toolSummary.failed} failed ·{' '}
+                {toolSummary.running} running
+              </p>
+              <details>
+                <summary data-voice="human" style={{ ...bodyText, cursor: 'pointer' }}>
+                  Calls by tool
+                </summary>
+                {toolSummary.groups.map((group) => (
+                  <p key={group.name} data-voice="human" style={{ ...bodyText, fontSize: 12 }}>
+                    {group.name} · {group.count}
+                  </p>
+                ))}
+              </details>
             </div>
           )}
 
@@ -1228,7 +1496,8 @@ export const ZeroBotRoute = memo(function ZeroBotRoute(): React.JSX.Element {
             CONTEXT
           </span>
           <p data-voice="human" style={bodyText}>
-            Provider: {PROVIDER_DISPLAY[harness]} · Model: {selectedModel} · Project: {openProject?.name ?? 'Unavailable'}
+            Provider: {PROVIDER_DISPLAY[harness]} · Model: {selectedModel} · Project:{' '}
+            {openProject?.name ?? 'Unavailable'}
           </p>
           <p data-voice="human" style={bodyText}>
             {counts.messages} message{counts.messages === 1 ? '' : 's'} · {counts.thinking} thinking
@@ -1252,8 +1521,9 @@ export const ZeroBotRoute = memo(function ZeroBotRoute(): React.JSX.Element {
             USAGE & COST
           </span>
           <p data-voice="human" style={bodyText}>
-            Token usage and cost: Unavailable. This bridge view has no verified usage totals or
-            versioned price source; item counts above are not token counts.
+            {lane.usage !== null
+              ? `${lane.usage.input.toLocaleString()} input · ${lane.usage.output.toLocaleString()} output · ${lane.usage.reasoning.toLocaleString()} reasoning tokens · provider-reported cost ${lane.usage.cost}`
+              : 'Token usage and cost: Unavailable. This bridge view has no verified usage totals; item counts above are not token counts.'}
           </p>
 
           <span data-voice="human" style={sectionLabel}>
@@ -1262,7 +1532,7 @@ export const ZeroBotRoute = memo(function ZeroBotRoute(): React.JSX.Element {
           <p data-voice="human" style={bodyText}>
             {harness === 'codex'
               ? 'Codex prompts pass through local screening. Detected sensitive text requires a one-time Send once decision; no approval applies to later edits.'
-              : 'OpenCode prompt dispatch is unavailable until an active ACP session is verified.'}
+              : 'OpenCode prompts pass through local screening and a verified active ACP session. Tool permissions require an explicit provider decision.'}
           </p>
 
           <span data-voice="human" style={sectionLabel}>

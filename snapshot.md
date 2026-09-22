@@ -1,6 +1,12 @@
 # Current working snapshot
 
-Updated: **2026-09-22 19:32 IST**. Read [handoff.md](handoff.md) for project context and recovery details. Every agent must refresh both files after substantive work.
+Updated: **2026-09-22 23:35 IST**. Read [handoff.md](handoff.md) for project context and recovery details. Every agent must refresh both files after substantive work.
+
+## Zero Bot harness recovery — first pass
+
+The approved inline/no-subagent recovery pass is implemented in the isolated `codex/zero-redesign` lane (changes prepared in `/private/tmp/project-zero-fixes-2` for mechanical transfer). OpenCode saved transcripts now read the local read-only SQLite `message`/`part` store directly with 500-message/2,000-part bounds, eliminating the observed 65,536-byte CLI export truncation and forced `--sanitize` redaction. Empty reasoning is labelled provider-unavailable. Session usage/cost comes only from verified stored totals. Both Codex and OpenCode dispatch now pass through the existing Airlock; Codex verifies provider thread cwd without assuming a nonexistent `projectId`, while OpenCode loads the ACP session, validates an advertised model, applies `session/set_config_option`, and waits for `session/prompt` completion. New provider conversations, bounded permission decisions, dynamic model lists, cwd-derived Codex grouping, and a compact tool outcome inspector are wired.
+
+Verification in the implementation clone: typecheck passed; full desktop suite **885/885** across 71 files; production Electron build passed. The current official Codex CLI **0.155.1** was installed under `~/Library/Application Support/ProjectZero/toolchains/codex-0.155.1`; read-only app-server verification showed ChatGPT login, account read, five advertised models, 91 threads, and a successful metadata-only `thread/read`. No model turn was started. OpenCode remains **1.18.30**; local schema inspection confirmed complete saved message/part rows and tests cover a >64 KiB transcript plus mixed completed/error tools. Registered Zero projects remain unavailable: `zero.sock`, `~/Applications/Zero.app`, and a launchd daemon are absent, and `security find-identity -p codesigning` reports **0 valid identities**, so the documented signed build/install preflight cannot safely proceed. Do not bypass signing or claim daemon recovery. Next: transfer/commit the implementation, rebuild/relaunch the Electron preview, verify real read-only Codex/OpenCode UI flows, and perform a user-initiated harmless send before claiming live turns.
 
 ## September 22 follow-up fixes
 

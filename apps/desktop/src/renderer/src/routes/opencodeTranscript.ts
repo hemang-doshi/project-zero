@@ -13,8 +13,15 @@ const json = (value: unknown): string => {
   }
 }
 
-export function parseOpenCodeTranscript(value: unknown): { items: ChatItem[]; dropped: number } {
-  const messages = array(rec(value)?.messages)
+export type TranscriptUsage = { input: number; output: number; reasoning: number; cost: number }
+
+export function parseOpenCodeTranscript(value: unknown): {
+  items: ChatItem[]
+  dropped: number
+  usage: TranscriptUsage | null
+} {
+  const root = rec(value)
+  const messages = array(root?.messages)
   const items: ChatItem[] = []
   for (const entry of messages) {
     const message = rec(entry)
@@ -58,5 +65,18 @@ export function parseOpenCodeTranscript(value: unknown): { items: ChatItem[]; dr
     }
   }
   const dropped = Math.max(0, items.length - MAX_CHAT_ITEMS)
-  return { items: dropped > 0 ? items.slice(dropped) : items, dropped }
+  const info = rec(root?.info)
+  const input = info?.tokens_input
+  const output = info?.tokens_output
+  const reasoning = info?.tokens_reasoning
+  const cost = info?.cost
+  const usage = [input, output, reasoning, cost].every((item) => typeof item === 'number')
+    ? {
+        input: input as number,
+        output: output as number,
+        reasoning: reasoning as number,
+        cost: cost as number
+      }
+    : null
+  return { items: dropped > 0 ? items.slice(dropped) : items, dropped, usage }
 }

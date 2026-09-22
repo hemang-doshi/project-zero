@@ -9,6 +9,8 @@ export const OPS = {
   'skills.search': true,
   'prompt.submit': true,
   'prompt.decide': true,
+  'conversation.new': true,
+  'provider.permission.decide': true,
   'codex.connect': true,
   'codex.disconnect': true,
   'codex.send': true,
@@ -22,6 +24,7 @@ export const OPS = {
   'ocp.state': true,
   'ocp.discover': true,
   'ocp.thread.get': true,
+  'ocp.thread.prepare': true,
   'wallpaper.pick': true,
   'telemetry.sample': true,
   'artwork.fetch': true,
@@ -46,6 +49,17 @@ export type PromptSubmitPayload = {
 export type PromptDecidePayload = PromptSubmitPayload & {
   holdId: string
   action: 'cancel' | 'send-once'
+}
+export type ConversationNewPayload = {
+  provider: 'codex' | 'opencode'
+  cwd: string
+  model: string
+}
+export type ProviderPermissionPayload = {
+  provider: 'codex' | 'opencode'
+  requestId: string | number
+  action: 'allow-once' | 'reject'
+  optionId?: string
 }
 
 // Wire result of the skills.discover op, produced by the main-process skill

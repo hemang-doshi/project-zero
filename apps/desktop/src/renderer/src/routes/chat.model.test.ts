@@ -87,7 +87,7 @@ describe('parseThreadRows', () => {
 })
 
 describe('groupThreadsByRegisteredProject', () => {
-  it('groups only explicit registered ids, keeps duplicate names separate, and sorts unprojected last', () => {
+  it('groups Codex threads by verified cwd when daemon project ids are absent', () => {
     const projects = [
       { id: 'p1', name: 'App', path: '/one' },
       { id: 'p2', name: 'App', path: '/two' }
@@ -97,16 +97,16 @@ describe('groupThreadsByRegisteredProject', () => {
         { id: 'a', projectId: 'p1', recencyAt: 2 },
         { id: 'b', projectId: 'p2', recencyAt: 4 },
         { id: 'c', projectId: 'unknown', recencyAt: 5 },
-        { id: 'd', cwd: '/one', recencyAt: 3 },
+        { id: 'd', cwd: '/one/subdir', recencyAt: 3 },
         { id: 'e', projectId: 'p1', recencyAt: 6 }
       ]
     })
     const result = groupThreadsByRegisteredProject(projects, rows)
     expect(result.groups.map((g) => [g.project.id, g.rows.map((r) => r.id)])).toEqual([
-      ['p1', ['e', 'a']],
+      ['p1', ['e', 'd', 'a']],
       ['p2', ['b']]
     ])
-    expect(result.unprojected.map((r) => r.id)).toEqual(['c', 'd'])
+    expect(result.unprojected.map((r) => r.id)).toEqual(['c'])
   })
 })
 

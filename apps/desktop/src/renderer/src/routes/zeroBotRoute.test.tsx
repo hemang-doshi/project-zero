@@ -212,12 +212,14 @@ describe('ZeroBotRoute thread surface', () => {
       if (op === 'projects.list') return [{ id: 'p1', name: 'Project One', path: '/repo/one' }]
       if (op === 'codex.state') return { state: 'live', lastDiagnostic: null }
       if (op === 'ocp.state') return { state: 'disconnected', lastDiagnostic: null }
-      if (op === 'codex.threads') return {
-        ...THREAD_ROWS_PAYLOAD,
-        threads: [{ ...THREAD_ROWS_PAYLOAD.threads[0], projectId: 'p1' }]
-      }
+      if (op === 'codex.threads')
+        return {
+          ...THREAD_ROWS_PAYLOAD,
+          threads: [{ ...THREAD_ROWS_PAYLOAD.threads[0], projectId: 'p1' }]
+        }
       if (op === 'codex.thread.get') return THREAD_GET_PAYLOAD
-      if (op === 'prompt.submit') return { state: 'held', holdId: 'hold-1', categories: ['credential'], positions: [1] }
+      if (op === 'prompt.submit')
+        return { state: 'held', holdId: 'hold-1', categories: ['credential'], positions: [1] }
       if (op === 'prompt.decide') return { state: 'accepted', turnId: 'turn-2' }
       throw new Error(`unexpected op ${op}`)
     })
@@ -225,8 +227,12 @@ describe('ZeroBotRoute thread surface', () => {
     ;(globalThis as unknown as { window: { zero: FakeZero } }).window.zero.invoke = invoke
     renderRoute()
     await vi.waitFor(() => expect(host?.innerHTML).toContain('first chat thread'))
-    const row = Array.from(host?.querySelectorAll('button') ?? []).find((b) => b.textContent?.includes('first chat thread'))
-    await act(async () => { row?.click() })
+    const row = Array.from(host?.querySelectorAll('button') ?? []).find((b) =>
+      b.textContent?.includes('first chat thread')
+    )
+    await act(async () => {
+      row?.click()
+    })
     const box = host?.querySelector('textarea[aria-label="Message Zero"]') as HTMLTextAreaElement
     await act(async () => {
       const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
@@ -235,17 +241,132 @@ describe('ZeroBotRoute thread surface', () => {
     })
     const send = host?.querySelector('button[aria-label="Send turn"]') as HTMLButtonElement
     expect(send.disabled).toBe(false)
-    await act(async () => { send.click() })
-    await vi.waitFor(() => expect(host?.querySelector('[aria-label="Airlock hold"]')).not.toBeNull())
+    await act(async () => {
+      send.click()
+    })
+    await vi.waitFor(() =>
+      expect(host?.querySelector('[aria-label="Airlock hold"]')).not.toBeNull()
+    )
     expect(invoke).toHaveBeenCalledWith('prompt.submit', {
-      provider: 'codex', model: 'gpt-5.6-luna', threadId: 't1', text: 'password = synthetic-secret-123'
+      provider: 'codex',
+      model: 'gpt-5.6-luna',
+      threadId: 't1',
+      text: 'password = synthetic-secret-123'
     })
     await act(async () => {
-      Array.from(host?.querySelectorAll('button') ?? []).find((b) => b.textContent === 'Send once')?.click()
+      Array.from(host?.querySelectorAll('button') ?? [])
+        .find((b) => b.textContent === 'Send once')
+        ?.click()
     })
     await vi.waitFor(() => expect(box.value).toBe(''))
-    expect(invoke).toHaveBeenCalledWith('prompt.decide', expect.objectContaining({ holdId: 'hold-1', action: 'send-once' }))
+    expect(invoke).toHaveBeenCalledWith(
+      'prompt.decide',
+      expect.objectContaining({ holdId: 'hold-1', action: 'send-once' })
+    )
     expect(host?.textContent).toContain('Provider accepted the turn')
+  })
+  it('loads advertised OpenCode models and submits the selected saved session through Airlock', async () => {
+    const invoke = vi.fn(async (op: string) => {
+      if (op === 'projects.list') return []
+      if (op === 'codex.state') return { state: 'disconnected', lastDiagnostic: null }
+      if (op === 'ocp.state') return { state: 'live', lastDiagnostic: null }
+      if (op === 'ocp.discover') return OPENCODE_FOLDERS_PAYLOAD
+      if (op === 'ocp.thread.get') return { session: { messages: [] } }
+      if (op === 'ocp.thread.prepare')
+        return {
+          sessionId: 'b1',
+          cwd: '/repo/beta',
+          currentModel: 'anthropic/claude-sonnet',
+          models: [
+            { id: 'anthropic/claude-sonnet', name: 'Claude Sonnet' },
+            { id: 'openai/gpt-5', name: 'GPT-5' }
+          ]
+        }
+      if (op === 'prompt.submit') return { state: 'accepted', turnId: 'ocp-1' }
+      throw new Error(`unexpected op ${op}`)
+    })
+    stubZero(fakeZero({}))
+    ;(globalThis as unknown as { window: { zero: FakeZero } }).window.zero.invoke = invoke
+    renderRoute()
+    const sidebar = host?.querySelector('[data-region="sidebar"]')
+    await vi.waitFor(() => expect(sidebar?.textContent).toContain('OpenCode'))
+    await act(async () => {
+      Array.from(sidebar?.querySelectorAll('button') ?? [])
+        .find((button) => button.textContent === 'OpenCode')
+        ?.click()
+    })
+    await vi.waitFor(() => expect(sidebar?.textContent).toContain('Beta chat'))
+    await act(async () => {
+      Array.from(sidebar?.querySelectorAll('button') ?? [])
+        .find((button) => button.textContent?.includes('Beta chat'))
+        ?.click()
+    })
+    const box = host?.querySelector('textarea[aria-label="Message Zero"]') as HTMLTextAreaElement
+    await vi.waitFor(() =>
+      expect(
+        (host?.querySelector('select[aria-label="Model selector"]') as HTMLSelectElement).value
+      ).toBe('anthropic/claude-sonnet')
+    )
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set?.call(
+        box,
+        'continue'
+      )
+      box.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    const send = host?.querySelector('button[aria-label="Send turn"]') as HTMLButtonElement
+    expect(send.disabled).toBe(false)
+    await act(async () => {
+      send.click()
+    })
+    await vi.waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith('prompt.submit', {
+        provider: 'opencode',
+        model: 'anthropic/claude-sonnet',
+        threadId: 'b1',
+        text: 'continue'
+      })
+    )
+  })
+  it('surfaces provider permission requests and sends only the chosen bounded decision', async () => {
+    const invoke = vi.fn(async (op: string) => {
+      if (op === 'projects.list') return []
+      if (op === 'codex.state') return { state: 'disconnected', lastDiagnostic: null }
+      if (op === 'ocp.state') return { state: 'live', lastDiagnostic: null }
+      if (op === 'ocp.discover') return OPENCODE_FOLDERS_PAYLOAD
+      if (op === 'provider.permission.decide') return { accepted: true }
+      throw new Error(`unexpected op ${op}`)
+    })
+    stubZero(fakeZero({}))
+    ;(globalThis as unknown as { window: { zero: FakeZero } }).window.zero.invoke = invoke
+    renderRoute()
+    await vi.waitFor(() => expect(bridgeCb).not.toBeNull())
+    act(() =>
+      bridgeCb?.({
+        harness: 'opencode',
+        event: {
+          id: 42,
+          method: 'session/request_permission',
+          params: {
+            title: 'Run tests?',
+            options: [{ optionId: 'allow-tool', name: 'Allow once', kind: 'allow_once' }]
+          }
+        }
+      })
+    )
+    await vi.waitFor(() => expect(host?.textContent).toContain('Run tests?'))
+    const allow = Array.from(host?.querySelectorAll('button') ?? []).find(
+      (button) => button.textContent === 'Allow once'
+    )
+    await act(async () => {
+      allow?.click()
+    })
+    expect(invoke).toHaveBeenCalledWith('provider.permission.decide', {
+      provider: 'opencode',
+      requestId: 42,
+      action: 'allow-once',
+      optionId: 'allow-tool'
+    })
   })
   it('renders thread rows after connect lists them via the read-only op', async () => {
     const invoke = vi.fn(async (op: string) => {
@@ -589,7 +710,7 @@ describe('ZeroBotRoute thread surface', () => {
     expect(send?.hasAttribute('disabled')).toBe(true)
   })
 
-  it('clears the open thread locally on New conversation without any daemon write', async () => {
+  it('does not create a conversation until the selected thread has a verified directory', async () => {
     const invoke = vi.fn(async (op, payload) => {
       if (op === 'codex.state') return { state: 'live', lastDiagnostic: null }
       if (op === 'ocp.state') return { state: 'disconnected', lastDiagnostic: null }
@@ -617,11 +738,12 @@ describe('ZeroBotRoute thread surface', () => {
     act(() => {
       fresh?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
     })
-    expect(host?.innerHTML).toContain('No conversation open')
-    expect(host?.innerHTML).not.toContain('run the tests')
+    expect(host?.innerHTML).toContain('verified directory and advertised model')
+    expect(host?.innerHTML).toContain('run the tests')
     const ops = invoke.mock.calls.map(([op]) => op as string)
     expect(ops).not.toContain('codex.send')
     expect(ops).not.toContain('ocp.send')
+    expect(ops).not.toContain('conversation.new')
   })
 
   it('explains bridge failures in human copy with the raw diagnostic behind it', async () => {
