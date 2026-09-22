@@ -209,9 +209,13 @@ describe('ZeroBotRoute thread surface', () => {
   })
   it('submits an open Codex thread through Airlock, then requires Send once for a hold', async () => {
     const invoke = vi.fn(async (op: string) => {
+      if (op === 'projects.list') return [{ id: 'p1', name: 'Project One', path: '/repo/one' }]
       if (op === 'codex.state') return { state: 'live', lastDiagnostic: null }
       if (op === 'ocp.state') return { state: 'disconnected', lastDiagnostic: null }
-      if (op === 'codex.threads') return THREAD_ROWS_PAYLOAD
+      if (op === 'codex.threads') return {
+        ...THREAD_ROWS_PAYLOAD,
+        threads: [{ ...THREAD_ROWS_PAYLOAD.threads[0], projectId: 'p1' }]
+      }
       if (op === 'codex.thread.get') return THREAD_GET_PAYLOAD
       if (op === 'prompt.submit') return { state: 'held', holdId: 'hold-1', categories: ['credential'], positions: [1] }
       if (op === 'prompt.decide') return { state: 'accepted', turnId: 'turn-2' }

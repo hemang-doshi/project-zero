@@ -716,7 +716,7 @@ export const ZeroBotRoute = memo(function ZeroBotRoute(): React.JSX.Element {
 
   const openRow = lane.rows.find((r) => r.id === lane.threadId) ?? null
   const openProject = openRow?.projectId ? projects.find((p) => p.id === openRow.projectId) : null
-  const canSend = harness === 'codex' && live && lane.threadId !== null && composerText.trim() !== '' && !promptBusy
+  const canSend = harness === 'codex' && live && lane.threadId !== null && Boolean(openProject) && composerText.trim() !== '' && !promptBusy
   const promptRequest = (): PromptSubmitPayload | null =>
     lane.threadId === null ? null : { provider: harness, model: selectedModel, threadId: lane.threadId, text: composerText }
   const promptResult = (value: unknown, request: PromptSubmitPayload): void => {
@@ -1107,7 +1107,7 @@ export const ZeroBotRoute = memo(function ZeroBotRoute(): React.JSX.Element {
               </button>
               <button
                 type="button"
-                style={disabledSend}
+                style={canSend && promptHold === null ? sendButton : disabledSend}
                 disabled={!canSend || promptHold !== null}
                 onClick={submitPrompt}
                 aria-label="Send turn"
@@ -1135,7 +1135,7 @@ export const ZeroBotRoute = memo(function ZeroBotRoute(): React.JSX.Element {
             </div>
           ) : (
             <p data-voice="human" style={bodyText}>
-              {harness === 'codex' && live && lane.threadId !== null
+              {harness === 'codex' && live && Boolean(openProject)
                 ? 'Send runs through the local Airlock. Sensitive prompts pause for approval.'
                 : SEND_BLOCKED_NOTICE}
             </p>
