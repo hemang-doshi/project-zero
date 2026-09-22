@@ -1,11 +1,11 @@
 import { createHmac, randomBytes, randomUUID } from 'node:crypto'
 import { scanPrompt, type ScanResult } from './airlock-scanner'
 
-export type PromptDestination = { provider: 'codex' | 'opencode'; model: string }
+export type PromptDestination = { provider: 'codex' | 'opencode'; model: string; threadId: string }
 export type PromptRequest = PromptDestination & { text: string }
 export type PromptDecision =
   | { state: 'held'; holdId: string; categories: string[]; positions: number[] }
-  | { state: 'accepted'; requestId: string }
+  | { state: 'accepted'; turnId: string }
   | {
       state: 'blocked'
       reason:
@@ -25,14 +25,14 @@ export class PromptGateway {
   private readonly holds = new Map<string, Hold>()
 
   constructor(
-    private readonly dispatch: (request: PromptRequest) => Promise<void>,
+    private readonly dispatch: (request: PromptRequest) => Promise<{ turnId: string }>,
     private readonly scan: (text: unknown) => ScanResult = scanPrompt,
     private readonly now: () => number = Date.now
   ) {}
 
   private digest(request: PromptRequest): string {
     return createHmac('sha256', this.key)
-      .update(JSON.stringify([request.text, request.provider, request.model]))
+      .update(JSON.stringify([request.text, request.provider, request.model, request.threadId]))
       .digest('hex')
   }
 
@@ -40,11 +40,14 @@ export class PromptGateway {
     return (
       typeof request.text === 'string' &&
       request.text.trim() !== '' &&
-      request.text.length <= 32_000 &&
+      Buffer.byteLength(request.text, 'utf8') <= 32_000 &&
       (request.provider === 'codex' || request.provider === 'opencode') &&
       typeof request.model === 'string' &&
       request.model.length > 0 &&
-      request.model.length <= 120
+      request.model.length <= 120 &&
+      typeof request.threadId === 'string' &&
+      request.threadId.length > 0 &&
+      request.threadId.length <= 120
     )
   }
 
@@ -58,6 +61,10 @@ export class PromptGateway {
     }
     if (scan.state === 'blocked') return { state: 'blocked', reason: 'scanner-unavailable' }
     if (scan.state === 'held') {
+      for (const [id, hold] of this.holds) {
+        if (this.now() >= hold.expiresAt) this.holds.delete(id)
+      }
+      while (this.holds.size >= 8) this.holds.delete(this.holds.keys().next().value as string)
       const holdId = randomUUID()
       const categories = Array.from(new Set(scan.hits.map((hit) => hit.category)))
       const positions = scan.hits.map((hit) => hit.start + 1)
@@ -93,8 +100,10 @@ export class PromptGateway {
 
   private async dispatchOnce(request: PromptRequest): Promise<PromptDecision> {
     try {
-      await this.dispatch(request)
-      return { state: 'accepted', requestId: randomUUID() }
+      const result = await this.dispatch(request)
+      if (typeof result.turnId !== 'string' || result.turnId === '')
+        throw new Error('Invalid acceptance')
+      return { state: 'accepted', turnId: result.turnId }
     } catch {
       // Provider errors may echo sensitive prompt text. Never forward them.
       return { state: 'blocked', reason: 'dispatch-unavailable' }

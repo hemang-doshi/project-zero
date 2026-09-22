@@ -207,6 +207,42 @@ describe('ZeroBotRoute thread surface', () => {
     expect(send?.querySelector('svg')).not.toBeNull()
     expect(send?.hasAttribute('disabled')).toBe(true)
   })
+  it('submits an open Codex thread through Airlock, then requires Send once for a hold', async () => {
+    const invoke = vi.fn(async (op: string) => {
+      if (op === 'codex.state') return { state: 'live', lastDiagnostic: null }
+      if (op === 'ocp.state') return { state: 'disconnected', lastDiagnostic: null }
+      if (op === 'codex.threads') return THREAD_ROWS_PAYLOAD
+      if (op === 'codex.thread.get') return THREAD_GET_PAYLOAD
+      if (op === 'prompt.submit') return { state: 'held', holdId: 'hold-1', categories: ['credential'], positions: [1] }
+      if (op === 'prompt.decide') return { state: 'accepted', turnId: 'turn-2' }
+      throw new Error(`unexpected op ${op}`)
+    })
+    stubZero(fakeZero({}))
+    ;(globalThis as unknown as { window: { zero: FakeZero } }).window.zero.invoke = invoke
+    renderRoute()
+    await vi.waitFor(() => expect(host?.innerHTML).toContain('first chat thread'))
+    const row = Array.from(host?.querySelectorAll('button') ?? []).find((b) => b.textContent?.includes('first chat thread'))
+    await act(async () => { row?.click() })
+    const box = host?.querySelector('textarea[aria-label="Message Zero"]') as HTMLTextAreaElement
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
+      setter?.call(box, 'password = synthetic-secret-123')
+      box.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    const send = host?.querySelector('button[aria-label="Send turn"]') as HTMLButtonElement
+    expect(send.disabled).toBe(false)
+    await act(async () => { send.click() })
+    await vi.waitFor(() => expect(host?.querySelector('[aria-label="Airlock hold"]')).not.toBeNull())
+    expect(invoke).toHaveBeenCalledWith('prompt.submit', {
+      provider: 'codex', model: 'gpt-5.6-luna', threadId: 't1', text: 'password = synthetic-secret-123'
+    })
+    await act(async () => {
+      Array.from(host?.querySelectorAll('button') ?? []).find((b) => b.textContent === 'Send once')?.click()
+    })
+    await vi.waitFor(() => expect(box.value).toBe(''))
+    expect(invoke).toHaveBeenCalledWith('prompt.decide', expect.objectContaining({ holdId: 'hold-1', action: 'send-once' }))
+    expect(host?.textContent).toContain('Provider accepted the turn')
+  })
   it('renders thread rows after connect lists them via the read-only op', async () => {
     const invoke = vi.fn(async (op: string) => {
       if (op === 'codex.state') return { state: 'disconnected', lastDiagnostic: null }

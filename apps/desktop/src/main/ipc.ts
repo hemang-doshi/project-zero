@@ -9,6 +9,8 @@ import {
   type DevicesListResult,
   type ProjectPayload,
   type ProjectListItem,
+  type PromptSubmitPayload,
+  type PromptDecidePayload,
   type SkillsDiscoverPayload,
   type SkillsDiscoverResult,
   type TelemetrySample,
@@ -18,7 +20,9 @@ import { applyPrefsPatch, type Prefs } from './prefs'
 import { createBridgePair, type BridgeDeps, type HarnessId, type RpcEvent } from './bridges'
 import { defaultOpenCodeDbPath, readOpenCodeSessionStore } from './opencode-sessions'
 import { artworkDataUrl } from './artwork-image'
-import { searchSkillsCatalog } from './skills-catalog'
+import { searchSkillsCatalog, type CatalogSkill } from './skills-catalog'
+import { PromptGateway, type PromptRequest } from './prompt-gateway'
+import { dispatchProviderPrompt } from './provider-dispatch'
 import type { CockpitModel, ModelUpdate } from './cockpit-model'
 
 export type PrefsStoreLike = {
@@ -35,6 +39,8 @@ export type SocketDeps = {
   sampleTelemetry: () => Promise<TelemetrySample>
   listDevices: (refreshBt: boolean) => Promise<DevicesListResult>
   discoverSkills: (refresh: boolean) => Promise<SkillsDiscoverResult>
+  searchSkills?: (query: string) => Promise<CatalogSkill[]>
+  providerDispatch?: (request: PromptRequest) => Promise<{ turnId: string }>
   openCodeDbPath?: string
 }
 
@@ -52,9 +58,8 @@ export function bridgePair(): BridgeDeps {
 }
 
 export function registerIpcHandlers(deps: SocketDeps): void {
-  ipcMain.handle('zero:invoke', (_event, op: unknown, payload: unknown) =>
-    dispatch(op, payload, deps)
-  )
+  const invoke = createDispatch(deps)
+  ipcMain.handle('zero:invoke', (_event, op: unknown, payload: unknown) => invoke(op, payload))
 }
 
 export function attachCockpitPush(model: CockpitModel, win: BrowserWindow): void {
@@ -119,10 +124,36 @@ function listOf(result: unknown): unknown[] {
   return Array.isArray(data) ? data : []
 }
 
+function promptRequest(value: unknown, decision = false): PromptRequest & Partial<PromptDecidePayload> {
+  if (typeof value !== 'object' || value === null || Array.isArray(value))
+    throw new Error('Malformed prompt')
+  const row = value as Record<string, unknown>
+  const required = decision
+    ? ['provider', 'model', 'threadId', 'text', 'holdId', 'action']
+    : ['provider', 'model', 'threadId', 'text']
+  if (Object.keys(row).length !== required.length || required.some((key) => !Object.hasOwn(row, key)))
+    throw new Error('Malformed prompt')
+  if (
+    row.provider !== 'codex' ||
+    typeof row.model !== 'string' || row.model.length < 1 || row.model.length > 120 ||
+    typeof row.threadId !== 'string' || row.threadId.length < 1 || row.threadId.length > 120 ||
+    typeof row.text !== 'string' || !row.text.trim() || Buffer.byteLength(row.text, 'utf8') > 32_000 ||
+    (decision && (typeof row.holdId !== 'string' || !/^[0-9a-f-]{36}$/i.test(row.holdId) ||
+      (row.action !== 'cancel' && row.action !== 'send-once')))
+  ) throw new Error('Malformed prompt')
+  return row as PromptSubmitPayload & Partial<PromptDecidePayload>
+}
+
 export function createDispatch(
   deps: SocketDeps,
   getBridgePair: () => BridgeDeps = getBridges
 ): (op: unknown, payload?: unknown) => Promise<unknown> {
+  const gateway = new PromptGateway(
+    deps.providerDispatch ?? ((request) => dispatchProviderPrompt(request, {
+      codex: getBridgePair().codex,
+      projects: async () => projectList(await deps.fetchSnapshot(deps.socketPath, { path: '/v0.1/projects' }))
+    }))
+  )
   const bridgeState = async (harness: 'codex' | 'ocp'): Promise<unknown> => {
     const bridge = getBridgePair()[harness]
     return { state: bridge.state, lastDiagnostic: bridge.lastDiagnostic }
@@ -220,6 +251,12 @@ export function createDispatch(
         return getBridgePair().ocp.disconnect()
       case 'ocp.send':
         throw new Error('send blocked until runtime path ships')
+      case 'prompt.submit':
+        return gateway.submit(promptRequest(payload))
+      case 'prompt.decide': {
+        const request = promptRequest(payload, true)
+        return gateway.decide(request.holdId!, request.action!, request)
+      }
       case 'ocp.state':
         return bridgeState('ocp')
       case 'ocp.discover':
@@ -263,14 +300,19 @@ export function createDispatch(
         }
       }
       case 'skills.search': {
-        const query = (payload as { query?: unknown } | null)?.query
-        if (typeof query !== 'string') throw new Error('Malformed catalog query')
-        return searchSkillsCatalog(query)
+        if (
+          typeof payload !== 'object' ||
+          payload === null ||
+          Array.isArray(payload) ||
+          Object.keys(payload).length !== 1
+        )
+          throw new Error('Malformed catalog query')
+        const query = (payload as { query?: unknown }).query
+        if (typeof query !== 'string' || query.trim().length < 2 || query.length > 80) {
+          throw new Error('Malformed catalog query')
+        }
+        return (deps.searchSkills ?? searchSkillsCatalog)(query.trim())
       }
     }
   }
-}
-
-async function dispatch(op: unknown, payload: unknown, deps: SocketDeps): Promise<unknown> {
-  return createDispatch(deps)(op, payload)
 }

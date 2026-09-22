@@ -40,6 +40,8 @@ describe('validateOp', () => {
         'prefs.set',
         'project.get',
         'projects.list',
+        'prompt.decide',
+        'prompt.submit',
         'skills.discover',
         'skills.search',
         'snapshot.fetch',

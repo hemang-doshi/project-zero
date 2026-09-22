@@ -1,19 +1,24 @@
 import { describe, expect, it, vi } from 'vitest'
 import { PromptGateway } from './prompt-gateway'
 
-const safe = { text: 'hello world', provider: 'codex' as const, model: 'test-model' }
+const safe = {
+  text: 'hello world',
+  provider: 'codex' as const,
+  model: 'test-model',
+  threadId: 't1'
+}
 const sensitive = { ...safe, text: 'password = "synthetic-secret-123"' }
 
 describe('PromptGateway', () => {
   it('dispatches a clean prompt exactly once', async () => {
-    const dispatch = vi.fn(async () => {})
+    const dispatch = vi.fn(async () => ({ turnId: 'turn-1' }))
     const gateway = new PromptGateway(dispatch)
     expect((await gateway.submit(safe)).state).toBe('accepted')
     expect(dispatch).toHaveBeenCalledOnce()
   })
 
   it('holds sensitive text and consumes one authorization atomically', async () => {
-    const dispatch = vi.fn(async () => {})
+    const dispatch = vi.fn(async () => ({ turnId: 'turn-1' }))
     const gateway = new PromptGateway(dispatch)
     const held = await gateway.submit(sensitive)
     expect(held.state).toBe('held')
@@ -49,5 +54,20 @@ describe('PromptGateway', () => {
       state: 'blocked',
       reason: 'scanner-unavailable'
     })
+  })
+
+  it('caps outstanding sensitive holds and expires old grants', async () => {
+    const dispatch = vi.fn(async () => ({ turnId: 'turn-1' }))
+    const gateway = new PromptGateway(dispatch)
+    const ids: string[] = []
+    for (let index = 0; index < 9; index++) {
+      const held = await gateway.submit({ ...sensitive, text: `${sensitive.text}${index}` })
+      if (held.state !== 'held') throw new Error('fixture must hold')
+      ids.push(held.holdId)
+    }
+    expect(
+      await gateway.decide(ids[0], 'send-once', { ...sensitive, text: `${sensitive.text}0` })
+    ).toEqual({ state: 'blocked', reason: 'expired-or-changed' })
+    expect(dispatch).not.toHaveBeenCalled()
   })
 })

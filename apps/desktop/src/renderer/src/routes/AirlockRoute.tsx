@@ -381,9 +381,10 @@ export function AirlockSlate({
       <div style={cardStyle}>
         <span style={datumLabel}>OUTBOUND PROMPT HOLDS</span>
         <span style={noticeStyle}>
-          No prompt holds are available in this build. Provider sending remains blocked while the
-          one-time dispatch gateway is connected and verified. The local scanner and hold logic are
-          implemented, but this view does not claim that a live provider prompt was screened.
+          Codex prompt screening runs in the Zero Bot composer for an open, registered-project
+          thread. Sensitive prompts pause there for Cancel or Send once; this page does not retain
+          prompt text or display another window&apos;s ephemeral hold. OpenCode sending remains
+          unavailable until an active ACP session is verified.
         </span>
       </div>
       <span style={microStyle}>APPROVALS · LOCAL RUNTIME</span>

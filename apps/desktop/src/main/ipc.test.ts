@@ -98,6 +98,63 @@ describe('projects.list', () => {
   })
 })
 
+describe('skills.search', () => {
+  it('uses a bounded, read-only catalog query and rejects extra payload fields', async () => {
+    const d = deps()
+    const candidate = {
+      id: 'owner/repo@skill',
+      source: 'owner/repo',
+      skill: 'skill',
+      url: 'https://skills.sh/owner/repo/skill',
+      installs: '10'
+    }
+    d.searchSkills = vi.fn(async () => [candidate])
+    const invoke = createDispatch(d)
+    await expect(invoke('skills.search', { query: '  react  ' })).resolves.toEqual([candidate])
+    expect(d.searchSkills).toHaveBeenCalledWith('react')
+    await expect(invoke('skills.search', { query: 'react', shell: true })).rejects.toThrow(
+      'Malformed catalog query'
+    )
+    await expect(invoke('skills.search', { query: 'x' })).rejects.toThrow('Malformed catalog query')
+    expect(d.searchSkills).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('prompt gateway IPC', () => {
+  const clean = {
+    provider: 'codex', model: 'gpt-5.6-sol', threadId: 't1', text: 'hello Zero'
+  }
+  it('dispatches only through the gateway and rejects malformed or extra fields', async () => {
+    const d = deps()
+    const providerDispatch = vi.fn(async () => ({ turnId: 'turn-1' }))
+    d.providerDispatch = providerDispatch
+    const invoke = createDispatch(d)
+    await expect(invoke('prompt.submit', clean)).resolves.toEqual({ state: 'accepted', turnId: 'turn-1' })
+    expect(providerDispatch).toHaveBeenCalledOnce()
+    await expect(invoke('prompt.submit', { ...clean, bypass: true })).rejects.toThrow('Malformed prompt')
+    await expect(invoke('prompt.submit', { ...clean, text: 'x'.repeat(32_001) })).rejects.toThrow('Malformed prompt')
+    await expect(invoke('prompt.submit', { ...clean, provider: 'other' })).rejects.toThrow('Malformed prompt')
+    await expect(invoke('prompt.submit', { ...clean, provider: 'opencode' })).rejects.toThrow('Malformed prompt')
+    expect(providerDispatch).toHaveBeenCalledOnce()
+  })
+
+  it('holds sensitive text until one exact-bound approval, and consumes the hold', async () => {
+    const d = deps()
+    const providerDispatch = vi.fn(async () => ({ turnId: 'turn-2' }))
+    d.providerDispatch = providerDispatch
+    const invoke = createDispatch(d)
+    const sensitive = { ...clean, text: 'password = synthetic-secret-123' }
+    const held = await invoke('prompt.submit', sensitive) as { state: string; holdId: string }
+    expect(held.state).toBe('held')
+    expect(providerDispatch).not.toHaveBeenCalled()
+    await expect(invoke('prompt.decide', { ...sensitive, holdId: held.holdId, action: 'send-once' }))
+      .resolves.toEqual({ state: 'accepted', turnId: 'turn-2' })
+    await expect(invoke('prompt.decide', { ...sensitive, holdId: held.holdId, action: 'send-once' }))
+      .resolves.toMatchObject({ state: 'blocked' })
+    expect(providerDispatch).toHaveBeenCalledOnce()
+  })
+})
+
 function fakePair(codex: FakeBridge, ocp: FakeBridge): BridgeDeps {
   return {
     codex: codex as unknown as BridgeDeps['codex'],

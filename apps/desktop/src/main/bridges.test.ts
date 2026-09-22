@@ -145,6 +145,14 @@ describe('JsonRpcStdio request correlation', () => {
 })
 
 describe('JsonRpcStdio process lifecycle', () => {
+  it('never exposes provider stderr that may echo a prompt', async () => {
+    const { fake, spawnFn } = fakeChild()
+    const io = new JsonRpcStdio({ harness: 'codex', prefsDir: os.tmpdir(), spawnFn })
+    await io.connect('codex', ['app-server', '--stdio'])
+    fake.err('synthetic-secret-123')
+    expect(io.diagnostics).toBe('codex emitted stderr; content withheld')
+    io.disconnect()
+  })
   it('rejects pending sends with disconnected on exit and sets state disconnected', async () => {
     const { fake, spawnFn } = fakeChild()
     const io = new JsonRpcStdio({ harness: 'codex', prefsDir: os.tmpdir(), spawnFn })
