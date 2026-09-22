@@ -265,6 +265,40 @@ describe('ZeroBotRoute thread surface', () => {
     )
     expect(host?.textContent).toContain('Provider accepted the turn')
   })
+  it('enables Codex send from the provider thread cwd when registered projects are unavailable', async () => {
+    const invoke = vi.fn(async (op: string) => {
+      if (op === 'projects.list') return []
+      if (op === 'codex.state') return { state: 'live', lastDiagnostic: null }
+      if (op === 'ocp.state') return { state: 'disconnected', lastDiagnostic: null }
+      if (op === 'codex.threads') {
+        return {
+          ...THREAD_ROWS_PAYLOAD,
+          threads: [{ ...THREAD_ROWS_PAYLOAD.threads[0], cwd: '/repo/one' }]
+        }
+      }
+      if (op === 'codex.thread.get') return THREAD_GET_PAYLOAD
+      throw new Error(`unexpected op ${op}`)
+    })
+    stubZero(fakeZero({}))
+    ;(globalThis as unknown as { window: { zero: FakeZero } }).window.zero.invoke = invoke
+    renderRoute()
+    await vi.waitFor(() => expect(host?.innerHTML).toContain('first chat thread'))
+    await act(async () => {
+      Array.from(host?.querySelectorAll('button') ?? [])
+        .find((button) => button.textContent?.includes('first chat thread'))
+        ?.click()
+    })
+    const box = host?.querySelector('textarea[aria-label="Message Zero"]') as HTMLTextAreaElement
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set?.call(
+        box,
+        'continue from cwd'
+      )
+      box.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    const send = host?.querySelector('button[aria-label="Send turn"]') as HTMLButtonElement
+    expect(send.disabled).toBe(false)
+  })
   it('loads advertised OpenCode models and submits the selected saved session through Airlock', async () => {
     const invoke = vi.fn(async (op: string) => {
       if (op === 'projects.list') return []
@@ -666,6 +700,31 @@ describe('ZeroBotRoute thread surface', () => {
     })
     expect(host?.querySelector('[data-region="inspector"]')).not.toBeNull()
     expect(invoke.mock.calls.some(([op]) => op === 'codex.threads')).toBe(false)
+  })
+
+  it('gives the conversation usable width in a compact workspace', async () => {
+    vi.stubGlobal(
+      'ResizeObserver',
+      class {
+        constructor(
+          private readonly callback: (entries: Array<{ contentRect: { width: number } }>) => void
+        ) {}
+        observe(): void {
+          this.callback([{ contentRect: { width: 450 } }])
+        }
+        disconnect(): void {
+          // No observed resources in this deterministic test double.
+        }
+      }
+    )
+    stubZero(fakeZero({}))
+    renderRoute()
+    await vi.waitFor(() => {
+      expect((host?.querySelector('[data-region="sidebar"]') as HTMLElement).style.width).toBe(
+        '42%'
+      )
+    })
+    expect(host?.querySelector('[data-region="inspector"]')).toBeNull()
   })
 
   it('attributes open-thread turns to Zero with muted provider models and summaries', async () => {

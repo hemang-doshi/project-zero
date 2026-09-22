@@ -7,7 +7,7 @@ import { join } from 'node:path'
 export type BridgeState = 'disconnected' | 'connecting' | 'live'
 export type HarnessId = 'codex' | 'opencode'
 
-export const MAX_RESPONSE_BYTES = 1_048_576
+export const MAX_RESPONSE_BYTES = 16_777_216
 export const ZERO_VERSION = '0.2.0'
 
 export type SpawnFn = (cmd: string, args: string[], opts: { cwd?: string }) => ChildProcess
@@ -221,7 +221,7 @@ export class JsonRpcStdio {
       if (session !== this.session) return
     }
     if (this.buffer.length > MAX_RESPONSE_BYTES) {
-      this.failAll(session, new Error('response too large (over 1 MiB)'))
+      this.failAll(session, new Error('response too large (over 16 MiB)'))
     }
   }
 
@@ -246,7 +246,7 @@ export class JsonRpcStdio {
     const trimmed = line.trim()
     if (!trimmed) return
     if (trimmed.length > MAX_RESPONSE_BYTES) {
-      this.failAll(session, new Error('response too large (over 1 MiB)'))
+      this.failAll(session, new Error('response too large (over 16 MiB)'))
       return
     }
     let msg: unknown

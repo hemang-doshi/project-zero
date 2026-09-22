@@ -522,6 +522,23 @@ describe('thread read ops', () => {
     ])
   })
 
+  it('codex.thread.get bounds a large saved transcript to its latest 400 items', async () => {
+    const codex = fakeBridge('live')
+    const turns = Array.from({ length: 450 }, (_, index) => ({
+      id: `turn-${index}`,
+      items: [{ id: `item-${index}`, type: 'agentMessage', text: `message ${index}` }],
+      status: 'completed'
+    }))
+    codex.send = vi.fn(async () => ({ thread: { id: 'large', turns } }))
+    const invoke = createDispatch(deps(), () => fakePair(codex, fakeBridge('disconnected')))
+    const result = (await invoke('codex.thread.get', { threadId: 'large' })) as {
+      thread: { turns: Array<{ id: string }> }
+    }
+    expect(result.thread.turns).toHaveLength(400)
+    expect(result.thread.turns[0]?.id).toBe('turn-50')
+    expect(result.thread.turns.at(-1)?.id).toBe('turn-449')
+  })
+
   it('codex.thread.get rejects a malformed or empty threadId', async () => {
     const codex = fakeBridge('live')
     const invoke = createDispatch(deps(), () => fakePair(codex, fakeBridge('disconnected')))
