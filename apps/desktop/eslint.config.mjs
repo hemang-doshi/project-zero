@@ -1,0 +1,62 @@
+import { defineConfig } from 'eslint/config'
+import tseslint from '@electron-toolkit/eslint-config-ts'
+import eslintConfigPrettier from '@electron-toolkit/eslint-config-prettier'
+import eslintPluginReact from 'eslint-plugin-react'
+import eslintPluginReactHooks from 'eslint-plugin-react-hooks'
+import eslintPluginReactRefresh from 'eslint-plugin-react-refresh'
+
+export default defineConfig(
+  { ignores: ['**/node_modules', '**/dist', '**/out'] },
+  tseslint.configs.recommended,
+  eslintPluginReact.configs.flat.recommended,
+  eslintPluginReact.configs.flat['jsx-runtime'],
+  {
+    settings: {
+      react: {
+        version: 'detect'
+      }
+    }
+  },
+  {
+    files: ['**/*.{ts,tsx}'],
+    plugins: {
+      'react-hooks': eslintPluginReactHooks,
+      'react-refresh': eslintPluginReactRefresh
+    },
+    rules: {
+      ...eslintPluginReactHooks.configs.recommended.rules,
+      ...eslintPluginReactRefresh.configs.vite.rules
+    }
+  },
+  {
+    // The 3D scene speaks @react-three/fiber three intrinsics (position,
+    // args, geometry, material, …) that the DOM property allowlist cannot
+    // know. Scoped to the scene file only; every other file keeps the rule.
+    files: ['src/renderer/src/routes/TopologyScene.tsx'],
+    rules: {
+      'react/no-unknown-property': [
+        'error',
+        {
+          ignore: [
+            'position',
+            'quaternion',
+            'rotation',
+            'scale',
+            'geometry',
+            'material',
+            'args',
+            'color',
+            'emissive',
+            'emissiveIntensity',
+            'transparent',
+            'opacity',
+            'intensity',
+            'distance',
+            'frustumCulled'
+          ]
+        }
+      ]
+    }
+  },
+  eslintConfigPrettier
+)

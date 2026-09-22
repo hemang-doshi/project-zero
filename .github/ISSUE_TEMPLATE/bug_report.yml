@@ -1,0 +1,28 @@
+name: Bug report
+description: Report a reproducible defect
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: Do not include credentials, private keys, databases, device backups, or personal data. Report security vulnerabilities privately using GitHub's Report a vulnerability feature.
+  - type: textarea
+    id: summary
+    attributes:
+      label: What happened?
+      description: Include the component and expected behavior.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version and build
+  - type: input
+    id: platform
+    attributes:
+      label: OS and hardware

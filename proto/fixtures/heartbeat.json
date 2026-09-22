@@ -1,0 +1,1 @@
+{"zero":"0.1","type":"node.heartbeat","id":"heartbeat-1","time":"2026-09-08T12:00:00Z","source":"node:desk","classification":"INTERNAL","body":{"heap":120000},"future_optional":true}

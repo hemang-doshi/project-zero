@@ -1,0 +1,15 @@
+appId: dev.projectzero.desktop
+productName: Zero Desktop
+directories:
+  output: .runtime/desktop-build
+  buildResources: resources
+files:
+  - out/**
+  - package.json
+mac:
+  identity: "Project Zero Local Release"
+  hardenedRuntime: true
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
+  category: public.app-category.developer-tools
+  icon: resources/ProjectZero.icns

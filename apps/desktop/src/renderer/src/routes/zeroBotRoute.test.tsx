@@ -1,0 +1,548 @@
+// @vitest-environment jsdom
+import { act } from 'react'
+import { createElement } from 'react'
+import { createRoot, type Root } from 'react-dom/client'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { ZeroBotRoute } from './ZeroBotRoute'
+import { SEND_BLOCKED_NOTICE } from './runtime.types'
+
+type FakeZero = {
+  invoke: (op: string, payload?: unknown) => Promise<unknown>
+  subscribe: (channel: 'bridge' | 'cockpit', cb: (u: unknown) => void) => () => void
+}
+
+const THREAD_ROWS_PAYLOAD = {
+  harness: 'codex',
+  threads: [
+    {
+      id: 't1',
+      name: null,
+      preview: 'first chat thread',
+      createdAt: 1757568000,
+      recencyAt: 1757568000,
+      model: 'gpt-5.6-sol',
+      modelProvider: 'openai',
+      status: 'idle'
+    },
+    { id: 't2', name: 'second', preview: 'p', createdAt: 10, recencyAt: 10 }
+  ]
+}
+
+const THREAD_GET_PAYLOAD = {
+  harness: 'codex',
+  thread: {
+    id: 't1',
+    name: 'first chat thread',
+    preview: 'first chat thread',
+    createdAt: 1757568000,
+    turns: [
+      {
+        id: 'turn1',
+        status: 'completed',
+        items: [
+          { id: 'u1', type: 'userMessage', content: [{ type: 'text', text: 'run the tests' }] },
+          { id: 'r1', type: 'reasoning', content: ['raw thoughts'], summary: ['short'] },
+          {
+            id: 'c1',
+            type: 'commandExecution',
+            command: 'npm test',
+            cwd: '/repo',
+            status: 'completed',
+            exitCode: 0,
+            aggregatedOutput: 'all green'
+          },
+          { id: 'a1', type: 'agentMessage', text: '**done**' }
+        ]
+      }
+    ]
+  }
+}
+
+let bridgeCb: ((u: unknown) => void) | null = null
+
+const OPENCODE_FOLDERS_PAYLOAD = {
+  harness: 'opencode',
+  models: [],
+  threads: [],
+  folders: [
+    {
+      folder: 'beta',
+      path: '/repo/beta',
+      count: 1,
+      sessions: [
+        {
+          id: 'b1',
+          title: 'Beta chat',
+          directory: '/repo/beta',
+          agent: null,
+          model: null,
+          createdAt: 0,
+          updatedAt: 200
+        }
+      ]
+    },
+    {
+      folder: 'alpha',
+      path: '/repo/alpha',
+      count: 2,
+      sessions: [
+        {
+          id: 'a-old',
+          title: 'Old alpha',
+          directory: '/repo/alpha',
+          agent: null,
+          model: null,
+          createdAt: 0,
+          updatedAt: 10
+        },
+        {
+          id: 'a-new',
+          title: 'Alpha new',
+          directory: '/repo/alpha',
+          agent: 'build',
+          model: 'muse-spark-1.3',
+          createdAt: 0,
+          updatedAt: 300
+        }
+      ]
+    }
+  ],
+  note: null
+}
+
+function fakeZero(handlers: Record<string, (payload?: unknown) => Promise<unknown>>): FakeZero {
+  return {
+    invoke: (op, payload) =>
+      handlers[op] !== undefined ? handlers[op](payload) : Promise.reject(new Error(`no op ${op}`)),
+    subscribe: (channel, cb) => {
+      if (channel === 'bridge') bridgeCb = cb
+      return () => {}
+    }
+  }
+}
+
+function stubZero(zero: FakeZero): void {
+  // vi.stubGlobal remembers the previous (jsdom) global so afterEach can
+  // RESTORE it — deleting `window` outright left react-dom's pending
+  // concurrent-scheduler flush with a bare ReferenceError after teardown.
+  vi.stubGlobal('window', { zero })
+}
+
+let root: Root | null = null
+let host: HTMLElement | null = null
+
+beforeEach(() => {
+  bridgeCb = null
+  host = document.body.appendChild(document.createElement('div'))
+  root = createRoot(host)
+})
+
+afterEach(async () => {
+  act(() => {
+    root?.unmount()
+  })
+  // Restore the real jsdom window FIRST, then drain react-dom's pending
+  // scheduler flush (setImmediate) so nothing fires after the environment
+  // is restored away.
+  vi.unstubAllGlobals()
+  await new Promise((r) => setImmediate(r))
+  await new Promise((r) => setImmediate(r))
+  host?.remove()
+  root = null
+  host = null
+})
+
+const renderRoute = (): void => {
+  act(() => {
+    root?.render(createElement(ZeroBotRoute))
+  })
+}
+
+describe('ZeroBotRoute thread surface', () => {
+  it('renders thread rows after connect lists them via the read-only op', async () => {
+    const invoke = vi.fn(async (op: string) => {
+      if (op === 'codex.state') return { state: 'disconnected', lastDiagnostic: null }
+      if (op === 'ocp.state') return { state: 'disconnected', lastDiagnostic: null }
+      if (op === 'codex.connect') return 'live'
+      if (op === 'codex.threads') return THREAD_ROWS_PAYLOAD
+      throw new Error(`unexpected op ${op}`)
+    })
+    stubZero(fakeZero({}))
+    ;(globalThis as unknown as { window: { zero: FakeZero } }).window.zero.invoke = invoke
+    renderRoute()
+    const connect = host?.querySelectorAll('button')
+    const connectBtn = Array.from(connect ?? []).find((b) => b.textContent === 'Connect Codex')
+    expect(connectBtn).toBeDefined()
+    await act(async () => {
+      connectBtn?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      await Promise.resolve()
+    })
+    await vi.waitFor(() => {
+      expect(host?.innerHTML).toContain('first chat thread')
+      expect(host?.innerHTML).toContain('second')
+      expect(invoke).toHaveBeenCalledWith('codex.threads')
+    })
+  })
+
+  it('loads a selected thread transcript and renders chat items', async () => {
+    const invoke = vi.fn(async (op, payload) => {
+      if (op === 'codex.state') return { state: 'live', lastDiagnostic: null }
+      if (op === 'ocp.state') return { state: 'disconnected', lastDiagnostic: null }
+      if (op === 'codex.threads') return THREAD_ROWS_PAYLOAD
+      if (op === 'codex.thread.get' && (payload as { threadId?: string })?.threadId === 't1') {
+        return THREAD_GET_PAYLOAD
+      }
+      throw new Error(`unexpected op ${op}`)
+    })
+    stubZero(fakeZero({}))
+    ;(globalThis as unknown as { window: { zero: FakeZero } }).window.zero.invoke = invoke
+    renderRoute()
+    await vi.waitFor(() => expect(host?.innerHTML).toContain('first chat thread'))
+    const row = Array.from(host?.querySelectorAll('button') ?? []).find((b) =>
+      b.textContent?.includes('first chat thread')
+    )
+    await act(async () => {
+      row?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      await Promise.resolve()
+    })
+    await vi.waitFor(() => {
+      const html = host?.innerHTML ?? ''
+      expect(html).toContain('run the tests')
+      expect(html).toContain('<strong>done</strong>')
+      expect(html).toContain('npm test')
+      expect(html).toContain('EXIT 0')
+      expect(html).toContain('Thinking')
+      expect(html).not.toContain('raw thoughts')
+    })
+  })
+
+  it('appends live bridge events of the open thread and keeps others out', async () => {
+    const invoke = vi.fn(async (op, payload) => {
+      if (op === 'codex.state') return { state: 'live', lastDiagnostic: null }
+      if (op === 'ocp.state') return { state: 'disconnected', lastDiagnostic: null }
+      if (op === 'codex.threads') return THREAD_ROWS_PAYLOAD
+      if (op === 'codex.thread.get' && (payload as { threadId?: string })?.threadId === 't1') {
+        return THREAD_GET_PAYLOAD
+      }
+      throw new Error(`unexpected op ${op}`)
+    })
+    stubZero(fakeZero({}))
+    ;(globalThis as unknown as { window: { zero: FakeZero } }).window.zero.invoke = invoke
+    renderRoute()
+    await vi.waitFor(() => expect(host?.innerHTML).toContain('first chat thread'))
+    const row = Array.from(host?.querySelectorAll('button') ?? []).find((b) =>
+      b.textContent?.includes('first chat thread')
+    )
+    await act(async () => {
+      row?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      await Promise.resolve()
+    })
+    await vi.waitFor(() => expect(host?.innerHTML).toContain('<strong>done</strong>'))
+    expect(bridgeCb).not.toBeNull()
+    const push = bridgeCb as unknown as (u: unknown) => void
+    act(() => {
+      push({
+        harness: 'codex',
+        event: {
+          method: 'item/completed',
+          params: {
+            threadId: 't1',
+            turnId: 'turn2',
+            completedAtMs: 9,
+            item: { id: 'a2', type: 'agentMessage', text: 'live append' }
+          }
+        }
+      })
+    })
+    expect(host?.innerHTML).toContain('live append')
+    act(() => {
+      push({
+        harness: 'codex',
+        event: {
+          method: 'item/completed',
+          params: {
+            threadId: 't-other',
+            turnId: 'x',
+            completedAtMs: 9,
+            item: { id: 'z1', type: 'agentMessage', text: 'foreign thread leak' }
+          }
+        }
+      })
+    })
+    expect(host?.innerHTML).not.toContain('foreign thread leak')
+    expect(host?.innerHTML).toContain('item/completed')
+  })
+
+  it('keeps live events that land while the transcript read is in flight', async () => {
+    let resolveRead: (v: unknown) => void = () => {}
+    const invoke = vi.fn(async (op, payload) => {
+      if (op === 'codex.state') return { state: 'live', lastDiagnostic: null }
+      if (op === 'ocp.state') return { state: 'disconnected', lastDiagnostic: null }
+      if (op === 'codex.threads') return THREAD_ROWS_PAYLOAD
+      if (op === 'codex.thread.get' && (payload as { threadId?: string })?.threadId === 't1') {
+        return new Promise((resolve) => {
+          resolveRead = resolve
+        })
+      }
+      throw new Error(`unexpected op ${op}`)
+    })
+    stubZero(fakeZero({}))
+    ;(globalThis as unknown as { window: { zero: FakeZero } }).window.zero.invoke = invoke
+    renderRoute()
+    await vi.waitFor(() => expect(host?.innerHTML).toContain('first chat thread'))
+    const row = Array.from(host?.querySelectorAll('button') ?? []).find((b) =>
+      b.textContent?.includes('first chat thread')
+    )
+    await act(async () => {
+      row?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      await Promise.resolve()
+    })
+    expect(bridgeCb).not.toBeNull()
+    const push = bridgeCb as unknown as (u: unknown) => void
+    // Live event lands while the read is still in flight.
+    act(() => {
+      push({
+        harness: 'codex',
+        event: {
+          method: 'item/completed',
+          params: {
+            threadId: 't1',
+            turnId: 'turn2',
+            completedAtMs: 9,
+            item: { id: 'a9', type: 'agentMessage', text: 'live text' }
+          }
+        }
+      })
+    })
+    expect(host?.innerHTML).toContain('live text')
+    await act(async () => {
+      resolveRead(THREAD_GET_PAYLOAD)
+      await Promise.resolve()
+    })
+    await vi.waitFor(() => expect(host?.innerHTML).toContain('<strong>done</strong>'))
+    // The live item must survive the read resolution (merge, not replace).
+    expect(host?.innerHTML).toContain('live text')
+    expect(host?.innerHTML).toContain('run the tests')
+  })
+
+  it('keeps the honest send block and voice placeholder', async () => {
+    stubZero(fakeZero({}))
+    renderRoute()
+    expect(host?.innerHTML).toContain(SEND_BLOCKED_NOTICE)
+    expect(host?.innerHTML).toContain('Voice')
+  })
+
+  it('never probes codex.threads when connecting the opencode harness', async () => {
+    const invoke = vi.fn(async (op) => {
+      if (op === 'codex.state' || op === 'ocp.state') {
+        return { state: 'disconnected', lastDiagnostic: null }
+      }
+      if (op === 'ocp.connect') return 'live'
+      throw new Error(`unexpected op ${op}`)
+    })
+    stubZero(fakeZero({}))
+    ;(globalThis as unknown as { window: { zero: FakeZero } }).window.zero.invoke = invoke
+    renderRoute()
+    const ocpBtn = Array.from(host?.querySelectorAll('button') ?? []).find(
+      (b) => b.textContent === 'OpenCode'
+    )
+    expect(ocpBtn).toBeDefined()
+    act(() => {
+      ocpBtn?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+    const connectBtn = Array.from(host?.querySelectorAll('button') ?? []).find(
+      (b) => b.textContent === 'Connect OpenCode'
+    )
+    await act(async () => {
+      connectBtn?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      await Promise.resolve()
+    })
+    expect(invoke).toHaveBeenCalledWith('ocp.connect')
+    expect(invoke.mock.calls.some(([op]) => op === 'codex.threads')).toBe(false)
+  })
+
+  it('renders opencode sessions grouped by folder newest-first without connecting', async () => {
+    const invoke = vi.fn(async (op: string) => {
+      if (op === 'codex.state' || op === 'ocp.state') {
+        return { state: 'disconnected', lastDiagnostic: null }
+      }
+      if (op === 'ocp.discover') return OPENCODE_FOLDERS_PAYLOAD
+      throw new Error(`unexpected op ${op}`)
+    })
+    stubZero(fakeZero({}))
+    ;(globalThis as unknown as { window: { zero: FakeZero } }).window.zero.invoke = invoke
+    renderRoute()
+    const ocpBtn = Array.from(host?.querySelectorAll('button') ?? []).find(
+      (b) => b.textContent === 'OpenCode'
+    )
+    act(() => {
+      ocpBtn?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+    await vi.waitFor(() => expect(host?.innerHTML).toContain('Alpha new'))
+    const html = host?.innerHTML ?? ''
+    // Folder groups render newest-group-first even though the wire sent beta first.
+    expect(html).toContain('/repo/alpha')
+    expect(html).toContain('/repo/beta')
+    expect(html.indexOf('Alpha new')).toBeLessThan(html.indexOf('Beta chat'))
+    // Sessions render newest-first within the folder.
+    expect(html.indexOf('Alpha new')).toBeLessThan(html.indexOf('Old alpha'))
+    expect(html).toContain('muse-spark-1.3')
+    expect(invoke).toHaveBeenCalledWith('ocp.discover')
+    expect(invoke.mock.calls.some(([op]) => op === 'ocp.connect')).toBe(false)
+  })
+
+  it('renders the honest empty note when the opencode store has no sessions', async () => {
+    const invoke = vi.fn(async (op: string) => {
+      if (op === 'codex.state' || op === 'ocp.state') {
+        return { state: 'disconnected', lastDiagnostic: null }
+      }
+      if (op === 'ocp.discover') {
+        return {
+          harness: 'opencode',
+          models: [],
+          threads: [],
+          folders: [],
+          note: 'No OpenCode sessions found (session store unreadable at /nowhere).'
+        }
+      }
+      throw new Error(`unexpected op ${op}`)
+    })
+    stubZero(fakeZero({}))
+    ;(globalThis as unknown as { window: { zero: FakeZero } }).window.zero.invoke = invoke
+    renderRoute()
+    const ocpBtn = Array.from(host?.querySelectorAll('button') ?? []).find(
+      (b) => b.textContent === 'OpenCode'
+    )
+    act(() => {
+      ocpBtn?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+    await vi.waitFor(() => expect(host?.innerHTML).toContain('No OpenCode sessions found'))
+  })
+
+  it('renders the workspace regions: sidebar, canvas, composer and inspector', async () => {
+    stubZero(fakeZero({}))
+    renderRoute()
+    const regions = (name: string): Element | null =>
+      host?.querySelector(`[data-region="${name}"]`) ?? null
+    expect(regions('sidebar')).not.toBeNull()
+    expect(regions('canvas')).not.toBeNull()
+    expect(regions('composer')).not.toBeNull()
+    expect(regions('inspector')).not.toBeNull()
+    expect(host?.innerHTML).toContain('New conversation')
+  })
+
+  it('collapses and reopens the inspector without touching any data path', async () => {
+    const invoke = vi.fn(async (op: string) => {
+      if (op === 'codex.state' || op === 'ocp.state') {
+        return { state: 'disconnected', lastDiagnostic: null }
+      }
+      throw new Error(`unexpected op ${op}`)
+    })
+    stubZero(fakeZero({}))
+    ;(globalThis as unknown as { window: { zero: FakeZero } }).window.zero.invoke = invoke
+    renderRoute()
+    const toggle = Array.from(host?.querySelectorAll('button') ?? []).find(
+      (b) => b.textContent === 'Hide inspector'
+    )
+    expect(toggle).toBeDefined()
+    act(() => {
+      toggle?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+    expect(host?.querySelector('[data-region="inspector"]')).toBeNull()
+    const reopen = Array.from(host?.querySelectorAll('button') ?? []).find(
+      (b) => b.textContent === 'Show inspector'
+    )
+    act(() => {
+      reopen?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+    expect(host?.querySelector('[data-region="inspector"]')).not.toBeNull()
+    expect(invoke.mock.calls.some(([op]) => op === 'codex.threads')).toBe(false)
+  })
+
+  it('attributes open-thread turns to Zero with muted provider models and summaries', async () => {
+    const invoke = vi.fn(async (op, payload) => {
+      if (op === 'codex.state') return { state: 'live', lastDiagnostic: null }
+      if (op === 'ocp.state') return { state: 'disconnected', lastDiagnostic: null }
+      if (op === 'codex.threads') return THREAD_ROWS_PAYLOAD
+      if (op === 'codex.thread.get' && (payload as { threadId?: string })?.threadId === 't1') {
+        return THREAD_GET_PAYLOAD
+      }
+      throw new Error(`unexpected op ${op}`)
+    })
+    stubZero(fakeZero({}))
+    ;(globalThis as unknown as { window: { zero: FakeZero } }).window.zero.invoke = invoke
+    renderRoute()
+    await vi.waitFor(() => expect(host?.innerHTML).toContain('first chat thread'))
+    const row = Array.from(host?.querySelectorAll('button') ?? []).find((b) =>
+      b.textContent?.includes('first chat thread')
+    )
+    await act(async () => {
+      row?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      await Promise.resolve()
+    })
+    await vi.waitFor(() => expect(host?.innerHTML).toContain('via Codex'))
+    const html = host?.innerHTML ?? ''
+    expect(html).toContain('gpt-5.6-sol')
+    expect(html).toContain('Ran npm test')
+    expect(html).toContain('designed but pending')
+  })
+
+  it('invites starting in the composer from the empty canvas with send honestly blocked', async () => {
+    stubZero(fakeZero({}))
+    renderRoute()
+    expect(host?.innerHTML).toContain('No conversation open')
+    const box = host?.querySelector('[data-region="composer"] textarea')
+    expect(box).not.toBeNull()
+    expect(box?.getAttribute('rows')).toBe('3')
+    expect(host?.innerHTML).toContain(SEND_BLOCKED_NOTICE)
+    const send = Array.from(host?.querySelectorAll('button') ?? []).find(
+      (b) => b.getAttribute('aria-label') === 'Send turn'
+    )
+    expect(send?.hasAttribute('disabled')).toBe(true)
+  })
+
+  it('clears the open thread locally on New conversation without any daemon write', async () => {
+    const invoke = vi.fn(async (op, payload) => {
+      if (op === 'codex.state') return { state: 'live', lastDiagnostic: null }
+      if (op === 'ocp.state') return { state: 'disconnected', lastDiagnostic: null }
+      if (op === 'codex.threads') return THREAD_ROWS_PAYLOAD
+      if (op === 'codex.thread.get' && (payload as { threadId?: string })?.threadId === 't1') {
+        return THREAD_GET_PAYLOAD
+      }
+      throw new Error(`unexpected op ${op}`)
+    })
+    stubZero(fakeZero({}))
+    ;(globalThis as unknown as { window: { zero: FakeZero } }).window.zero.invoke = invoke
+    renderRoute()
+    await vi.waitFor(() => expect(host?.innerHTML).toContain('first chat thread'))
+    const row = Array.from(host?.querySelectorAll('button') ?? []).find((b) =>
+      b.textContent?.includes('first chat thread')
+    )
+    await act(async () => {
+      row?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      await Promise.resolve()
+    })
+    await vi.waitFor(() => expect(host?.innerHTML).toContain('run the tests'))
+    const fresh = Array.from(host?.querySelectorAll('button') ?? []).find(
+      (b) => b.textContent === 'New conversation'
+    )
+    act(() => {
+      fresh?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+    expect(host?.innerHTML).toContain('No conversation open')
+    expect(host?.innerHTML).not.toContain('run the tests')
+    const ops = invoke.mock.calls.map(([op]) => op as string)
+    expect(ops).not.toContain('codex.send')
+    expect(ops).not.toContain('ocp.send')
+  })
+
+  it('explains bridge failures in human copy with the raw diagnostic behind it', async () => {
+    const invoke = vi.fn(async () => Promise.reject(new Error('socket refused at /tmp/z.sock')))
+    stubZero(fakeZero({}))
+    ;(globalThis as unknown as { window: { zero: FakeZero } }).window.zero.invoke = invoke
+    renderRoute()
+    await vi.waitFor(() => expect(host?.innerHTML).toContain('hit a problem'))
+    expect(host?.innerHTML).toContain('socket refused at /tmp/z.sock')
+    expect(host?.innerHTML).toContain('Reconnect')
+  })
+})

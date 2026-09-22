@@ -1,0 +1,36 @@
+# Runtime state and credentials
+.runtime/
+*.pem
+*.key
+.p12
+*.sqlite
+*.sqlite3
+*.db
+*.db-wal
+*.db-shm
+*.csr
+.env
+.env.*
+!.env.example
+
+# Local binaries and build output
+bin/
+build/
+out/
+managed_components/
+apps/desktop/build/entitlements.local.plist
+apps/desktop/node_modules/
+apps/desktop/out/
+apps/desktop/*.tsbuildinfo
+apps/macos/.build/
+nodes/esp32-desk/build/
+nodes/esp32-desk/sdkconfig
+nodes/esp32-desk/sdkconfig.old
+
+# Local tools and editor state
+.DS_Store
+.worktrees/
+.gstack/
+.vscode/
+__pycache__/
+*.py[cod]

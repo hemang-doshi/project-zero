@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "zero:display.telemetry",
+  "title": "Transient Spotify levels; negotiated levels-v1; never durable work",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "session_id",
+    "sequence",
+    "level",
+    "bass"
+  ],
+  "properties": {
+    "session_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "sequence": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9007199254740991
+    },
+    "level": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 255
+    },
+    "bass": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 255
+    }
+  }
+}
