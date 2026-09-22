@@ -161,6 +161,8 @@ describe('DeskRoute display status card', () => {
     useCockpit.setState({ state: 'live', snapshot: { ...value, nodes: [] }, refreshAt: Date.now() })
     const el = await mount()
     expect(el.textContent ?? '').toContain('No display node registered')
+    expect(el.querySelector('[aria-label="Virtual desk display preview"]')).not.toBeNull()
+    expect(el.textContent ?? '').toContain('PREVIEW · NO HARDWARE')
   })
 })
 

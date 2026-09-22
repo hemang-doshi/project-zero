@@ -1,6 +1,10 @@
 # Project Zero — full project handoff
 
-Updated: **2026-09-22 18:57 IST**. Start with [AGENTS.md](AGENTS.md) and [snapshot.md](snapshot.md). This document supplies durable context; the snapshot supplies the newest checkout/installation/test state. Every agent must maintain both. Pending items are not permission to resume a task the user stopped.
+Updated: **2026-09-22 19:21 IST**. Start with [AGENTS.md](AGENTS.md) and [snapshot.md](snapshot.md). This document supplies durable context; the snapshot supplies the newest checkout/installation/test state. Every agent must maintain both. Pending items are not permission to resume a task the user stopped.
+
+## September 22 follow-up repair handoff
+
+Read the newest snapshot first. Follow-up source changes were made in a writable clone at `/private/tmp/project-zero-fixes-2` because the isolated redesign worktree is outside this task's writable roots; they must be transferred mechanically to `/Users/hemangdoshi/.codex/worktrees/zero-redesign/project-zero` before rebuilding the Dock-pinned preview. Changes target only the reported failures. The no-daemon state is not an application-only bug: no `zero.sock` exists, so runtime projects/media/display leases cannot appear. Browser-independent Codex history uses the app-server bridge once a working CLI exists. The only available Codex system shims are currently broken, so repair/install of the official executable remains required before real Codex connection. OpenCode's official sanitized export is used for read-only saved transcript display, not ACP session ownership or provider sending. This exposes saved data only; do not claim every possible hidden provider event is recoverable. The self-learnt store was checked earlier and absent; do not fabricate entries. Spotify phone playback requires an OAuth/PKCE integration and the owner's client ID/authorization, and is not implemented by this fix. Keep software preview, daemon registration, OAuth and physical ESP32 acceptance distinct.
 
 ## September 22 redesign implementation handoff
 

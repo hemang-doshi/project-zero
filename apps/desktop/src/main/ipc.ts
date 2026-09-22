@@ -19,6 +19,7 @@ import {
 import { applyPrefsPatch, type Prefs } from './prefs'
 import { createBridgePair, type BridgeDeps, type HarnessId, type RpcEvent } from './bridges'
 import { defaultOpenCodeDbPath, readOpenCodeSessionStore } from './opencode-sessions'
+import { exportOpenCodeSession } from './opencode-export'
 import { artworkDataUrl } from './artwork-image'
 import { searchSkillsCatalog, type CatalogSkill } from './skills-catalog'
 import { PromptGateway, type PromptRequest } from './prompt-gateway'
@@ -42,6 +43,7 @@ export type SocketDeps = {
   searchSkills?: (query: string) => Promise<CatalogSkill[]>
   providerDispatch?: (request: PromptRequest) => Promise<{ turnId: string }>
   openCodeDbPath?: string
+  exportOpenCodeSession?: (threadId: string) => Promise<unknown>
 }
 
 const prefsDir = join(process.env.HOME ?? '', 'Library', 'Application Support', 'ProjectZero')
@@ -261,6 +263,16 @@ export function createDispatch(
         return bridgeState('ocp')
       case 'ocp.discover':
         return discover('ocp')
+      case 'ocp.thread.get': {
+        const { threadId } = (payload ?? {}) as Partial<ThreadGetPayload>
+        if (typeof threadId !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(threadId))
+          throw new Error('Malformed OpenCode session id')
+        const store = readOpenCodeSessionStore(deps.openCodeDbPath ?? defaultOpenCodeDbPath())
+        if (!store.groups.some((group) => group.sessions.some((session) => session.id === threadId)))
+          throw new Error('OpenCode session not found')
+        const session = await (deps.exportOpenCodeSession ?? exportOpenCodeSession)(threadId)
+        return { harness: 'opencode', session }
+      }
       case 'snapshot.fetch':
         return deps.fetchSnapshot(deps.socketPath)
       case 'command.send': {

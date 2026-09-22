@@ -11,6 +11,7 @@ import {
   BREADBOARD_TOP_Y,
   DESK_CENTER,
   DESK_LAYOUT,
+  DESK_OVERVIEW_BOUNDS,
   DESK_SIZE,
   ESP32_USB_WORLD,
   HOST_LABEL,
@@ -29,6 +30,7 @@ import {
   FOCUS_TWEEN_MS,
   breadboardDots,
   buildDeskCables,
+  visibleDeskCables,
   buildJumperWires,
   buildSceneGraph,
   easeInOutCubic,
@@ -89,12 +91,19 @@ describe('responsive desk camera', () => {
 })
 
 describe('desk scene graph', () => {
+  it('does not draw device cables for unregistered desk hardware', () => {
+    const graph = buildSceneGraph([], 'reconnecting')
+    const ids = visibleDeskCables(graph).map((c) => c.id)
+    expect(ids).not.toContain('usb-c-macbook-monitor')
+    expect(ids).not.toContain('esp32-usb')
+    expect(ids).toContain('keyboard-cable')
+  })
   it('keeps the physical monitor and ESP32 visible without pretending they are enrolled', () => {
     const graph = buildSceneGraph([], 'reconnecting')
     for (const kind of ['monitor', 'esp32']) {
       const node = graph.nodes.find((entry) => entry.kind === kind)
       expect(node?.status).toBe('UNREGISTERED')
-      expect(node?.selectable).toBe(false)
+      expect(node?.selectable).toBe(true)
     }
   })
   it('carries no hub node and no edges: the desk has cables, not data beams', () => {
@@ -127,13 +136,15 @@ describe('desk scene graph', () => {
   })
 
   it('respects MODEL_FOOTPRINT relative sizes', () => {
-    expect(MONITOR_FOOTPRINT).toEqual({ w: 3.2, h: 2.6, d: 0.75 })
+    expect(MONITOR_FOOTPRINT).toEqual({ w: 5.12, h: 4.16, d: 1.2 })
     expect(LAPTOP_FOOTPRINT).toEqual({ w: 3.0, h: 2.13, d: 2.5 })
     expect(ESP32_FOOTPRINT).toEqual({ w: 0.9, h: 1.1, d: 0.5 })
     expect(PHONE_FOOTPRINT).toEqual({ w: 0.78, h: 1.6, d: 0.13 })
     expect(KEYBOARD_FOOTPRINT).toEqual({ w: 2.8, h: 0.38, d: 1.16 })
     expect(MOUSEPAD_FOOTPRINT).toEqual({ w: 2.6, h: 0.5, d: 1.35 })
     expect(MONITOR_FOOTPRINT.h).toBeGreaterThan(LAPTOP_FOOTPRINT.h)
+    expect(MONITOR_FOOTPRINT.w / LAPTOP_FOOTPRINT.w).toBeGreaterThan(1.7)
+    expect(DESK_OVERVIEW_BOUNDS.max[1]).toBeGreaterThan(MONITOR_FOOTPRINT.h)
     expect(LAPTOP_FOOTPRINT.h).toBeGreaterThan(PHONE_FOOTPRINT.h)
     expect(PHONE_FOOTPRINT.h).toBeGreaterThan(ESP32_FOOTPRINT.h)
   })

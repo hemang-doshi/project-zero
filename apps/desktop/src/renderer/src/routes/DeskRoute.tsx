@@ -494,7 +494,35 @@ export const DeskRoute = memo(function DeskRoute(): React.JSX.Element {
           <span style={datumLabel}>{nodes.length > 0 ? `${nodes.length} REGISTERED` : '—'}</span>
         </div>
         {nodes.length === 0 ? (
-          <span style={noticeStyle}>No display node registered</span>
+          <>
+            <span style={noticeStyle}>No display node registered. This is a software preview, not a connected device.</span>
+            <div
+              role="img"
+              aria-label="Virtual desk display preview"
+              style={{
+                width: 'min(100%, 256px)',
+                minHeight: 320,
+                background: '#111820',
+                color: '#f8f5ef',
+                border: '7px solid #252a30',
+                borderRadius: 10,
+                padding: 12,
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 10,
+                fontFamily: ZERO_TYPE.mono,
+                overflow: 'hidden'
+              }}
+            >
+              <span style={{ fontSize: 10, color: '#f7df94' }}>PREVIEW · NO HARDWARE</span>
+              <span style={{ fontSize: 17, fontWeight: 700, overflowWrap: 'anywhere' }}>{project || 'No active project'}</span>
+              <span style={{ fontSize: 13 }}>{sessionState ?? 'UNAVAILABLE'} · {elapsedMs === null ? '—' : elapsed(elapsedMs)}</span>
+              <span style={{ borderTop: '1px solid #45505a', paddingTop: 8, fontSize: 10 }}>SPOTIFY</span>
+              <span style={{ fontSize: 12, overflowWrap: 'anywhere' }}>{spotify?.track || 'No media'}</span>
+              <span style={{ fontSize: 10, color: '#b7c3cc', overflowWrap: 'anywhere' }}>{spotify?.artist || 'Not connected'}</span>
+              <span style={{ marginTop: 'auto', fontSize: 9, color: '#8b9aa6' }}>ZERO · OFFLINE DISPLAY</span>
+            </div>
+          </>
         ) : (
           nodes.map((node: CockpitNode) => (
             <div key={node.id} style={nodeRow}>

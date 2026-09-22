@@ -121,7 +121,7 @@ export const BREADBOARD_TOP_Y = BREADBOARD.center[1] + BREADBOARD.h / 2
 // Pairwise footprint gaps were checked by hand; the model test re-pins the
 // no-overlap + desk-bounds invariants so future moves stay honest.
 export const DESK_LAYOUT = {
-  monitor: [-3.7, 0, -2.3] as [number, number, number],
+  monitor: [-4.05, 0, -2.3] as [number, number, number],
   macbook: [0.1, STAND_H, -1.1] as [number, number, number],
   esp32: [-3.9, BREADBOARD_TOP_Y, 1.0] as [number, number, number],
   keyboard: [0.1, 0, 1.55] as [number, number, number],
@@ -222,6 +222,16 @@ export function buildDeskCables(): DeskCable[] {
       radius: 0.018
     }
   ]
+}
+
+export function visibleDeskCables(graph: SceneGraph): DeskCable[] {
+  const registered = (kind: SceneNodeKind): boolean =>
+    graph.nodes.some((node) => node.kind === kind && node.status !== 'UNREGISTERED')
+  return buildDeskCables().filter((cable) => {
+    if (cable.id === 'usb-c-macbook-monitor') return registered('monitor')
+    if (cable.id === 'esp32-usb') return registered('esp32')
+    return true
+  })
 }
 
 export type JumperWire = {
@@ -475,7 +485,7 @@ export function buildSceneGraph(
       tone: 'neutral' as Tone,
       gated: false,
       dimmed: true,
-      selectable: false,
+      selectable: true,
       position: [...DESK_LAYOUT[kind]],
       caps: [],
       lastSeen: null
@@ -545,7 +555,7 @@ export type DeskBounds = {
 // Furniture, devices and overview labels, with a small physical margin.
 export const DESK_OVERVIEW_BOUNDS: DeskBounds = {
   min: [-7.4, -0.5, -4.0],
-  max: [7.4, 3.4, 3.8]
+  max: [7.4, 4.8, 3.8]
 }
 
 export function fitDeskCamera(

@@ -53,7 +53,7 @@ describe('Monitor footprint', () => {
     expect(MODEL_FOOTPRINT.h).toBeGreaterThan(0)
     expect(MODEL_FOOTPRINT.d).toBeGreaterThan(0)
     expect(MODEL_FOOTPRINT.w).toBeGreaterThan(MODEL_FOOTPRINT.h)
-    expect(MODEL_FOOTPRINT).toEqual({ w: 3.2, h: 2.6, d: 0.75 })
+    expect(MODEL_FOOTPRINT).toEqual({ w: 5.12, h: 4.16, d: 1.2 })
   })
 })
 

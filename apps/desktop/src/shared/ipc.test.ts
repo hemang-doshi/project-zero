@@ -34,6 +34,7 @@ describe('validateOp', () => {
         'ocp.connect',
         'ocp.disconnect',
         'ocp.discover',
+        'ocp.thread.get',
         'ocp.send',
         'ocp.state',
         'prefs.get',

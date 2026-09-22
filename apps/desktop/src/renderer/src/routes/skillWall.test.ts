@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { localSkillRows, searchSkillRows, skillWindow } from './skillWall'
+import { localSkillRows, searchSkillRows, skillWindow, skillIcon } from './skillWall'
 
 describe('skill wall model', () => {
+  it('uses a skill icon when present and a stable group glyph otherwise', () => {
+    expect(skillIcon({ id: 'a', name: 'A', source: 'installed', pluginId: 'p', icon: '🧪' }, 'flask')).toBe('🧪')
+    expect(skillIcon({ id: 'b', name: 'B', source: 'installed', pluginId: 'p' }, 'flask')).toBe('⚗')
+  })
   it('keeps live skills, deduplicates identity and searches human text', () => {
     const skill = {
       id: 'build',

@@ -5,9 +5,14 @@ import {
   summarizeExecItem,
   summarizeToolItem,
   streamingLabel,
-  turnItemCounts
+  turnItemCounts,
+  projectErrorMessage
 } from './zeroBot.presentation'
 import type { ChatItem } from './chat.model'
+
+it('explains a missing Zero daemon without hiding independent chat history', () => {
+  expect(projectErrorMessage(new Error('connect ENOENT /Users/me/Library/Application Support/ProjectZero/zero.sock'))).toContain('Codex and OpenCode history')
+})
 
 describe('formatViaAttribution', () => {
   it('keeps the Zero author voice with muted verbatim provider attribution', () => {

@@ -1,6 +1,7 @@
 import { spawn, type ChildProcess } from 'node:child_process'
 import { EventEmitter } from 'node:events'
 import * as fs from 'node:fs'
+import { spawnSync } from 'node:child_process'
 import { join } from 'node:path'
 
 export type BridgeState = 'disconnected' | 'connecting' | 'live'
@@ -354,16 +355,19 @@ export class JsonRpcStdio {
 export class CodexBridge {
   private readonly io: JsonRpcStdio
   private readonly toolchainsDir: string
+  private readonly systemCandidates: string[]
 
   constructor(opts: {
     prefsDir: string
     toolchainsDir?: string
+    systemCandidates?: string[]
     spawnFn?: SpawnFn
     clientVersion?: string
   }) {
     this.toolchainsDir =
       opts.toolchainsDir ??
       join(process.env.HOME ?? '', 'Library', 'Application Support', 'ProjectZero', 'toolchains')
+    this.systemCandidates = opts.systemCandidates ?? ['/usr/local/bin/codex', '/opt/homebrew/bin/codex']
     this.io = new JsonRpcStdio({
       harness: 'codex',
       prefsDir: opts.prefsDir,
@@ -389,7 +393,7 @@ export class CodexBridge {
 
   async connect(): Promise<BridgeState> {
     if (this.io.state !== 'disconnected') throw new Error('already connected')
-    const exe = resolveCodexToolchain(this.toolchainsDir)
+    const exe = resolveCodexToolchain(this.toolchainsDir, this.systemCandidates)
     return this.io.connect(exe, ['app-server', '--stdio'])
   }
 
@@ -473,7 +477,7 @@ export function createBridgePair(opts: {
   return { codex: new CodexBridge(opts), ocp: new OpenCodeBridge(opts) }
 }
 
-export function resolveCodexToolchain(dir: string): string {
+export function resolveCodexToolchain(dir: string, systemCandidates: string[] = []): string {
   let names: string[] = []
   try {
     names = fs.readdirSync(dir)
@@ -490,8 +494,17 @@ export function resolveCodexToolchain(dir: string): string {
       /* try the next candidate */
     }
   }
+  for (const exe of systemCandidates) {
+    try {
+      fs.accessSync(exe, fs.constants.X_OK)
+      const probe = spawnSync(exe, ['--version'], { timeout: 3_000, encoding: 'utf8' })
+      if (probe.status === 0 && /^codex-cli\s+\S+/m.test(probe.stdout)) return exe
+    } catch {
+      /* try the next installed CLI */
+    }
+  }
   throw new Error(
-    `Codex toolchain not found under ${dir} (expected codex-*/codex). Install it, then reconnect.`
+    `Codex CLI not found or not runnable under ${dir} or the supported system paths. Install or repair it, then reconnect.`
   )
 }
 

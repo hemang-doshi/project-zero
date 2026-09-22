@@ -4,6 +4,7 @@ import type { ProjectListItem } from '../../../shared/ipc'
 import type { PromptSubmitPayload } from '../../../shared/ipc'
 import { Chip } from './Chip'
 import { ChatRow, ThreadList } from './ZeroBotChat'
+import { parseOpenCodeTranscript } from './opencodeTranscript'
 import type { Tone } from './runtime.types'
 import {
   applyBridgeEvent,
@@ -38,6 +39,7 @@ import {
 } from './runtime.types'
 import {
   PROVIDER_DISPLAY,
+  projectErrorMessage,
   streamingLabel,
   summarizeExecItem,
   summarizeToolItem,
@@ -330,7 +332,7 @@ const threadTime = (seconds: number): string => {
   return Number.isNaN(d.getTime()) ? '—' : d.toISOString().slice(0, 16).replace('T', ' ')
 }
 
-export function FolderGroupList({ groups }: { groups: OpenCodeFolderGroup[] }): React.JSX.Element {
+export function FolderGroupList({ groups, selectedId, onSelect }: { groups: OpenCodeFolderGroup[]; selectedId: string | null; onSelect: (id: string) => void }): React.JSX.Element {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 10, minWidth: 0 }}>
       {groups.map((g) => (
@@ -344,7 +346,7 @@ export function FolderGroupList({ groups }: { groups: OpenCodeFolderGroup[] }): 
             </span>
           </div>
           {g.sessions.map((s) => (
-            <div key={s.id} style={sessionRow}>
+            <button key={s.id} type="button" style={{ ...sessionRow, width: '100%', border: 'none', background: selectedId === s.id ? 'var(--z-card-white)' : 'transparent', cursor: 'pointer', textAlign: 'left' }} onClick={() => onSelect(s.id)} aria-current={selectedId === s.id ? 'true' : undefined}>
               <span data-voice="human" style={{ ...bodyText, fontSize: 12 }}>
                 {s.title === '' ? s.id : s.title}
               </span>
@@ -353,7 +355,7 @@ export function FolderGroupList({ groups }: { groups: OpenCodeFolderGroup[] }): 
                 {s.model !== null ? ` · ${s.model}` : ''}
                 {s.agent !== null ? ` · ${s.agent}` : ''}
               </span>
-            </div>
+            </button>
           ))}
         </div>
       ))}
@@ -491,7 +493,7 @@ export const ZeroBotRoute = memo(function ZeroBotRoute(): React.JSX.Element {
         if (aliveRef.current && Array.isArray(value)) setProjects(value as ProjectListItem[])
       })
       .catch((err: unknown) => {
-        if (aliveRef.current) setProjectsError(err instanceof Error ? err.message : String(err))
+        if (aliveRef.current) setProjectsError(projectErrorMessage(err))
       })
     const refresh = (h: Harness): void => {
       window.zero
@@ -654,6 +656,37 @@ export const ZeroBotRoute = memo(function ZeroBotRoute(): React.JSX.Element {
       .catch((err: unknown) => setError(err instanceof Error ? err.message : String(err)))
   }
 
+  const openOpenCodeThread = (threadId: string): void => {
+    openRef.current = { ...openRef.current, opencode: threadId }
+    const laneNow = lanesRef.current.opencode
+    const opened: HarnessState = {
+      ...lanesRef.current,
+      opencode: { ...laneNow, threadId, items: [], dropped: 0 }
+    }
+    lanesRef.current = opened
+    setLanes(opened)
+    setError(null)
+    setNotice(null)
+    window.zero.invoke('ocp.thread.get', { threadId }).then(
+      (value) => {
+        if (openRef.current.opencode !== threadId) return
+        const session = typeof value === 'object' && value !== null ? (value as { session?: unknown }).session : null
+        const parsed = parseOpenCodeTranscript(session)
+        const current = lanesRef.current.opencode
+        const next: HarnessState = {
+          ...lanesRef.current,
+          opencode: { ...current, items: parsed.items, dropped: parsed.dropped }
+        }
+        lanesRef.current = next
+        setLanes(next)
+        if (parsed.items.length === 0) setNotice('The OpenCode session has no readable messages.')
+      },
+      (err: unknown) => {
+        if (openRef.current.opencode === threadId) setError(err instanceof Error ? err.message : String(err))
+      }
+    )
+  }
+
   const newConversation = (): void => {
     activePromptRef.current = null
     setPromptHold(null)
@@ -786,6 +819,7 @@ export const ZeroBotRoute = memo(function ZeroBotRoute(): React.JSX.Element {
   )
   const codexInfo = states.codex
   const opencodeResult = discovery.opencode ?? null
+  const openOpenCodeRow = opencodeResult?.folders.flatMap((group) => group.sessions).find((session) => session.id === lanes.opencode.threadId) ?? null
 
   return (
     <div ref={workspaceRef} className="zw-route" data-region="workspace" style={workspaceStyle}>
@@ -882,7 +916,7 @@ export const ZeroBotRoute = memo(function ZeroBotRoute(): React.JSX.Element {
               </section>
             </>
           ) : opencodeResult !== null && opencodeResult.folders.length > 0 ? (
-            <FolderGroupList groups={opencodeResult.folders} />
+            <FolderGroupList groups={opencodeResult.folders} selectedId={lanes.opencode.threadId} onSelect={openOpenCodeThread} />
           ) : (
             <EmptyState
               title={
@@ -957,7 +991,7 @@ export const ZeroBotRoute = memo(function ZeroBotRoute(): React.JSX.Element {
             </span>
             {lane.threadId !== null ? (
               <span data-voice="human" style={{ ...bodyText, fontWeight: 700 }}>
-                {openRow !== null ? threadTitle(openRow) : lane.threadId}
+                {openRow !== null ? threadTitle(openRow) : openOpenCodeRow?.title || lane.threadId}
               </span>
             ) : null}
             {activity !== null ? (
@@ -999,13 +1033,13 @@ export const ZeroBotRoute = memo(function ZeroBotRoute(): React.JSX.Element {
               title="No conversation open"
               explanation={
                 harness === 'opencode'
-                  ? 'OpenCode sessions are listed on the left. This build has no transcript read for them yet, so they stay labels.'
+                  ? 'Choose an OpenCode session on the left to read its saved messages and tool calls.'
                   : 'Choose a thread on the left to read it. Live turns append here while the bridge streams.'
               }
               technical={
                 harness === 'codex'
                   ? 'thread/list + thread/read · read-only · bounded to the last 400 items'
-                  : 'local session store · read-only · no transcript read in this build'
+                  : 'local session store + sanitized CLI export · read-only · bounded to the last 400 items'
               }
             />
           ) : (
