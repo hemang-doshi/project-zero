@@ -21,6 +21,7 @@ export const OPS = {
   'ocp.send': true,
   'ocp.state': true,
   'ocp.discover': true,
+  'ocp.thread.get': true,
   'wallpaper.pick': true,
   'telemetry.sample': true,
   'artwork.fetch': true,

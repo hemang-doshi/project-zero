@@ -17,6 +17,14 @@ export const PROVIDER_DISPLAY: Record<Harness, string> = {
   opencode: 'OpenCode'
 }
 
+export function projectErrorMessage(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error)
+  if (message.includes('ENOENT') && message.includes('zero.sock')) {
+    return 'Zero runtime is not running on this Mac. Registered projects need the local daemon; Codex and OpenCode history can still be browsed.'
+  }
+  return message
+}
+
 export type ViaAttribution = { author: 'Zero'; via: string | null }
 
 // Zero authors the turn; the provider/model that executed it is muted,

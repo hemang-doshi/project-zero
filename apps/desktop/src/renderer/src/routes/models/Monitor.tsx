@@ -22,11 +22,9 @@ export const STATUS_HEX: Record<MonitorStatus, string> = {
   gated: '#DC2626'
 }
 
-// Bounding size in scene units of the unscaled model.
-// Proportions follow a modern 27"-class 16:9 display (609.6 × 352.8 mm
-// panel): width 3.2, standing height 2.6 (panel top), depth 0.75
-// (base foot front lip to back-shell curve).
-export const MODEL_FOOTPRINT = { w: 3.2, h: 2.6, d: 0.75 }
+// The scene presents this 27-inch display at 1.6× the original model size,
+// so it reads distinctly larger than the 14-inch MacBook beside it.
+export const MODEL_FOOTPRINT = { w: 5.12, h: 4.16, d: 1.2 }
 
 // Dark aluminum/plastic body (no token charcoal exists — hardcoded, not a token).
 const BODY = '#2A2E35'
@@ -658,7 +656,7 @@ function MonitorInner({
 // Modern 27"-class desktop monitor, centered at the origin, front facing +Z,
 // standing on y=0 via its base foot. No lights, no textures, no frame loop of
 // its own — the integration lane owns the Canvas, lights and frameloop="demand".
-function Monitor({ status, dimmed = false, scale = 1 }: MonitorProps): React.JSX.Element {
+function Monitor({ status, dimmed = false, scale = 1.6 }: MonitorProps): React.JSX.Element {
   return (
     <group data-testid="monitor" scale={scale}>
       <MonitorInner status={status} dimmed={dimmed} />

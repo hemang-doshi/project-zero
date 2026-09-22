@@ -282,6 +282,22 @@ describe('discovery ops', () => {
 })
 
 describe('thread read ops', () => {
+  it('opens only a discovered OpenCode session through bounded read-only export', async () => {
+    const { DatabaseSync } = await import('node:sqlite')
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'zero-ocp-export-'))
+    const dbPath = path.join(dir, 'opencode.db')
+    const db = new DatabaseSync(dbPath)
+    db.exec('CREATE TABLE session (id TEXT PRIMARY KEY, directory TEXT NOT NULL, title TEXT, agent TEXT, model TEXT, time_created INTEGER, time_updated INTEGER)')
+    db.prepare('INSERT INTO session VALUES (?, ?, ?, ?, ?, ?, ?)').run('s-existing', '/repo', 'Existing', null, null, 1, 2)
+    db.close()
+    const d = deps()
+    d.openCodeDbPath = dbPath
+    d.exportOpenCodeSession = vi.fn(async () => ({ info: { id: 's-existing' }, messages: [] }))
+    const invoke = createDispatch(d)
+    await expect(invoke('ocp.thread.get', { threadId: 's-existing' })).resolves.toMatchObject({ harness: 'opencode', session: { info: { id: 's-existing' } } })
+    await expect(invoke('ocp.thread.get', { threadId: 'unknown' })).rejects.toThrow(/not found/i)
+    expect(d.exportOpenCodeSession).toHaveBeenCalledTimes(1)
+  })
   it('codex.threads lists threads via a bounded read-only thread/list probe', async () => {
     const codex = fakeBridge('live')
     const invoke = createDispatch(deps(), () => fakePair(codex, fakeBridge('disconnected')))

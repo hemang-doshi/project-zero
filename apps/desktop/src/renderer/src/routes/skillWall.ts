@@ -1,4 +1,16 @@
-import type { PluginGroup, SkillSummary } from './skillPlugins'
+import type { PluginGroup, SkillGlyph, SkillSummary } from './skillPlugins'
+
+const GLYPH_ICON: Record<SkillGlyph, string> = {
+  flask: '⚗',
+  masks: '◈',
+  stack: '▤',
+  bolt: 'ϟ',
+  orb: '◉'
+}
+
+export function skillIcon(skill: SkillSummary, glyph: SkillGlyph): string {
+  return skill.icon?.trim() || GLYPH_ICON[glyph]
+}
 
 export type SkillWallRow = { key: string; group: string; skill: SkillSummary }
 

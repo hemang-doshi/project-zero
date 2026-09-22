@@ -4,7 +4,7 @@ import type { ChildProcess } from 'node:child_process'
 import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
-import { CodexBridge, JsonRpcStdio, OpenCodeBridge } from './bridges'
+import { CodexBridge, JsonRpcStdio, OpenCodeBridge, resolveCodexToolchain } from './bridges'
 
 type ParsedReq = { id?: unknown; method?: string; params?: unknown }
 type SpawnRecord = { cmd: string; args: string[]; opts: Record<string, unknown> }
@@ -345,11 +345,25 @@ describe('Harness lock', () => {
 })
 
 describe('CodexBridge toolchain resolution', () => {
+  it('uses an installed Codex CLI when the private toolchain is absent', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'zero-tool-'))
+    const cli = path.join(dir, 'codex')
+    fs.writeFileSync(cli, '#!/bin/sh\nprintf "codex-cli 0.155.1\\n"\n')
+    fs.chmodSync(cli, 0o700)
+    expect(resolveCodexToolchain(path.join(dir, 'missing'), [cli])).toBe(cli)
+  })
+  it('rejects a broken system CLI shim even when its file is executable', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'zero-tool-'))
+    const cli = path.join(dir, 'codex')
+    fs.writeFileSync(cli, '#!/bin/sh\nexit 1\n')
+    fs.chmodSync(cli, 0o700)
+    expect(() => resolveCodexToolchain(path.join(dir, 'missing'), [cli])).toThrow(/not found/i)
+  })
   it('fails with a clear message and never spawns when no toolchain exists', async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'zero-tool-'))
     const { records, spawnFn } = fakeChild()
-    const bridge = new CodexBridge({ prefsDir: dir, toolchainsDir: dir, spawnFn })
-    await expect(bridge.connect()).rejects.toThrow(/toolchain not found/i)
+    const bridge = new CodexBridge({ prefsDir: dir, toolchainsDir: dir, systemCandidates: [], spawnFn })
+    await expect(bridge.connect()).rejects.toThrow(/CLI not found/i)
     expect(records).toHaveLength(0)
   })
 

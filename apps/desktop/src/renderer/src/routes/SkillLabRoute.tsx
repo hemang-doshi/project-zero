@@ -3,11 +3,13 @@ import { ZERO_TYPE } from '../../../shared/tokens'
 import { type OpName } from '../../../shared/ipc'
 import { Chip } from './Chip'
 import type { PluginGroup, SkillSummary } from './skillPlugins'
-import { localSkillRows, searchSkillRows, skillWindow } from './skillWall'
+import { localSkillRows, searchSkillRows, skillWindow, skillIcon } from './skillWall'
 
 const routeStyle: React.CSSProperties = {
   height: '100%',
-  overflow: 'hidden',
+  overflowY: 'auto',
+  minWidth: 0,
+  containerType: 'inline-size',
   padding: '20px 22px',
   display: 'flex',
   flexDirection: 'column',
@@ -24,6 +26,7 @@ const microStyle: React.CSSProperties = {
 
 const headerRow: React.CSSProperties = {
   display: 'flex',
+  flexWrap: 'wrap',
   alignItems: 'baseline',
   justifyContent: 'space-between',
   gap: 12
@@ -67,7 +70,11 @@ const refreshStyle: React.CSSProperties = {
 const skillName: React.CSSProperties = {
   fontSize: 13,
   fontWeight: 600,
-  color: 'var(--z-ink)'
+  color: 'var(--z-ink)',
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
+  whiteSpace: 'nowrap',
+  minWidth: 0
 }
 
 // Live plugin discovery rides the skills.discover IPC op (Task 37D): the main
@@ -287,7 +294,7 @@ export const SkillLabRoute = memo(function SkillLabRoute(): React.JSX.Element {
           fontSize: 13
         }}
       />
-      <div role="group" aria-label="Skill filters" style={{ display: 'flex', gap: 6 }}>
+      <div role="group" aria-label="Skill filters" style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
         {(['All', 'Installed', 'Self-learnt'] as const).map((option) => (
           <button
             key={option}
@@ -303,8 +310,9 @@ export const SkillLabRoute = memo(function SkillLabRoute(): React.JSX.Element {
           </button>
         ))}
       </div>
-      <div style={{ display: 'flex', gap: 14, flex: 1, minHeight: 0 }}>
+      <div className="skill-lab-workspace">
         <div
+          className="skill-lab-wall"
           role="listbox"
           aria-label="Skill wall"
           tabIndex={0}
@@ -321,13 +329,6 @@ export const SkillLabRoute = memo(function SkillLabRoute(): React.JSX.Element {
               setSelectedKey(filtered[next].key)
               e.currentTarget.scrollTop = next * 56
             }
-          }}
-          style={{
-            flex: 1,
-            overflowY: 'auto',
-            minHeight: 0,
-            borderTop: '1px solid var(--z-line)',
-            borderBottom: '1px solid var(--z-line)'
           }}
         >
           <div style={{ height: filtered.length * 56, position: 'relative' }}>
@@ -353,11 +354,18 @@ export const SkillLabRoute = memo(function SkillLabRoute(): React.JSX.Element {
                   display: 'flex',
                   flexDirection: 'column',
                   gap: 3,
-                  cursor: 'pointer'
+                  cursor: 'pointer',
+                  overflow: 'hidden'
                 }}
+                title={row.skill.name}
               >
-                <span style={skillName}>{row.skill.name}</span>
-                <span style={noticeStyle}>
+                <span style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+                  <span aria-hidden="true" style={{ flexShrink: 0, fontSize: 17, lineHeight: 1 }}>
+                    {skillIcon(row.skill, groups.find((g) => g.name === row.group)?.glyph ?? 'orb')}
+                  </span>
+                  <span style={skillName}>{row.skill.name}</span>
+                </span>
+                <span style={{ ...noticeStyle, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '100%' }}>
                   {row.group} · {row.skill.source} · {row.skill.description ?? 'No description'}
                 </span>
               </button>
@@ -365,23 +373,28 @@ export const SkillLabRoute = memo(function SkillLabRoute(): React.JSX.Element {
           </div>
           {filtered.length === 0 ? (
             <span style={noticeStyle}>
-              {query ? 'No skills match this search.' : 'No local skills found.'}
+              {query
+                ? 'No skills match this search.'
+                : filter === 'Self-learnt'
+                  ? 'No self-learnt skills are stored on this Mac yet.'
+                  : 'No local skills found.'}
             </span>
           ) : null}
         </div>
         <aside
+          className="skill-lab-details"
           aria-label="Skill details"
           style={{
-            width: 260,
             overflowY: 'auto',
             border: '1px solid var(--z-line)',
             borderRadius: 8,
-            padding: 12
+            padding: 12,
+            overflowWrap: 'anywhere'
           }}
         >
           {catalogSelection ? (
             <>
-              <span style={skillName}>{catalogSelection.skill}</span>
+              <span style={{ ...skillName, display: 'block', whiteSpace: 'normal', overflowWrap: 'anywhere' }}>{catalogSelection.skill}</span>
               <p style={noticeStyle}>AVAILABLE FROM SKILLS.SH · NOT INSTALLED</p>
               <p style={noticeStyle}>{catalogSelection.source}</p>
               <p style={noticeStyle}>
@@ -394,7 +407,7 @@ export const SkillLabRoute = memo(function SkillLabRoute(): React.JSX.Element {
             </>
           ) : selected ? (
             <>
-              <span style={skillName}>{selected.skill.name}</span>
+              <span style={{ ...skillName, display: 'block', whiteSpace: 'normal', overflowWrap: 'anywhere' }}>{selected.skill.name}</span>
               <p style={summaryStyle}>
                 {selected.skill.description ?? 'No description available.'}
               </p>

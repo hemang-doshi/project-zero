@@ -19,7 +19,7 @@ import {
   STAND_SIZE,
   TONE_HEX,
   breadboardDots,
-  buildDeskCables,
+  visibleDeskCables,
   buildJumperWires,
   easeInOutCubic,
   fitDeskCamera,
@@ -667,7 +667,7 @@ export const TopologyScene = memo(function TopologyScene({
   const [hoveredId, setHoveredId] = useState<string | null>(null)
   const [focus, setFocus] = useState<FocusState>({ focusedId: null })
   const [focusNonce, setFocusNonce] = useState(0)
-  const cables = useMemo(() => buildDeskCables(), [])
+  const cables = useMemo(() => visibleDeskCables(graph), [graph])
   const jumpers = useMemo(() => buildJumperWires(), [])
   const dots = useMemo(() => breadboardDots(), [])
   const blobMat = useMemo(
