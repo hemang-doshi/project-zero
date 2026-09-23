@@ -16,16 +16,13 @@ import type { RuntimeConnState } from '../../../shared/protocol'
 import {
   activeProjectLabel,
   connectivity,
-  displayNodes,
   extrapolate,
   gitLine,
-  nodeTone,
   parseSnapshot,
   selectSession,
   selectSpotify,
   sessionChipTone,
   type CockpitAudio,
-  type CockpitNode,
   type SpotifyMedia,
   type Tone
 } from './runtime.types'
@@ -157,24 +154,6 @@ const waveformBox: React.CSSProperties = {
   paddingTop: 8
 }
 
-const nodeRow: React.CSSProperties = {
-  display: 'flex',
-  alignItems: 'baseline',
-  justifyContent: 'space-between',
-  gap: 10,
-  minWidth: 0
-}
-
-const nodeIdStyle: React.CSSProperties = {
-  fontFamily: ZERO_TYPE.mono,
-  fontSize: 12,
-  fontWeight: 700,
-  color: 'var(--z-ink)',
-  overflow: 'hidden',
-  textOverflow: 'ellipsis',
-  whiteSpace: 'nowrap'
-}
-
 const nodeDetailStyle: React.CSSProperties = {
   fontFamily: ZERO_TYPE.mono,
   fontSize: 10.5,
@@ -192,9 +171,6 @@ const runRow: React.CSSProperties = {
   borderBottom: '1px solid color-mix(in srgb, var(--z-line) 70%, transparent)',
   minWidth: 0
 }
-
-const clockStamp = (iso: string | null): string =>
-  iso !== null && iso.length >= 19 ? iso.slice(11, 19) : '—'
 
 const WAVE_W = 220
 const WAVE_H = 44
@@ -427,7 +403,7 @@ export const DeskRoute = memo(function DeskRoute(): React.JSX.Element {
 
   const spotify = useMemo(() => selectSpotify(snapshot), [snapshot])
   const audio = useMemo(() => parseSnapshot(snapshot)?.audio ?? null, [snapshot])
-  const nodes = useMemo(() => displayNodes(snapshot), [snapshot])
+  const listening = useMemo(() => parseSnapshot(snapshot)?.listeningSession ?? null, [snapshot])
 
   const activeProject = activeProjectLabel(conn, project)
   const gitParts: string[] = []
@@ -490,47 +466,84 @@ export const DeskRoute = memo(function DeskRoute(): React.JSX.Element {
 
       <div style={cardStyle}>
         <div style={headerRow}>
-          <span style={datumLabel}>DESK DISPLAY</span>
-          <span style={datumLabel}>{nodes.length > 0 ? `${nodes.length} REGISTERED` : '—'}</span>
+          <span style={datumLabel}>LISTENING SESSION</span>
+          <Chip
+            label={
+              listening === null
+                ? 'NOT OBSERVED'
+                : listening.endedAt === null
+                  ? listening.playbackState.toUpperCase()
+                  : 'ENDED'
+            }
+            tone={listening?.playbackState === 'playing' ? 'healthy' : 'neutral'}
+          />
         </div>
-        {nodes.length === 0 ? (
+        {listening === null ? (
+          <span style={noticeStyle}>
+            Session history starts when local Spotify observation is connected and playback begins.
+          </span>
+        ) : (
           <>
-            <span style={noticeStyle}>No display node registered. This is a software preview, not a connected device.</span>
             <div
-              role="img"
-              aria-label="Virtual desk display preview"
               style={{
-                width: 'min(100%, 256px)',
-                minHeight: 320,
-                background: '#111820',
-                color: '#f8f5ef',
-                border: '7px solid #252a30',
-                borderRadius: 10,
-                padding: 12,
                 display: 'flex',
-                flexDirection: 'column',
-                gap: 10,
-                fontFamily: ZERO_TYPE.mono,
-                overflow: 'hidden'
+                justifyContent: 'space-between',
+                alignItems: 'baseline',
+                gap: 12
               }}
             >
-              <span style={{ fontSize: 10, color: '#f7df94' }}>PREVIEW · NO HARDWARE</span>
-              <span style={{ fontSize: 17, fontWeight: 700, overflowWrap: 'anywhere' }}>{project || 'No active project'}</span>
-              <span style={{ fontSize: 13 }}>{sessionState ?? 'UNAVAILABLE'} · {elapsedMs === null ? '—' : elapsed(elapsedMs)}</span>
-              <span style={{ borderTop: '1px solid #45505a', paddingTop: 8, fontSize: 10 }}>SPOTIFY</span>
-              <span style={{ fontSize: 12, overflowWrap: 'anywhere' }}>{spotify?.track || 'No media'}</span>
-              <span style={{ fontSize: 10, color: '#b7c3cc', overflowWrap: 'anywhere' }}>{spotify?.artist || 'Not connected'}</span>
-              <span style={{ marginTop: 'auto', fontSize: 9, color: '#8b9aa6' }}>ZERO · OFFLINE DISPLAY</span>
+              <span style={detailStyle}>
+                Observed {new Date(listening.startedAt).toLocaleTimeString()}
+              </span>
+              <ElapsedClock
+                baseMs={listening.activeDurationMs}
+                ticking={
+                  conn === 'live' &&
+                  listening.playbackState === 'playing' &&
+                  listening.endedAt === null
+                }
+                receivedAt={refreshAt}
+              />
             </div>
+            {listening.contextType ? (
+              <span style={noticeStyle}>Source · {listening.contextType}</span>
+            ) : null}
+            <div
+              style={{ display: 'flex', flexDirection: 'column', gap: 5 }}
+              aria-label="Observed songs in this session"
+            >
+              {listening.tracks.slice(-8).map((item, index) => (
+                <div key={`${item.observedAt}:${index}`} style={runRow}>
+                  <span
+                    style={{
+                      flex: 1,
+                      minWidth: 0,
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap',
+                      fontSize: 12.5
+                    }}
+                  >
+                    {item.track}
+                  </span>
+                  <span
+                    style={{
+                      color: 'var(--z-secondary-ink)',
+                      fontSize: 11,
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap'
+                    }}
+                  >
+                    {item.artist}
+                  </span>
+                </div>
+              ))}
+            </div>
+            <span style={noticeStyle}>
+              Only tracks observed since this session began are listed.
+            </span>
           </>
-        ) : (
-          nodes.map((node: CockpitNode) => (
-            <div key={node.id} style={nodeRow}>
-              <span style={{ ...nodeIdStyle, flex: 1 }}>{node.id}</span>
-              <span style={nodeDetailStyle}>last seen {clockStamp(node.last_seen)}</span>
-              <Chip label={node.status} tone={nodeTone(conn, node.status)} />
-            </div>
-          ))
         )}
       </div>
 

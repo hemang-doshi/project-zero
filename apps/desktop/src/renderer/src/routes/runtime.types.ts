@@ -88,11 +88,33 @@ export type CockpitAudio = {
   status: string
 }
 
+export type CockpitListeningTrack = {
+  track: string
+  artist: string
+  uri: string | null
+  observedAt: string
+}
+
+export type CockpitListeningSession = {
+  id: string
+  source: string
+  startedAt: string
+  lastObservedAt: string
+  endedAt: string | null
+  playbackState: string
+  activeDurationMs: number
+  activeFrom: string | null
+  contextType: string | null
+  contextUri: string | null
+  tracks: CockpitListeningTrack[]
+}
+
 export type CockpitSnapshot = {
   version: string
   revision: number
   timestamp: string
   session: CockpitSession
+  listeningSession: CockpitListeningSession | null
   integrations: CockpitIntegration[]
   nodes: CockpitNode[]
   events: CockpitEvent[]
@@ -370,6 +392,7 @@ function parseSnapshotUncached(value: unknown): CockpitSnapshot | null {
     revision: root.revision,
     timestamp: root.timestamp,
     session,
+    listeningSession: parseListeningSession(root.listening_session),
     integrations,
     nodes,
     events: parseEvents(root.events),
@@ -385,6 +408,51 @@ function parseSnapshotUncached(value: unknown): CockpitSnapshot | null {
       : [],
     audio: parseAudio(root.audio),
     firings: Array.isArray(root.firings) ? root.firings.length : 0
+  }
+}
+
+function parseListeningSession(value: unknown): CockpitListeningSession | null {
+  const row = asRecord(value)
+  if (
+    row === null ||
+    !isStr(row.id) ||
+    !isStr(row.source) ||
+    !isStr(row.started_at) ||
+    !isStr(row.last_observed_at) ||
+    !isStr(row.playback_state) ||
+    !isNum(row.active_duration_ms)
+  )
+    return null
+  const tracks = Array.isArray(row.tracks)
+    ? row.tracks.flatMap((item) => {
+        const track = asRecord(item)
+        return track !== null &&
+          isStr(track.track) &&
+          isStr(track.artist) &&
+          isStr(track.observed_at)
+          ? [
+              {
+                track: track.track,
+                artist: track.artist,
+                uri: isStr(track.uri) ? track.uri : null,
+                observedAt: track.observed_at
+              }
+            ]
+          : []
+      })
+    : []
+  return {
+    id: row.id,
+    source: row.source,
+    startedAt: row.started_at,
+    lastObservedAt: row.last_observed_at,
+    endedAt: isStr(row.ended_at) ? row.ended_at : null,
+    playbackState: row.playback_state,
+    activeDurationMs: row.active_duration_ms,
+    activeFrom: isStr(row.active_from) ? row.active_from : null,
+    contextType: isStr(row.context_type) ? row.context_type : null,
+    contextUri: isStr(row.context_uri) ? row.context_uri : null,
+    tracks
   }
 }
 

@@ -149,6 +149,17 @@ func (r *Runtime) Cockpit(ctx context.Context) (map[string]any, error) {
 		return nil, err
 	}
 	session, err := readSession(ctx, tx)
+	var listening ListeningSession
+	if err == nil {
+		listening, err = readListening(ctx, tx)
+		if err == nil && listening.ActiveFrom != nil {
+			if listening.PlaybackState == "playing" && listening.EndedAt == nil {
+				listening.ActiveDurationMS += max(0, r.Now().Sub(*listening.ActiveFrom).Milliseconds())
+			} else {
+				listening.ActiveFrom = nil
+			}
+		}
+	}
 	tx.Rollback()
 	if err != nil {
 		return nil, err
@@ -185,7 +196,7 @@ func (r *Runtime) Cockpit(ctx context.Context) (map[string]any, error) {
 	if audioStatus == "" {
 		audioStatus = "DISABLED"
 	}
-	out := map[string]any{"version": "0.1", "revision": r.Updates.Revision(), "timestamp": r.Now().UTC(), "status": "RUNNING", "runtime_version": release.Current().Version, "release": release.Current(), "session": session, "integrations": integrations, "policies": policies, "context": currentContext, "audio": map[string]any{"level": audioFrame.Level, "bass": audioFrame.Bass, "sequence": audioFrame.Sequence, "status": audioStatus}, "truncated": truncated}
+	out := map[string]any{"version": "0.1", "revision": r.Updates.Revision(), "timestamp": r.Now().UTC(), "status": "RUNNING", "runtime_version": release.Current().Version, "release": release.Current(), "session": session, "listening_session": listening, "integrations": integrations, "policies": policies, "context": currentContext, "audio": map[string]any{"level": audioFrame.Level, "bass": audioFrame.Bass, "sequence": audioFrame.Sequence, "status": audioStatus}, "truncated": truncated}
 	queries := map[string]string{
 		"projects":      "SELECT value FROM entities WHERE kind='project' AND COALESCE(json_extract(value,'$.removed'),0)=0 ORDER BY key",
 		"nodes":         "SELECT id,revoked,capabilities,last_seen FROM nodes ORDER BY id",

@@ -143,6 +143,66 @@ func TestSyncIntegrationCommitsChangedObservation(t *testing.T) {
 	}
 }
 
+func TestSpotifyListeningSessionPersistsOnlyLocalObservations(t *testing.T) {
+	r := openTest(t, filepath.Join(t.TempDir(), "zero.db"))
+	now := time.Date(2026, 9, 23, 12, 0, 0, 0, time.UTC)
+	r.Now = func() time.Time { return now }
+	ctx := context.Background()
+	command(t, r, "connect", "integrations.connect", map[string]string{"id": "spotify"})
+	r.MacObserver = spotifyStub(t, `{"state":"playing","track":"Observed","artist":"Artist"}`)
+	if err := r.SyncIntegration(ctx, "spotify"); err != nil {
+		t.Fatal(err)
+	}
+	now = now.Add(10 * time.Second)
+	if err := r.SyncIntegration(ctx, "spotify"); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := r.Cockpit(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := json.Marshal(snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var projection struct {
+		Listening ListeningSession `json:"listening_session"`
+	}
+	if err := json.Unmarshal(encoded, &projection); err != nil {
+		t.Fatal(err)
+	}
+	listening := projection.Listening
+	if listening.Source != "local-spotify-observer" || listening.ActiveDurationMS != 10000 || len(listening.Tracks) != 1 {
+		t.Fatalf("unexpected listening projection: %+v", listening)
+	}
+	if listening.Tracks[0].Track != "Observed" || listening.Tracks[0].URI != "" {
+		t.Fatalf("unobserved metadata was fabricated: %+v", listening.Tracks[0])
+	}
+	now = now.Add(5 * time.Second)
+	r.MacObserver = spotifyStub(t, `{"state":"paused","track":"Observed","artist":"Artist"}`)
+	if err := r.SyncIntegration(ctx, "spotify"); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err = r.Cockpit(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err = json.Marshal(snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	projection = struct {
+		Listening ListeningSession `json:"listening_session"`
+	}{}
+	if err := json.Unmarshal(encoded, &projection); err != nil {
+		t.Fatal(err)
+	}
+	listening = projection.Listening
+	if listening.ActiveDurationMS != 15000 || listening.ActiveFrom != nil || listening.PlaybackState != "paused" {
+		t.Fatalf("paused session accounting: %+v", listening)
+	}
+}
+
 // Re-sent artwork bytes hash to the stored digest and must not rewrite blobs.
 func TestSyncIntegrationIdenticalArtworkSkipsRewrite(t *testing.T) {
 	r := openTest(t, filepath.Join(t.TempDir(), "zero.db"))
