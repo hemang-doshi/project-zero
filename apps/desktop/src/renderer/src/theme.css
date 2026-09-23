@@ -196,6 +196,23 @@ body {
     color 140ms ease;
 }
 
+.zw-group-details { min-width: 0; }
+.zw-group-details > summary {
+  padding: 6px 8px;
+  border-radius: 7px;
+  color: var(--z-ink);
+  font-size: 12px;
+  font-weight: 650;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.zw-group-details > summary:hover { background: color-mix(in srgb, var(--z-hover-orange) 7%, transparent); }
+.zw-group-details > summary:focus-visible { outline: 2px solid var(--z-orange); outline-offset: 1px; }
+.zw-folder-details { margin-left: 10px; }
+.zw-folder-details > summary { color: var(--z-secondary-ink); font-size: 11px; font-weight: 550; }
+
 .zw-thread-row:hover {
   background: color-mix(in srgb, var(--z-hover-orange) 9%, transparent) !important;
 }

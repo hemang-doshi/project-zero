@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   groupThreadsByRegisteredProject,
+  groupThreadsByFolder,
   groupVisibleItems,
   MAX_CHAT_ITEMS,
   MAX_BRIDGE_EVENTS,
@@ -133,6 +134,31 @@ describe('groupThreadsByRegisteredProject', () => {
       ['p2', ['b']]
     ])
     expect(result.unprojected.map((r) => r.id)).toEqual(['c'])
+  })
+})
+
+describe('groupThreadsByFolder', () => {
+  it('keeps nested worktrees distinct under one verified project path', () => {
+    const rows = parseThreadRows({
+      threads: [
+        { id: 'root', cwd: '/repo/app', recencyAt: 4 },
+        { id: 'work', cwd: '/repo/app/.worktrees/feature', recencyAt: 3 },
+        { id: 'other', cwd: '/repo/app/sub', recencyAt: 2 },
+        { id: 'unknown', recencyAt: 1 }
+      ]
+    })
+    expect(
+      groupThreadsByFolder('/repo/app', rows).map((group) => [
+        group.path,
+        group.label,
+        group.rows.map((row) => row.id)
+      ])
+    ).toEqual([
+      ['/repo/app', 'Project root', ['root']],
+      ['/repo/app/.worktrees/feature', '.worktrees/feature', ['work']],
+      ['/repo/app/sub', 'sub', ['other']],
+      [null, 'Unknown folder', ['unknown']]
+    ])
   })
 })
 

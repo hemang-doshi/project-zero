@@ -140,6 +140,31 @@ export function groupThreadsByRegisteredProject(
   return { groups, unprojected }
 }
 
+export function groupThreadsByFolder(
+  projectPath: string,
+  rows: ThreadRow[]
+): Array<{ path: string | null; label: string; rows: ThreadRow[] }> {
+  const byPath = new Map<string | null, { path: string | null; label: string; rows: ThreadRow[] }>()
+  for (const row of rows) {
+    const path = row.cwd ?? null
+    let group = byPath.get(path)
+    if (!group) {
+      const label =
+        path === null
+          ? 'Unknown folder'
+          : path === projectPath
+            ? 'Project root'
+            : path.startsWith(`${projectPath}/`)
+              ? path.slice(projectPath.length + 1)
+              : 'Linked folder'
+      group = { path, label, rows: [] }
+      byPath.set(path, group)
+    }
+    group.rows.push(row)
+  }
+  return [...byPath.values()]
+}
+
 export function threadTimestamp(row: ThreadRow): number {
   return row.recencyAt ?? row.createdAt ?? 0
 }
