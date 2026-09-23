@@ -6,6 +6,7 @@ const MAX_AGE_MS = 5_000
 const TONES: Record<Badge, string> = {
   LIVE: 'var(--z-status-green)',
   STALE: 'var(--z-marker-yellow)',
+  CONNECTING: 'var(--z-marker-yellow)',
   RECONNECTING: 'var(--z-marker-yellow)',
   OFFLINE: 'var(--z-error-red)'
 }

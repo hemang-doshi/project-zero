@@ -5,7 +5,7 @@ import type { PromptSubmitPayload } from '../../../shared/ipc'
 import { Chip } from './Chip'
 import { ChatRow, ThinkingGroupBlock, ThreadList } from './ZeroBotChat'
 import { parseOpenCodeTranscript, type TranscriptUsage } from './opencodeTranscript'
-import { codexUsageFromEvent } from './providerUsage'
+import { codexUsageFromEvent, formatProviderCost } from './providerUsage'
 import { useWindows } from '../store/windows'
 import type { Tone } from './runtime.types'
 import {
@@ -312,10 +312,22 @@ export function BridgeEventRow({ event }: { event: BridgeEvent }): React.JSX.Ele
   )
 }
 
-const sessionTime = (ms: number): string => {
+const sessionDate = (ms: number): string => {
   if (!Number.isFinite(ms) || ms <= 0) return '—'
   const d = new Date(ms)
-  return Number.isNaN(d.getTime()) ? '—' : d.toISOString().slice(0, 16).replace('T', ' ')
+  return Number.isNaN(d.getTime())
+    ? '—'
+    : d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+}
+
+const sessionDetails = (session: OpenCodeFolderGroup['sessions'][number]): string => {
+  const d = new Date(session.updatedAt)
+  const time = Number.isNaN(d.getTime())
+    ? 'Time unavailable'
+    : d.toISOString().slice(0, 16).replace('T', ' ')
+  return [time, session.model, session.agent]
+    .filter((value): value is string => value !== null)
+    .join(' · ')
 }
 
 const threadTime = (seconds: number): string => {
@@ -374,10 +386,12 @@ export function FolderGroupList({
               <span data-voice="human" style={{ ...bodyText, fontSize: 12 }}>
                 {s.title === '' ? s.id : s.title}
               </span>
-              <span data-voice="machine" style={{ ...machineMeta, textAlign: 'right' }}>
-                {sessionTime(s.updatedAt)}
-                {s.model !== null ? ` · ${s.model}` : ''}
-                {s.agent !== null ? ` · ${s.agent}` : ''}
+              <span
+                data-voice="machine"
+                style={{ ...machineMeta, textAlign: 'right' }}
+                title={sessionDetails(s)}
+              >
+                {sessionDate(s.updatedAt)}
               </span>
             </button>
           ))}
@@ -490,6 +504,7 @@ export const ZeroBotRoute = memo(function ZeroBotRoute(): React.JSX.Element {
   const [inFlight, setInFlight] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
+  const [skillProposalNotice, setSkillProposalNotice] = useState<string | null>(null)
   const [inspectorOpen, setInspectorOpen] = useState(false)
   const [expandedProjects, setExpandedProjects] = useState<Record<string, boolean>>({})
   const [expandedFolders, setExpandedFolders] = useState<Record<string, boolean>>({})
@@ -1137,6 +1152,34 @@ export const ZeroBotRoute = memo(function ZeroBotRoute(): React.JSX.Element {
   const compact = workspaceWidth !== null && workspaceWidth < 620
   const overlayInspector = workspaceWidth !== null && workspaceWidth < 1050
 
+  const proposeSkillFromWork = async (): Promise<void> => {
+    if (lane.threadId === null || lane.items.length === 0 || promptBusy) return
+    setSkillProposalNotice(null)
+    const evidence = lane.items
+      .reduce<Array<{ kind: string; command?: string; tool?: string }>>((items, item) => {
+        if (item.kind === 'exec') items.push({ kind: 'exec', command: item.command })
+        else if (item.kind === 'tool') items.push({ kind: 'tool', tool: item.tool })
+        return items
+      }, [])
+      .slice(-400)
+    try {
+      const result = await window.zero.invoke('skills.learning.propose', {
+        provider: harness,
+        sourceId: lane.threadId,
+        items: evidence
+      })
+      setSkillProposalNotice(
+        typeof result === 'object' &&
+          result !== null &&
+          typeof (result as Record<string, unknown>).id === 'string'
+          ? 'Draft proposal saved. Review and edit it in Skills Lab.'
+          : 'This thread does not contain enough command or tool evidence for a skill draft.'
+      )
+    } catch {
+      setSkillProposalNotice('Could not create a local skill proposal.')
+    }
+  }
+
   return (
     <div ref={workspaceRef} className="zw-route" data-region="workspace" style={workspaceStyle}>
       <aside
@@ -1700,7 +1743,9 @@ export const ZeroBotRoute = memo(function ZeroBotRoute(): React.JSX.Element {
           <p data-voice="machine" style={machineMeta}>
             {formatTokenCount(selectedUsage.cachedInput)} cached input ·{' '}
             {formatTokenCount(selectedUsage.reasoningOutput)} reasoning output
-            {selectedUsage.cost !== null ? ` · provider cost ${selectedUsage.cost}` : ''}
+            {formatProviderCost(selectedUsage.cost) !== null
+              ? ` · provider cost ${formatProviderCost(selectedUsage.cost)}`
+              : ''}
             <br />
             {selectedUsage.source === 'codex-live' ? 'Codex live' : 'OpenCode saved'} ·{' '}
             {new Date(selectedUsage.observedAt).toLocaleTimeString()}
@@ -1733,6 +1778,30 @@ export const ZeroBotRoute = memo(function ZeroBotRoute(): React.JSX.Element {
             {counts.messages} messages · {counts.thinking} reasoning items · {counts.tools} tools
             {counts.notices > 0 ? ` · ${counts.notices} protocol notes` : ''}
           </p>
+          {lane.threadId !== null ? (
+            <details>
+              <summary data-voice="human" style={{ ...bodyText, cursor: 'pointer' }}>
+                Skill learning
+              </summary>
+              <p data-voice="human" style={bodyText}>
+                Create a local editable draft from this selected transcript. Zero keeps only command
+                and tool names.
+              </p>
+              <button
+                type="button"
+                style={actionButton}
+                disabled={lane.items.length === 0 || promptBusy}
+                onClick={() => void proposeSkillFromWork()}
+              >
+                Propose skill from this work
+              </button>
+              {skillProposalNotice !== null ? (
+                <p role="status" style={bodyText}>
+                  {skillProposalNotice}
+                </p>
+              ) : null}
+            </details>
+          ) : null}
           {lane.dropped > 0 ? (
             <p data-voice="human" style={bodyText}>
               +{lane.dropped} earlier items outside this view

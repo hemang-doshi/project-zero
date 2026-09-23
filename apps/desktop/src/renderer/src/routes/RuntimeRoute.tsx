@@ -1,4 +1,4 @@
-import { memo, useEffect, useState } from 'react'
+import { memo, useEffect, useMemo, useState } from 'react'
 import { ZERO_TYPE } from '../../../shared/tokens'
 import { formatBytes, formatBytesPerSec, formatGib } from '../../../shared/format'
 import { useCockpit } from '../store/cockpit'
@@ -10,18 +10,16 @@ import {
   parseTelemetry,
   pressureTone,
   selectSession,
-  sessionChipTone,
   type MachineSample
 } from './runtime.types'
 import {
-  accumulateHistory,
   group,
   shortCount,
   shortLabel,
-  polyPoints,
-  dotPoint,
   windowMax,
+  historyFromPoints,
   EMPTY_HISTORY,
+  timelineGeometry,
   GRAPH_W,
   GRAPH_H,
   GRAPH_MARGIN,
@@ -192,6 +190,7 @@ const noticeStyle: React.CSSProperties = {
 }
 
 const TELEMETRY_INTERVAL_MS = 2_000
+const GRAPH_WINDOW_MS = 30_000
 
 // Activity-Monitor color coding from tokens: system red / user blue /
 // pressure by kernel level / plain ink.
@@ -280,18 +279,20 @@ function StatRows({ rows }: { rows: RowSpec[] }): React.JSX.Element {
 
 function Sparkline({
   values,
+  at,
+  now,
   color,
   max,
   fill = false
 }: {
-  values: number[]
+  values: Array<number | null>
+  at: number[]
+  now: number
   color: string
   max: number
   fill?: boolean
 }): React.JSX.Element {
-  const points = polyPoints(values, GRAPH_W, GRAPH_H, max)
-  const dot = dotPoint(values, GRAPH_W, GRAPH_H, max)
-  const [dotX, dotY] = dot === null ? [] : dot.split(',')
+  const geometry = timelineGeometry(values, at, now, max, GRAPH_WINDOW_MS)
   const base = GRAPH_H - GRAPH_MARGIN
   const edge = GRAPH_W - GRAPH_MARGIN
   return (
@@ -300,18 +301,27 @@ function Sparkline({
       preserveAspectRatio="none"
       style={{ width: '100%', height: GRAPH_H, display: 'block' }}
     >
-      {fill && points !== '' ? (
-        <polygon
-          points={`${points} ${GRAPH_MARGIN},${base} ${edge},${base}`}
-          fill={color}
-          opacity={0.14}
-        />
-      ) : null}
-      {points !== '' ? (
-        <polyline points={points} fill="none" stroke={color} strokeWidth={2} />
-      ) : dotX !== undefined && dotY !== undefined ? (
-        <circle cx={dotX} cy={dotY} r={DOT_R} fill={color} />
-      ) : null}
+      {fill
+        ? geometry.paths.map((points) => {
+            const firstX = points.split(' ')[0]?.split(',')[0] ?? String(GRAPH_MARGIN)
+            const lastX = points.split(' ').at(-1)?.split(',')[0] ?? String(edge)
+            return (
+              <polygon
+                key={points}
+                points={`${points} ${lastX},${base} ${firstX},${base}`}
+                fill={color}
+                opacity={0.14}
+              />
+            )
+          })
+        : null}
+      {geometry.paths.map((points) => (
+        <polyline key={points} points={points} fill="none" stroke={color} strokeWidth={2} />
+      ))}
+      {geometry.dots.map((point) => {
+        const [dotX, dotY] = point.split(',')
+        return <circle key={point} cx={dotX} cy={dotY} r={DOT_R} fill={color} />
+      })}
     </svg>
   )
 }
@@ -357,10 +367,12 @@ function Panel({
 
 function CpuPanel({
   sample,
-  history
+  history,
+  now
 }: {
   sample: MachineSample
   history: TelemetryHistory
+  now: number
 }): React.JSX.Element {
   const c = sample.cpu
   return (
@@ -382,8 +394,20 @@ function CpuPanel({
       center={
         <div style={graphBox}>
           <span style={graphTitle}>CPU HISTORY</span>
-          <Sparkline values={history.cpuSystem} color={SYSTEM_RED} max={100} />
-          <Sparkline values={history.cpuUser} color={USER_BLUE} max={100} />
+          <Sparkline
+            values={history.cpuSystem}
+            at={history.at}
+            now={now}
+            color={SYSTEM_RED}
+            max={100}
+          />
+          <Sparkline
+            values={history.cpuUser}
+            at={history.at}
+            now={now}
+            color={USER_BLUE}
+            max={100}
+          />
           <span style={graphCaption}>scale 0–100 · 60-point window</span>
         </div>
       }
@@ -398,10 +422,12 @@ function CpuPanel({
 
 function MemoryPanel({
   sample,
-  history
+  history,
+  now
 }: {
   sample: MachineSample
   history: TelemetryHistory
+  now: number
 }): React.JSX.Element {
   const m = sample.memory
   const level = m?.level ?? 'low'
@@ -422,7 +448,14 @@ function MemoryPanel({
       left={
         <div style={graphBox}>
           <span style={graphTitle}>PRESSURE</span>
-          <Sparkline values={history.pressure} color={pressureColor} max={100} fill />
+          <Sparkline
+            values={history.pressure}
+            at={history.at}
+            now={now}
+            color={pressureColor}
+            max={100}
+            fill
+          />
           <span style={graphCaption} title={pressureTitle}>
             {`${pressureDisplay} · `}
             <span style={{ color: pressureColor }}>{level}</span>
@@ -454,10 +487,12 @@ function MemoryPanel({
 
 function IoPanel({
   sample,
-  history
+  history,
+  now
 }: {
   sample: MachineSample
   history: TelemetryHistory
+  now: number
 }): React.JSX.Element {
   const io = sample.io
   const peak = Math.max(1, windowMax(history.ioRead), windowMax(history.ioWrite))
@@ -483,8 +518,20 @@ function IoPanel({
       center={
         <div style={graphBox}>
           <span style={graphTitle}>I/O HISTORY</span>
-          <Sparkline values={history.ioRead} color={USER_BLUE} max={peak} />
-          <Sparkline values={history.ioWrite} color={SYSTEM_RED} max={peak} />
+          <Sparkline
+            values={history.ioRead}
+            at={history.at}
+            now={now}
+            color={USER_BLUE}
+            max={peak}
+          />
+          <Sparkline
+            values={history.ioWrite}
+            at={history.at}
+            now={now}
+            color={SYSTEM_RED}
+            max={peak}
+          />
           <span
             style={graphCaption}
             title={peakExact === peakDisplay ? undefined : `peak ${peakExact} · autoscaled`}
@@ -507,10 +554,12 @@ function IoPanel({
 
 function NetPanel({
   sample,
-  history
+  history,
+  now
 }: {
   sample: MachineSample
   history: TelemetryHistory
+  now: number
 }): React.JSX.Element {
   const net = sample.net
   const peak = Math.max(1, windowMax(history.netIn), windowMax(history.netOut))
@@ -536,8 +585,20 @@ function NetPanel({
       center={
         <div style={graphBox}>
           <span style={graphTitle}>PACKETS HISTORY</span>
-          <Sparkline values={history.netIn} color={USER_BLUE} max={peak} />
-          <Sparkline values={history.netOut} color={SYSTEM_RED} max={peak} />
+          <Sparkline
+            values={history.netIn}
+            at={history.at}
+            now={now}
+            color={USER_BLUE}
+            max={peak}
+          />
+          <Sparkline
+            values={history.netOut}
+            at={history.at}
+            now={now}
+            color={SYSTEM_RED}
+            max={peak}
+          />
           <span
             style={graphCaption}
             title={peakExact === peakShort ? undefined : `peak ${peakExact} pk/s · autoscaled`}
@@ -564,55 +625,166 @@ export const RuntimeRoute = memo(function RuntimeRoute(): React.JSX.Element {
   const sessionState = useCockpit((s) => selectSession(s.snapshot)?.state ?? null)
   const [sample, setSample] = useState<MachineSample>(EMPTY_MACHINE_SAMPLE)
   const [history, setHistory] = useState<TelemetryHistory>(EMPTY_HISTORY)
+  const [failures, setFailures] = useState<string[]>([])
+  const [sampleAt, setSampleAt] = useState<number | null>(null)
+  const [now, setNow] = useState(() => Date.now())
+  const [processMetric, setProcessMetric] = useState<'cpu' | 'memory' | 'disk' | 'network'>('cpu')
   const hasBridge = typeof window !== 'undefined' && window.zero !== undefined
 
   useEffect(() => {
     if (!hasBridge) return
     let active = true
-    const pull = (): void => {
-      // Telemetry is local machine data, not daemon-derived: it never gates on
-      // the runtime connection state, but it must not run while hidden so the
-      // Task 18 idle-CPU work stays intact.
+    const pull = async (): Promise<void> => {
       if (document.visibilityState !== 'visible') return
-      window.zero
-        .invoke('telemetry.sample')
-        .then((raw) => {
-          if (!active) return
-          const parsed = parseTelemetry(raw)
-          setSample(parsed)
-          setHistory((h) => accumulateHistory(h, parsed))
+      try {
+        const raw = await window.zero.invoke('telemetry.history')
+        if (!active) return
+        const points = (Array.isArray(raw) ? raw : []).flatMap((value) => {
+          if (typeof value !== 'object' || value === null) return []
+          const point = value as Record<string, unknown>
+          if (typeof point.at !== 'number' || !Number.isFinite(point.at)) return []
+          return [
+            {
+              at: point.at,
+              sample: parseTelemetry(point.sample),
+              failures: Array.isArray(point.failures)
+                ? point.failures.filter((item): item is string => typeof item === 'string')
+                : []
+            }
+          ]
         })
-        .catch(() => {
-          // Honest cached semantics: keep the last sample on errors.
-        })
+        if (points.length === 0) {
+          points.push({ at: Date.now(), sample: parseTelemetry(raw), failures: [] })
+        }
+        const latest = points.at(-1)
+        setHistory(historyFromPoints(points))
+        setSample(latest?.sample ?? EMPTY_MACHINE_SAMPLE)
+        setFailures(latest?.failures ?? [])
+        setSampleAt(latest?.at ?? null)
+        if (latest !== undefined) setNow(Math.max(Date.now(), latest.at))
+      } catch {
+        if (active) setFailures(['sampler'])
+      }
     }
-    pull()
-    const id = window.setInterval(pull, TELEMETRY_INTERVAL_MS)
-    window.addEventListener('focus', pull)
+    void pull()
+    const id = window.setInterval(() => void pull(), TELEMETRY_INTERVAL_MS)
+    const refresh = (): void => {
+      void pull()
+    }
+    window.addEventListener('focus', refresh)
     return () => {
       active = false
       window.clearInterval(id)
-      window.removeEventListener('focus', pull)
+      window.removeEventListener('focus', refresh)
     }
   }, [hasBridge])
 
-  const gpuRow =
-    sample.gpu === null ? 'GPU —' : `GPU ${sample.gpu.toFixed(1)}% (ioreg Device Utilization)`
+  useEffect(() => {
+    const id = window.setInterval(() => setNow(Date.now()), 1_000)
+    return () => window.clearInterval(id)
+  }, [])
+
+  const machineStatus =
+    sampleAt === null || now - sampleAt > 10_000
+      ? { label: 'MACHINE UNAVAILABLE', tone: 'error' as const }
+      : failures.some((failure) => ['cpu', 'memory', 'disk', 'network', 'gpu'].includes(failure))
+        ? { label: 'MACHINE PARTIAL', tone: 'attention' as const }
+        : { label: 'MACHINE LIVE', tone: 'healthy' as const }
+  const topProcesses = useMemo(() => {
+    const rows = sample.processes ?? []
+    return processMetric === 'memory'
+      ? [...rows].sort((a, b) => (b.residentBytes ?? -1) - (a.residentBytes ?? -1)).slice(0, 10)
+      : [...rows].slice(0, 10)
+  }, [sample.processes, processMetric])
+  const unsupportedProcessMetric = processMetric === 'disk' || processMetric === 'network'
+  const processDetail =
+    processMetric === 'cpu'
+      ? 'CPU utilization from the ps snapshot'
+      : processMetric === 'memory'
+        ? 'Resident memory · ps RSS'
+        : 'Per-process counters are unavailable from the current unprivileged macOS sources.'
 
   return (
     <div className="zw-route" style={routeStyle}>
       <div style={headerRow}>
         <span style={microStyle}>RUNTIME — MACHINE TELEMETRY</span>
-        <Chip label={sessionState ?? 'UNAVAILABLE'} tone={sessionChipTone(conn, sessionState)} />
+        <Chip label={machineStatus.label} tone={machineStatus.tone} />
       </div>
       <span style={projectStyle}>{activeProjectLabel(conn, project)}</span>
-      <CpuPanel sample={sample} history={history} />
-      <MemoryPanel sample={sample} history={history} />
-      <IoPanel sample={sample} history={history} />
-      <NetPanel sample={sample} history={history} />
+      <span style={graphCaption}>
+        Zero runtime · {sessionState ?? 'unavailable'} · machine readings come from local macOS
+        counters
+      </span>
+      <CpuPanel sample={sample} history={history} now={now} />
+      <MemoryPanel sample={sample} history={history} now={now} />
+      <IoPanel sample={sample} history={history} now={now} />
+      <NetPanel sample={sample} history={history} now={now} />
+      <section style={panelStyle} aria-label="GPU utilization">
+        <div style={panelHead}>
+          <span style={microStyle}>GPU UTILIZATION</span>
+          <Chip
+            label={sample.gpu === null ? 'UNAVAILABLE' : `${sample.gpu.toFixed(1)}%`}
+            tone={sample.gpu === null ? 'neutral' : 'healthy'}
+          />
+        </div>
+        <div style={graphBox}>
+          <Sparkline
+            values={history.gpu}
+            at={history.at}
+            now={now}
+            color="var(--z-highlight-blue)"
+            max={100}
+          />
+          <span style={graphCaption}>
+            {sample.gpu === null
+              ? 'No ioreg Device Utilization counter in the latest sample.'
+              : 'Apple GPU · ioreg Device Utilization · 30 second window'}
+          </span>
+        </div>
+      </section>
+      <details style={panelStyle}>
+        <summary style={{ ...microStyle, cursor: 'pointer' }}>TOP PROCESSES · 10</summary>
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+          {(['cpu', 'memory', 'disk', 'network'] as const).map((metric) => (
+            <button
+              key={metric}
+              type="button"
+              aria-pressed={processMetric === metric}
+              onClick={() => setProcessMetric(metric)}
+            >
+              {metric === 'memory' ? 'RESIDENT MEMORY' : metric.toUpperCase()}
+            </button>
+          ))}
+        </div>
+        <span style={graphCaption}>
+          {processDetail}
+          {sampleAt === null ? '' : ` · sampled ${new Date(sampleAt).toLocaleTimeString()}`}
+        </span>
+        {!unsupportedProcessMetric
+          ? topProcesses.map((process) => (
+              <div
+                key={process.pid}
+                style={{ ...statRow, borderTop: '1px solid var(--z-line)', paddingTop: 5 }}
+              >
+                <span style={{ ...statLabel, flex: 1 }}>
+                  {process.name} · {process.pid}
+                </span>
+                <span style={statValue}>
+                  {processMetric === 'cpu'
+                    ? `${process.cpuPercent?.toFixed(1) ?? '—'}%`
+                    : process.residentBytes === null
+                      ? '—'
+                      : formatBytes(process.residentBytes)}
+                </span>
+              </div>
+            ))
+          : null}
+      </details>
       <span style={noticeStyle}>
-        Local machine telemetry via the main-process sampler · one batched read at most 1 Hz (ps,
-        vm_stat, sysctl, netstat, ioreg) · rates are deltas between samples · {gpuRow}
+        Local macOS counters · 2 second samples · 30 second graph window ·{' '}
+        {failures.length === 0
+          ? 'no sampler errors'
+          : `unavailable families: ${failures.join(', ')}`}
       </span>
     </div>
   )

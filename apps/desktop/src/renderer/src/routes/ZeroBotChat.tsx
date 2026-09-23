@@ -376,11 +376,23 @@ export const ChatRow = memo(function ChatRow({
   }
 })
 
-const threadTime = (row: ThreadRow): string => {
+const threadDate = (row: ThreadRow): string => {
   const ts = threadTimestamp(row)
   if (ts <= 0) return '—'
   const d = new Date(ts * 1000)
-  return Number.isNaN(d.getTime()) ? '—' : d.toISOString().slice(0, 16).replace('T', ' ')
+  return Number.isNaN(d.getTime())
+    ? '—'
+    : d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+}
+
+const threadDetails = (row: ThreadRow): string => {
+  const ts = threadTimestamp(row)
+  if (ts <= 0) return 'Time unavailable'
+  const d = new Date(ts * 1000)
+  const time = Number.isNaN(d.getTime())
+    ? 'Time unavailable'
+    : d.toISOString().slice(0, 16).replace('T', ' ')
+  return [time, row.model].filter((value): value is string => value !== null).join(' · ')
 }
 
 export const ThreadList = memo(function ThreadList({
@@ -432,9 +444,8 @@ export const ThreadList = memo(function ThreadList({
             >
               {threadTitle(row)}
             </span>
-            <span data-voice="machine" style={rowLabel}>
-              {threadTime(row)}
-              {row.model !== null ? ` · ${row.model}` : ''}
+            <span data-voice="machine" style={rowLabel} title={threadDetails(row)}>
+              {threadDate(row)}
             </span>
           </button>
         )

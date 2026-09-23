@@ -1,4 +1,5 @@
 import type { MachineSample } from './runtime.types'
+import type { TelemetryPoint } from '../../../shared/ipc'
 
 // Fixed sparkline box shared by every history graph (named so callers and
 // tests pin geometry instead of scattering magic numbers).
@@ -13,23 +14,27 @@ export const DOT_R = 2.5
 export const HISTORY_CAP = 60
 
 export type TelemetryHistory = {
-  cpuSystem: number[]
-  cpuUser: number[]
-  pressure: number[]
-  ioRead: number[]
-  ioWrite: number[]
-  netIn: number[]
-  netOut: number[]
+  at: number[]
+  cpuSystem: Array<number | null>
+  cpuUser: Array<number | null>
+  pressure: Array<number | null>
+  ioRead: Array<number | null>
+  ioWrite: Array<number | null>
+  netIn: Array<number | null>
+  netOut: Array<number | null>
+  gpu: Array<number | null>
 }
 
 export const EMPTY_HISTORY: TelemetryHistory = {
+  at: [],
   cpuSystem: [],
   cpuUser: [],
   pressure: [],
   ioRead: [],
   ioWrite: [],
   netIn: [],
-  netOut: []
+  netOut: [],
+  gpu: []
 }
 
 export const pushWindow = <T>(window: T[], value: T, cap = HISTORY_CAP): T[] => {
@@ -37,8 +42,11 @@ export const pushWindow = <T>(window: T[], value: T, cap = HISTORY_CAP): T[] => 
   return next.length > cap ? next.slice(next.length - cap) : next
 }
 
-export const windowMax = (values: number[]): number =>
-  values.reduce((max, v) => (Number.isFinite(v) && v > max ? v : max), 0)
+export const windowMax = (values: Array<number | null>): number =>
+  values.reduce<number>(
+    (max, v) => (typeof v === 'number' && Number.isFinite(v) && v > max ? v : max),
+    0
+  )
 
 // Evenly spread polyline points across a w×h box with a GRAPH_MARGIN inner
 // margin. max is the scale top; values above it clamp to the top edge.
@@ -156,32 +164,70 @@ export const shortLabel = (full: string): string => TELEMETRY_LABEL_SHORT[full] 
 // while its value is null (honest absence keeps the graph short, not flat).
 export const accumulateHistory = (
   history: TelemetryHistory,
-  sample: MachineSample
+  sample: MachineSample,
+  at = Date.now()
 ): TelemetryHistory => ({
-  cpuSystem:
-    sample.cpu?.system != null
-      ? pushWindow(history.cpuSystem, sample.cpu.system)
-      : history.cpuSystem,
-  cpuUser:
-    sample.cpu?.user != null ? pushWindow(history.cpuUser, sample.cpu.user) : history.cpuUser,
-  pressure:
-    sample.memory?.pressure != null
-      ? pushWindow(history.pressure, sample.memory.pressure)
-      : history.pressure,
-  ioRead:
-    sample.io?.dataReadPerSec != null
-      ? pushWindow(history.ioRead, sample.io.dataReadPerSec)
-      : history.ioRead,
-  ioWrite:
-    sample.io?.dataWrittenPerSec != null
-      ? pushWindow(history.ioWrite, sample.io.dataWrittenPerSec)
-      : history.ioWrite,
-  netIn:
-    sample.net?.packetsInPerSec != null
-      ? pushWindow(history.netIn, sample.net.packetsInPerSec)
-      : history.netIn,
-  netOut:
-    sample.net?.packetsOutPerSec != null
-      ? pushWindow(history.netOut, sample.net.packetsOutPerSec)
-      : history.netOut
+  at: pushWindow(history.at, at),
+  cpuSystem: pushWindow(history.cpuSystem, sample.cpu?.system ?? null),
+  cpuUser: pushWindow(history.cpuUser, sample.cpu?.user ?? null),
+  pressure: pushWindow(history.pressure, sample.memory?.pressure ?? null),
+  ioRead: pushWindow(history.ioRead, sample.io?.dataReadPerSec ?? null),
+  ioWrite: pushWindow(history.ioWrite, sample.io?.dataWrittenPerSec ?? null),
+  netIn: pushWindow(history.netIn, sample.net?.packetsInPerSec ?? null),
+  netOut: pushWindow(history.netOut, sample.net?.packetsOutPerSec ?? null),
+  gpu: pushWindow(history.gpu, sample.gpu ?? null)
 })
+
+export const historyFromPoints = (points: TelemetryPoint[]): TelemetryHistory =>
+  points.reduce(
+    (history, point) => accumulateHistory(history, point.sample, point.at),
+    EMPTY_HISTORY
+  )
+
+export type TimelineGeometry = { paths: string[]; dots: string[] }
+
+export function timelineGeometry(
+  values: Array<number | null>,
+  at: number[],
+  now: number,
+  max: number,
+  windowMs = 30_000,
+  maxGapMs = 4_000
+): TimelineGeometry {
+  const start = now - windowMs
+  const innerW = GRAPH_W - GRAPH_MARGIN * 2
+  const innerH = GRAPH_H - GRAPH_MARGIN * 2
+  const scale = max > 0 ? max : 1
+  const paths: string[] = []
+  const dots: string[] = []
+  let segment: string[] = []
+  let previousAt: number | null = null
+  const flush = (): void => {
+    if (segment.length > 1) paths.push(segment.join(' '))
+    else if (segment.length === 1) dots.push(segment[0])
+    segment = []
+  }
+  for (let i = 0; i < values.length; i += 1) {
+    const value = values[i]
+    const stamp = at[i]
+    if (
+      value === null ||
+      value === undefined ||
+      stamp === undefined ||
+      stamp < start ||
+      stamp > now
+    ) {
+      flush()
+      previousAt = null
+      continue
+    }
+    if (previousAt !== null && stamp - previousAt > maxGapMs) flush()
+    const x = GRAPH_MARGIN + ((stamp - start) / windowMs) * innerW
+    const clamped = clampTop(value, scale)
+    const y = GRAPH_H - GRAPH_MARGIN - clampedRatio(clamped, scale) * innerH
+    segment.push(`${trim(x)},${trim(y)}`)
+    previousAt = stamp
+  }
+  flush()
+  return { paths, dots }
+}

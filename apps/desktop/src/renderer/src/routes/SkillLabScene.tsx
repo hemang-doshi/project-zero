@@ -16,6 +16,7 @@ import {
 } from './topology.model'
 import SkillVial, { MODEL_FOOTPRINT as VIAL_FOOTPRINT } from './models/SkillVial'
 import type { PluginGroup, SkillSummary } from './skillPlugins'
+import { verifiedSkillBrand } from './skillBrands'
 
 // Lab-shelf scene for the Skill Lab route: one vial per installed plugin on a
 // dark shelf, standalone skills as smaller vials in their own row, and a
@@ -273,6 +274,20 @@ const detailRow: React.CSSProperties = {
   lineHeight: 1.5
 }
 
+const brandMarkStyle: React.CSSProperties = {
+  width: 25,
+  height: 25,
+  display: 'inline-flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  borderRadius: 5,
+  color: 'var(--z-secondary-ink)',
+  background: 'var(--z-card-white)',
+  border: '1px solid var(--z-line)',
+  boxSizing: 'border-box',
+  font: `700 14px/1 ${ZERO_TYPE.mono}`
+}
+
 const backStyle: React.CSSProperties = {
   marginTop: 2,
   fontFamily: ZERO_TYPE.mono,
@@ -304,7 +319,7 @@ const selfLearnRow: React.CSSProperties = {
   padding: '8px 11px'
 }
 
-const initialChip = (background: string): React.CSSProperties => ({
+const initialChip: React.CSSProperties = {
   width: 20,
   height: 20,
   borderRadius: 10,
@@ -315,9 +330,10 @@ const initialChip = (background: string): React.CSSProperties => ({
   fontFamily: ZERO_TYPE.mono,
   fontSize: 11,
   fontWeight: 700,
-  color: '#FFFFFF',
-  background
-})
+  color: 'var(--z-secondary-ink)',
+  background: 'var(--z-card-white)',
+  border: '1px solid var(--z-line)'
+}
 
 const skillNameStyle: React.CSSProperties = {
   fontSize: 12,
@@ -357,22 +373,14 @@ const emptyStyle: React.CSSProperties = {
   margin: 0
 }
 
-// One skill row: token-colored initial chip (first letter, plugin color) plus
-// the plugin glyph name as text — no new icon assets.
-function SkillRow({
-  skill,
-  color,
-  glyphLabel
-}: {
-  skill: SkillSummary
-  color: string
-  glyphLabel: string
-}): React.JSX.Element {
-  const initial = skill.name.trim().charAt(0).toUpperCase() || '?'
+// Individual skills may provide their own icon metadata. Missing icons are
+// shown as unknown; a plugin logo is not borrowed for a skill.
+function SkillRow({ skill }: { skill: SkillSummary }): React.JSX.Element {
+  const suppliedIcon = skill.icon?.trim() || null
   return (
     <div data-testid={`vial-skill-${skill.id}`} style={{ display: 'flex', gap: 8 }}>
-      <span title={skill.icon ?? 'initial'} style={initialChip(color)}>
-        {initial}
+      <span title={suppliedIcon ? 'Icon provided by this skill' : 'No skill icon provided'} style={initialChip}>
+        {suppliedIcon ?? '?'}
       </span>
       <div style={{ minWidth: 0 }}>
         <span style={skillNameStyle}>{skill.name}</span>
@@ -380,7 +388,7 @@ function SkillRow({
           {skill.description?.trim() ? skill.description : 'No description.'}
         </p>
         <p style={skillMetaStyle}>
-          {skill.source.toUpperCase()} · glyph {glyphLabel}
+          {skill.source.toUpperCase()} · {suppliedIcon ? 'SKILL ICON' : 'ICON UNKNOWN'}
         </p>
       </div>
     </div>
@@ -394,8 +402,8 @@ function SelfLearningSection({ selfLearnt }: { selfLearnt: SkillSummary[] }): Re
       {selfLearnt.length > 0 ? (
         selfLearnt.map((s) => (
           <div key={s.id} data-testid={`scene-selflearn-row-${s.id}`} style={selfLearnRow}>
-            <span title={s.icon ?? 'initial'} style={initialChip(ZERO_TOKENS.secondaryInk)}>
-              {s.name.trim().charAt(0).toUpperCase() || '?'}
+            <span title={s.icon?.trim() ? 'Icon provided by this skill' : 'No skill icon provided'} style={initialChip}>
+              {s.icon?.trim() || '?'}
             </span>
             <div style={{ minWidth: 0 }}>
               <span style={skillNameStyle}>{s.name}</span>
@@ -423,7 +431,7 @@ type VialMeshProps = {
   scale: number
   focused: boolean
   labelsHidden: boolean
-  plugin: { id: string; name: string; color: string; glyph: PluginGroup['glyph'] }
+  plugin: { id: string; name: string; color: string }
   onHover: (id: string | null) => void
   onFocus: (id: string) => void
 }
@@ -441,6 +449,7 @@ function VialMesh({
   onFocus
 }: VialMeshProps): React.JSX.Element {
   const ringR = (Math.max(VIAL_FOOTPRINT.w, VIAL_FOOTPRINT.d) / 2 + 0.3) * scale
+  const brand = verifiedSkillBrand(plugin.id)
   return (
     <group
       data-testid={testId}
@@ -455,10 +464,21 @@ function VialMesh({
       }}
     >
       <SkillVial
-        plugin={{ id: plugin.id, name: plugin.name, color: plugin.color, glyph: plugin.glyph }}
+        plugin={{ id: plugin.id, name: plugin.name, color: plugin.color }}
         dimmed={dimmed}
         scale={scale}
       />
+      <Html center distanceFactor={9} position={[0, 1.45, 0.06]} style={{ pointerEvents: 'none' }}>
+        <span
+          data-testid={`brand-mark-${plugin.id}`}
+          title={brand?.name ?? `No verified brand icon for ${plugin.name}`}
+          role="img"
+          aria-label={brand?.alt ?? `No verified brand icon for ${plugin.name}`}
+          style={brandMarkStyle}
+        >
+          {brand ? <img src={brand.src} alt="" style={{ width: 21, height: 21, objectFit: 'contain' }} /> : '?'}
+        </span>
+      </Html>
       {focused ? (
         <mesh data-testid={`vial-focus-ring-${focusId}`} position={[0, 0.03, 0]} rotation={[-Math.PI / 2, 0, 0]}>
           <torusGeometry args={[ringR, 0.03, 8, 64]} />
@@ -657,7 +677,7 @@ export const SkillLabScene = memo(function SkillLabScene({
                       scale={1}
                       focused={activeGroup?.id === g.id}
                       labelsHidden={hasFocus}
-                      plugin={{ id: g.id, name: g.name, color: g.color, glyph: g.glyph }}
+                      plugin={{ id: g.id, name: g.name, color: g.color }}
                       onHover={setHoveredId}
                       onFocus={requestFocus}
                     />
@@ -686,7 +706,7 @@ export const SkillLabScene = memo(function SkillLabScene({
                         scale={STANDALONE_SCALE}
                         focused={activeSkill?.id === s.id}
                         labelsHidden={hasFocus}
-                        plugin={{ id: s.id, name: s.name, color: ZERO_TOKENS.secondaryInk, glyph: 'orb' }}
+                        plugin={{ id: s.id, name: s.name, color: ZERO_TOKENS.secondaryInk }}
                         onHover={setHoveredId}
                         onFocus={requestFocus}
                       />
@@ -722,12 +742,12 @@ export const SkillLabScene = memo(function SkillLabScene({
           <div data-testid="vial-detail" style={detailStyle}>
             <span style={detailName}>{activeGroup.name}</span>
             <span style={detailRow}>
-              PLUGIN {activeGroup.id} · glyph {activeGroup.glyph} · {activeGroup.skills.length}{' '}
+              {verifiedSkillBrand(activeGroup.id) ? 'OFFICIAL BRAND ICON VERIFIED' : 'NO VERIFIED BRAND ICON'} · {activeGroup.skills.length}{' '}
               skill{activeGroup.skills.length === 1 ? '' : 's'}
             </span>
             {activeGroup.skills.length > 0 ? (
               activeGroup.skills.map((s) => (
-                <SkillRow key={s.id} skill={s} color={activeGroup.color} glyphLabel={activeGroup.glyph} />
+                <SkillRow key={s.id} skill={s} />
               ))
             ) : (
               <span style={detailRow}>No skills in this plugin.</span>
@@ -740,8 +760,8 @@ export const SkillLabScene = memo(function SkillLabScene({
         {activeSkill !== null ? (
           <div data-testid="vial-detail" style={detailStyle}>
             <span style={detailName}>{activeSkill.name}</span>
-            <span style={detailRow}>STANDALONE SKILL</span>
-            <SkillRow skill={activeSkill} color={ZERO_TOKENS.secondaryInk} glyphLabel="orb" />
+            <span style={detailRow}>STANDALONE · NO BRAND IDENTITY</span>
+            <SkillRow skill={activeSkill} />
             <button type="button" data-testid="vial-back" style={backStyle} onClick={exitFocus}>
               ← BACK TO SHELF
             </button>

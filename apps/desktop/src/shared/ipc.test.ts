@@ -47,8 +47,17 @@ describe('validateOp', () => {
         'provider.permission.decide',
         'prompt.submit',
         'skills.discover',
+        'skills.learning.approve',
+        'skills.learning.edit',
+        'skills.learning.get',
+        'skills.learning.observe',
+        'skills.learning.propose',
+        'skills.learning.reject',
+        'skills.learning.rollback',
+        'skills.learning.set',
         'skills.search',
         'snapshot.fetch',
+        'telemetry.history',
         'telemetry.sample',
         'wallpaper.pick'
       ].sort()

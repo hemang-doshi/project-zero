@@ -26,7 +26,7 @@ export function bindCockpit(): void {
   )
 }
 
-export type Badge = 'LIVE' | 'STALE' | 'RECONNECTING' | 'OFFLINE'
+export type Badge = 'LIVE' | 'STALE' | 'CONNECTING' | 'RECONNECTING' | 'OFFLINE'
 
 export function badgeFor(
   state: RuntimeConnState,
@@ -34,9 +34,9 @@ export function badgeFor(
   receivedAt: number | null,
   maxAgeMs: number
 ): Badge {
-  if (state === 'reconnecting') return 'RECONNECTING'
   if (state === 'offline') return 'OFFLINE'
-  if (state === 'connecting') return 'RECONNECTING'
+  if (state === 'connecting') return 'CONNECTING'
+  if (state === 'reconnecting') return receivedAt === null ? 'OFFLINE' : 'RECONNECTING'
   if (receivedAt == null || now - receivedAt > maxAgeMs) return 'STALE'
   return 'LIVE'
 }

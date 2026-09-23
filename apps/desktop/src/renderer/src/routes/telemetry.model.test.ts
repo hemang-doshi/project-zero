@@ -9,6 +9,8 @@ import {
   pushWindow,
   windowMax,
   accumulateHistory,
+  timelineGeometry,
+  historyFromPoints,
   HISTORY_CAP,
   EMPTY_HISTORY,
   GRAPH_W,
@@ -283,8 +285,10 @@ describe('accumulateHistory', () => {
           dataSentPerSec: 400
         },
         gpu: 29
-      })
+      }),
+      100
     )
+    expect(h.at).toEqual([100])
     expect(h.cpuSystem).toEqual([10])
     expect(h.cpuUser).toEqual([20])
     expect(h.pressure).toEqual([50])
@@ -292,12 +296,15 @@ describe('accumulateHistory', () => {
     expect(h.ioWrite).toEqual([200])
     expect(h.netIn).toEqual([30])
     expect(h.netOut).toEqual([40])
+    expect(h.gpu).toEqual([29])
   })
 
-  it('keeps each series untouched while its value is null', () => {
+  it('records a timestamped gap while a metric family is unavailable', () => {
     let h: TelemetryHistory = EMPTY_HISTORY
-    h = accumulateHistory(h, EMPTY_MACHINE_SAMPLE)
-    expect(h).toEqual(EMPTY_HISTORY)
+    h = accumulateHistory(h, EMPTY_MACHINE_SAMPLE, 100)
+    expect(h.at).toEqual([100])
+    expect(h.cpuSystem).toEqual([null])
+    expect(h.gpu).toEqual([null])
   })
 
   it('caps every series at 60 points', () => {
@@ -305,10 +312,41 @@ describe('accumulateHistory', () => {
     for (let i = 0; i < 70; i += 1) {
       h = accumulateHistory(
         h,
-        sample({ cpu: { system: i, user: null, idle: null, threads: null, processes: null } })
+        sample({ cpu: { system: i, user: null, idle: null, threads: null, processes: null } }),
+        i
       )
     }
     expect(h.cpuSystem).toHaveLength(60)
     expect(h.cpuSystem[0]).toBe(10)
+  })
+
+  it('replays timestamped points and keeps their real spacing', () => {
+    const history = historyFromPoints([
+      {
+        at: 0,
+        sample: sample({
+          cpu: { system: 10, user: null, idle: null, threads: null, processes: null }
+        }),
+        failures: []
+      },
+      { at: 2_000, sample: EMPTY_MACHINE_SAMPLE, failures: ['cpu'] },
+      {
+        at: 4_000,
+        sample: sample({
+          cpu: { system: 20, user: null, idle: null, threads: null, processes: null }
+        }),
+        failures: []
+      }
+    ])
+    expect(history.at).toEqual([0, 2_000, 4_000])
+    expect(history.cpuSystem).toEqual([10, null, 20])
+  })
+})
+
+describe('timelineGeometry', () => {
+  it('uses timestamps in a fixed window and leaves a visible gap for missing points', () => {
+    const shape = timelineGeometry([10, null, 20, 30], [0, 2_000, 8_000, 10_000], 10_000, 100)
+    expect(shape.paths).toEqual(['222.3,43.6 238,38.4'])
+    expect(shape.dots).toEqual(['159.3,48.8'])
   })
 })

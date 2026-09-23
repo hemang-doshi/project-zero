@@ -1,227 +1,104 @@
-import { memo, useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useEffect, useMemo, useState } from 'react'
 import { elapsed } from '../../../shared/format'
 import { ZERO_TYPE } from '../../../shared/tokens'
 import { useCockpit } from '../store/cockpit'
 import { Chip } from './Chip'
 import {
-  agentRuns,
-  bassPolyline,
-  initBass,
-  pushBass,
-  type AgentRun,
-  type BassTrace,
-  type BridgeStatePair
-} from './desk.model'
-import type { RuntimeConnState } from '../../../shared/protocol'
-import {
-  activeProjectLabel,
   connectivity,
   extrapolate,
-  gitLine,
   parseSnapshot,
-  selectSession,
   selectSpotify,
-  sessionChipTone,
-  type CockpitAudio,
   type SpotifyMedia,
   type Tone
 } from './runtime.types'
-import type { BridgeEvent, Harness } from './runtime.types'
 
 const routeStyle: React.CSSProperties = {
   height: '100%',
   overflowY: 'auto',
-  padding: '20px 22px',
+  padding: '24px 28px',
   display: 'flex',
   flexDirection: 'column',
-  gap: 14
+  gap: 18,
+  maxWidth: 820,
+  margin: '0 auto'
 }
 
-const microStyle: React.CSSProperties = {
+const smallLabel: React.CSSProperties = {
   fontFamily: ZERO_TYPE.mono,
   fontSize: 10,
-  fontWeight: 700,
-  letterSpacing: '0.14em',
-  color: 'var(--z-secondary-ink)'
-}
-
-const headerRow: React.CSSProperties = {
-  display: 'flex',
-  alignItems: 'baseline',
-  justifyContent: 'space-between',
-  gap: 12
-}
-
-const projectStyle: React.CSSProperties = {
-  fontSize: 24,
-  fontWeight: 800,
-  color: 'var(--z-ink)',
-  lineHeight: 1.2
-}
-
-const elapsedStyle: React.CSSProperties = {
-  fontFamily: ZERO_TYPE.mono,
-  fontSize: 30,
-  fontWeight: 800,
-  color: 'var(--z-ink)',
-  lineHeight: 1.1,
-  fontVariantNumeric: 'tabular-nums'
-}
-
-const detailStyle: React.CSSProperties = {
-  fontSize: 12.5,
-  color: 'var(--z-secondary-ink)',
-  lineHeight: 1.5
-}
-
-const gitStyle: React.CSSProperties = {
-  fontFamily: ZERO_TYPE.mono,
-  fontSize: 11.5,
-  color: 'var(--z-ink)',
-  borderTop: '1px solid var(--z-line)',
-  paddingTop: 12
-}
-
-const cardStyle: React.CSSProperties = {
-  background: 'var(--z-card-cream)',
-  border: '1px solid var(--z-line)',
-  borderRadius: 8,
-  padding: '12px 14px',
-  display: 'flex',
-  flexDirection: 'column',
-  gap: 8,
-  minWidth: 0
-}
-
-const datumLabel: React.CSSProperties = {
-  fontFamily: ZERO_TYPE.mono,
-  fontSize: 8.5,
   fontWeight: 700,
   letterSpacing: '0.12em',
   color: 'var(--z-secondary-ink)'
 }
 
-const noticeStyle: React.CSSProperties = {
-  fontFamily: ZERO_TYPE.mono,
-  fontSize: 10.5,
-  color: 'var(--z-secondary-ink)',
-  lineHeight: 1.6,
-  margin: 0
-}
-
-const mediaTitleStyle: React.CSSProperties = {
-  fontFamily: ZERO_TYPE.mono,
-  fontSize: 12.5,
-  fontWeight: 700,
-  color: 'var(--z-ink)',
-  overflow: 'hidden',
-  textOverflow: 'ellipsis',
-  whiteSpace: 'nowrap'
-}
-
-const mediaArtistStyle: React.CSSProperties = {
-  fontFamily: ZERO_TYPE.mono,
-  fontSize: 10.5,
-  color: 'var(--z-secondary-ink)',
-  overflow: 'hidden',
-  textOverflow: 'ellipsis',
-  whiteSpace: 'nowrap'
-}
-
-const coverStyle: React.CSSProperties = {
-  width: 56,
-  height: 56,
-  borderRadius: 6,
-  border: '1px solid var(--z-line)',
-  imageRendering: 'pixelated',
-  flexShrink: 0,
-  display: 'block'
-}
-
-const coverPlaceholderStyle: React.CSSProperties = {
-  ...coverStyle,
+const headerRow: React.CSSProperties = {
   display: 'flex',
   alignItems: 'center',
-  justifyContent: 'center',
-  background: 'var(--z-canvas-tan)'
+  justifyContent: 'space-between',
+  gap: 12
 }
 
-const waveformBox: React.CSSProperties = {
+const cardStyle: React.CSSProperties = {
+  background: 'var(--z-card-cream)',
+  border: '1px solid var(--z-line)',
+  borderRadius: 10,
+  padding: '16px 18px',
   display: 'flex',
   flexDirection: 'column',
-  gap: 4,
-  borderTop: '1px solid var(--z-line)',
-  paddingTop: 8
-}
-
-const nodeDetailStyle: React.CSSProperties = {
-  fontFamily: ZERO_TYPE.mono,
-  fontSize: 10.5,
-  color: 'var(--z-secondary-ink)',
-  overflow: 'hidden',
-  textOverflow: 'ellipsis',
-  whiteSpace: 'nowrap'
-}
-
-const runRow: React.CSSProperties = {
-  display: 'flex',
-  alignItems: 'baseline',
-  gap: 10,
-  padding: '4px 0',
-  borderBottom: '1px solid color-mix(in srgb, var(--z-line) 70%, transparent)',
+  gap: 12,
   minWidth: 0
 }
 
-const WAVE_W = 220
-const WAVE_H = 44
+const noteStyle: React.CSSProperties = {
+  color: 'var(--z-secondary-ink)',
+  fontSize: 12,
+  lineHeight: 1.5,
+  margin: 0
+}
 
-function BassWaveform({
-  audio,
-  live,
-  playing
-}: {
-  audio: CockpitAudio | null
-  live: boolean
-  playing: boolean
-}): React.JSX.Element {
-  // Rolling trace without effects: the parent re-renders on every cockpit
-  // push, so the next point is folded in during render (the documented
-  // adjust-state-when-props-change pattern — no ref reads, no effect setState).
-  const bass = audio?.bass ?? null
-  const status = audio?.status ?? 'DISABLED'
-  const sequence = audio?.sequence ?? -1
-  const [trace, setTrace] = useState<BassTrace>(() => initBass())
-  const [prevKey, setPrevKey] = useState<string | null>(null)
-  const key = `${sequence}:${bass ?? 'x'}:${status}:${live}:${playing}`
-  if (prevKey !== key) {
-    setPrevKey(key)
-    setTrace(pushBass(trace, { bass, status }, live, playing))
-  }
-  const baseline = bassPolyline([0, 0], WAVE_W, WAVE_H)
-  const points = bassPolyline(trace.points, WAVE_W, WAVE_H)
-  const activeStroke =
-    live && playing && status.toUpperCase() === 'ACTIVE'
-      ? 'var(--z-status-green)'
-      : 'var(--z-secondary-ink)'
-  return (
-    <svg
-      width={WAVE_W}
-      height={WAVE_H}
-      viewBox={`0 0 ${WAVE_W} ${WAVE_H}`}
-      role="img"
-      aria-label="Bass waveform"
-    >
-      <polyline points={baseline} fill="none" stroke="var(--z-line)" strokeWidth={1} />
-      <polyline
-        points={points}
-        fill="none"
-        stroke={activeStroke}
-        strokeWidth={2}
-        strokeLinejoin="round"
-        strokeLinecap="round"
-      />
-    </svg>
-  )
+const trackTitle: React.CSSProperties = {
+  color: 'var(--z-ink)',
+  fontSize: 18,
+  fontWeight: 700,
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
+  whiteSpace: 'nowrap'
+}
+
+const trackArtist: React.CSSProperties = {
+  color: 'var(--z-secondary-ink)',
+  fontSize: 13,
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
+  whiteSpace: 'nowrap'
+}
+
+const elapsedStyle: React.CSSProperties = {
+  fontFamily: ZERO_TYPE.mono,
+  fontSize: 28,
+  fontWeight: 700,
+  color: 'var(--z-ink)',
+  fontVariantNumeric: 'tabular-nums'
+}
+
+const historyRow: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'baseline',
+  justifyContent: 'space-between',
+  gap: 12,
+  borderTop: '1px solid var(--z-line)',
+  padding: '8px 0 0',
+  minWidth: 0
+}
+
+const coverStyle: React.CSSProperties = {
+  width: 80,
+  height: 80,
+  borderRadius: 8,
+  border: '1px solid var(--z-line)',
+  objectFit: 'cover',
+  flexShrink: 0,
+  display: 'block'
 }
 
 function parseDataUrl(value: unknown): string | null {
@@ -233,18 +110,14 @@ function parseDataUrl(value: unknown): string | null {
 }
 
 function ArtworkCover({ artworkId }: { artworkId: string | null }): React.JSX.Element {
-  // Remounted by the parent keyed on artworkId, so a null id starts with a
-  // null url and the effect below never sets state synchronously: it only
-  // resolves the async daemon fetch (fail-soft to the honest placeholder).
   const [url, setUrl] = useState<string | null>(null)
   useEffect(() => {
-    if (artworkId === null) return
-    if (typeof window === 'undefined' || !window.zero) return
+    if (artworkId === null || typeof window === 'undefined' || !window.zero) return
     let alive = true
     window.zero
       .invoke('artwork.fetch', { id: artworkId })
-      .then((v) => {
-        if (alive) setUrl(parseDataUrl(v))
+      .then((value) => {
+        if (alive) setUrl(parseDataUrl(value))
       })
       .catch(() => {
         if (alive) setUrl(null)
@@ -253,121 +126,39 @@ function ArtworkCover({ artworkId }: { artworkId: string | null }): React.JSX.El
       alive = false
     }
   }, [artworkId])
-  if (url !== null) {
-    return <img src={url} alt="Album artwork" width={56} height={56} style={coverStyle} />
-  }
+
+  if (url !== null) return <img src={url} alt="Album artwork" style={coverStyle} />
   return (
-    <div style={coverPlaceholderStyle}>
-      <span style={{ ...datumLabel, letterSpacing: '0.08em' }}>NO ARTWORK</span>
+    <div
+      aria-label="Album artwork unavailable"
+      style={{
+        ...coverStyle,
+        display: 'grid',
+        placeItems: 'center',
+        background: 'var(--z-canvas-tan)',
+        fontFamily: ZERO_TYPE.mono,
+        fontSize: 9,
+        color: 'var(--z-secondary-ink)',
+        textAlign: 'center'
+      }}
+    >
+      NO ARTWORK
     </div>
   )
 }
 
-function mediaChip(
-  spotify: SpotifyMedia | null,
-  conn: RuntimeConnState
-): { label: string; tone: Tone } {
-  if (spotify === null) return { label: 'NO MEDIA', tone: 'neutral' }
-  if (conn !== 'live') return { label: 'RETAINED MEDIA', tone: 'neutral' }
-  if (spotify.status !== 'ONLINE') return { label: 'MEDIA UNAVAILABLE', tone: 'neutral' }
-  return { label: 'LIVE MEDIA', tone: 'healthy' }
+function mediaChip(spotify: SpotifyMedia | null, online: boolean): { label: string; tone: Tone } {
+  if (spotify === null) return { label: 'NOT CONNECTED', tone: 'neutral' }
+  if (!online) return { label: 'RETAINED', tone: 'neutral' }
+  if (spotify.status !== 'ONLINE') return { label: 'UNAVAILABLE', tone: 'neutral' }
+  return { label: 'LIVE', tone: 'healthy' }
 }
 
-function playChip(
-  spotify: SpotifyMedia | null,
-  conn: RuntimeConnState
-): { label: string; tone: Tone } {
+function playChip(spotify: SpotifyMedia | null): { label: string; tone: Tone } {
   const state = (spotify?.state ?? '').toUpperCase()
-  const label = state === '' ? 'NO PLAY STATE' : state
-  if (conn !== 'live') return { label, tone: 'neutral' }
-  if (state === 'PLAYING') return { label, tone: 'healthy' }
-  if (state === 'PAUSED') return { label, tone: 'attention' }
-  return { label, tone: 'neutral' }
-}
-
-const asBridgeState = (v: unknown): BridgeStatePair[Harness] => {
-  const state = typeof v === 'object' && v !== null ? (v as Record<string, unknown>)['state'] : null
-  if (state === 'live' || state === 'connecting') return state
-  return 'disconnected'
-}
-
-const MAX_BRIDGE_EVENTS = 64
-
-function AgentRunsCard(): React.JSX.Element {
-  const [runs, setRuns] = useState<AgentRun[]>([])
-  const eventsRef = useRef<BridgeEvent[]>([])
-  const statesRef = useRef<BridgeStatePair>({ codex: 'unknown', opencode: 'unknown' })
-  useEffect(() => {
-    if (typeof window === 'undefined' || !window.zero) return
-    let alive = true
-    const compute = (): void => {
-      if (alive) setRuns(agentRuns(eventsRef.current, statesRef.current))
-    }
-    const refreshStates = (): void => {
-      const apply =
-        (harness: Harness): ((v: unknown) => void) =>
-        (v) => {
-          statesRef.current = { ...statesRef.current, [harness]: asBridgeState(v) }
-          compute()
-        }
-      window.zero
-        .invoke('codex.state')
-        .then(apply('codex'))
-        .catch(() => {
-          statesRef.current = { ...statesRef.current, codex: 'disconnected' }
-          compute()
-        })
-      window.zero
-        .invoke('ocp.state')
-        .then(apply('opencode'))
-        .catch(() => {
-          statesRef.current = { ...statesRef.current, opencode: 'disconnected' }
-          compute()
-        })
-    }
-    const unsubscribe = window.zero.subscribe('bridge', (u) => {
-      const push = u as { harness?: unknown; event?: { method?: unknown; params?: unknown } }
-      const harness = push.harness === 'codex' || push.harness === 'opencode' ? push.harness : null
-      const method = typeof push.event?.method === 'string' ? push.event.method : null
-      if (harness === null || method === null) return
-      eventsRef.current = [
-        ...eventsRef.current.slice(-(MAX_BRIDGE_EVENTS - 1)),
-        { harness, method, params: push.event?.params }
-      ]
-      refreshStates()
-      compute()
-    })
-    refreshStates()
-    return () => {
-      alive = false
-      unsubscribe()
-    }
-  }, [])
-  return (
-    <div style={cardStyle}>
-      <div style={headerRow}>
-        <span style={datumLabel}>AGENT RUNS · HARNESS BRIDGES</span>
-        <span style={datumLabel}>{runs.length > 0 ? `${runs.length} ACTIVE` : 'IDLE'}</span>
-      </div>
-      {runs.length === 0 ? (
-        <span style={noticeStyle}>NO ACTIVE AGENT RUNS</span>
-      ) : (
-        runs.map((run) => (
-          <div key={run.id} style={runRow}>
-            <span style={{ ...mediaTitleStyle, fontFamily: ZERO_TYPE.mono, fontSize: 11 }}>
-              {run.harness === 'codex' ? 'CODEX' : 'OPENCODE'}
-            </span>
-            <span style={{ ...nodeDetailStyle, flex: 1 }}>{run.label}</span>
-            <Chip label={run.state} tone="healthy" />
-          </div>
-        ))
-      )}
-      <span style={noticeStyle}>
-        Runs derive from streamed bridge events while the harness bridge is live; retained evidence
-        never renders as an active run.
-      </span>
-    </div>
-  )
+  if (state === 'PLAYING') return { label: 'PLAYING', tone: 'healthy' }
+  if (state === 'PAUSED') return { label: 'PAUSED', tone: 'attention' }
+  return { label: state || 'NO PLAY STATE', tone: 'neutral' }
 }
 
 function ElapsedClock({
@@ -381,120 +172,68 @@ function ElapsedClock({
 }): React.JSX.Element {
   const [now, setNow] = useState(() => Date.now())
   useEffect(() => {
-    const t = window.setInterval(() => setNow(Date.now()), 1_000)
-    return () => window.clearInterval(t)
+    const timer = window.setInterval(() => setNow(Date.now()), 1_000)
+    return () => window.clearInterval(timer)
   }, [])
   const ms = extrapolate(baseMs, ticking, receivedAt, now)
   return <span style={elapsedStyle}>{ms === null ? '—' : elapsed(ms)}</span>
 }
 
 export const DeskRoute = memo(function DeskRoute(): React.JSX.Element {
-  const conn = useCockpit((s) => s.state)
-  const refreshAt = useCockpit((s) => s.refreshAt)
-  const snapshot = useCockpit((s) => s.snapshot)
-  const project = useCockpit((s) => selectSession(s.snapshot)?.project ?? '')
-  const sessionState = useCockpit((s) => selectSession(s.snapshot)?.state ?? null)
-  const elapsedMs = useCockpit((s) => selectSession(s.snapshot)?.elapsed_ms ?? null)
-  const connLabel = useCockpit((s) => connectivity(s.state, s.snapshot).label)
-  const connDetail = useCockpit((s) => connectivity(s.state, s.snapshot).detail)
-  const connTone = useCockpit((s) => connectivity(s.state, s.snapshot).tone)
-  const branch = useCockpit((s) => gitLine(s.snapshot)?.branch ?? null)
-  const dirty = useCockpit((s) => gitLine(s.snapshot)?.dirty ?? null)
-
+  const conn = useCockpit((state) => state.state)
+  const snapshot = useCockpit((state) => state.snapshot)
+  const receivedAt = useCockpit((state) => state.refreshAt)
   const spotify = useMemo(() => selectSpotify(snapshot), [snapshot])
-  const audio = useMemo(() => parseSnapshot(snapshot)?.audio ?? null, [snapshot])
   const listening = useMemo(() => parseSnapshot(snapshot)?.listeningSession ?? null, [snapshot])
-
-  const activeProject = activeProjectLabel(conn, project)
-  const gitParts: string[] = []
-  if (branch !== null) gitParts.push(`branch ${branch}`)
-  if (dirty !== null) gitParts.push(`dirty ${dirty === 'true' ? 'yes' : 'no'}`)
-
-  const media = mediaChip(spotify, conn)
-  const play = playChip(spotify, conn)
-  const playing = (spotify?.state ?? '').toLowerCase() === 'playing'
-  const track = spotify?.track !== '' && spotify !== null ? spotify.track : '—'
-  const artist = spotify?.artist !== '' && spotify !== null ? spotify.artist : '—'
+  const media = mediaChip(spotify, conn === 'live')
+  const play = playChip(spotify)
+  const sessionState = listening?.playbackState.toUpperCase() ?? 'NOT OBSERVED'
+  const track = spotify?.track || 'No track playing'
+  const artist = spotify?.artist || 'Spotify playback details are unavailable.'
 
   return (
-    <div className="zw-route" style={routeStyle}>
-      <span style={microStyle}>PROJECT ZERO — DESK</span>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-        <div style={headerRow}>
-          <span style={projectStyle}>{activeProject}</span>
-          <Chip label={sessionState ?? 'UNAVAILABLE'} tone={sessionChipTone(conn, sessionState)} />
-        </div>
-        <ElapsedClock
-          baseMs={elapsedMs}
-          ticking={conn === 'live' && sessionState === 'RUNNING'}
-          receivedAt={refreshAt}
-        />
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-          <Chip label={connLabel} tone={connTone} />
-          <span style={detailStyle}>{connDetail}</span>
-        </div>
+    <main className="zw-route" style={routeStyle} aria-label="Spotify listening session">
+      <div style={headerRow}>
+        <span style={smallLabel}>SPOTIFY</span>
+        <Chip label={media.label} tone={media.tone} />
       </div>
 
-      <div style={cardStyle}>
-        <div style={headerRow}>
-          <span style={datumLabel}>SPOTIFY · NOW PLAYING</span>
-          <Chip label={media.label} tone={media.tone} />
-        </div>
+      <section style={cardStyle} aria-label="Now playing">
         {spotify === null ? (
-          <span style={noticeStyle}>No spotify integration is projected by the runtime.</span>
-        ) : (
           <>
-            <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
-              <ArtworkCover key={spotify.artworkId ?? 'none'} artworkId={spotify.artworkId} />
-              <div
-                style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0, flex: 1 }}
-              >
-                <span style={mediaTitleStyle}>{track}</span>
-                <span style={mediaArtistStyle}>{artist}</span>
-                <div>
-                  <Chip label={play.label} tone={play.tone} />
-                </div>
+            <strong style={trackTitle}>Spotify is not connected</strong>
+            <p style={noteStyle}>Connect local Spotify observation to show the current track.</p>
+          </>
+        ) : (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 16, minWidth: 0 }}>
+            <ArtworkCover key={spotify.artworkId ?? 'none'} artworkId={spotify.artworkId} />
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6, minWidth: 0, flex: 1 }}>
+              <span style={smallLabel}>NOW PLAYING</span>
+              <strong style={trackTitle}>{track}</strong>
+              <span style={trackArtist}>{artist}</span>
+              <div>
+                <Chip label={play.label} tone={play.tone} />
               </div>
             </div>
-            <div style={waveformBox}>
-              <span style={datumLabel}>BASS · {spotify.audioCapture || 'NO CAPTURE'}</span>
-              <BassWaveform audio={audio} live={conn === 'live'} playing={playing} />
-            </div>
-          </>
+          </div>
         )}
-      </div>
+      </section>
 
-      <div style={cardStyle}>
+      <section style={cardStyle} aria-label="Listening session">
         <div style={headerRow}>
-          <span style={datumLabel}>LISTENING SESSION</span>
+          <span style={smallLabel}>LISTENING SESSION</span>
           <Chip
-            label={
-              listening === null
-                ? 'NOT OBSERVED'
-                : listening.endedAt === null
-                  ? listening.playbackState.toUpperCase()
-                  : 'ENDED'
-            }
+            label={sessionState}
             tone={listening?.playbackState === 'playing' ? 'healthy' : 'neutral'}
           />
         </div>
         {listening === null ? (
-          <span style={noticeStyle}>
+          <p style={noteStyle}>
             Session history starts when local Spotify observation is connected and playback begins.
-          </span>
+          </p>
         ) : (
           <>
-            <div
-              style={{
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'baseline',
-                gap: 12
-              }}
-            >
-              <span style={detailStyle}>
-                Observed {new Date(listening.startedAt).toLocaleTimeString()}
-              </span>
+            <div style={headerRow}>
               <ElapsedClock
                 baseMs={listening.activeDurationMs}
                 ticking={
@@ -502,54 +241,59 @@ export const DeskRoute = memo(function DeskRoute(): React.JSX.Element {
                   listening.playbackState === 'playing' &&
                   listening.endedAt === null
                 }
-                receivedAt={refreshAt}
+                receivedAt={receivedAt}
               />
+              <span style={noteStyle}>active listening time</span>
             </div>
-            {listening.contextType ? (
-              <span style={noticeStyle}>Source · {listening.contextType}</span>
-            ) : null}
-            <div
-              style={{ display: 'flex', flexDirection: 'column', gap: 5 }}
-              aria-label="Observed songs in this session"
-            >
+            <p style={noteStyle}>
+              {listening.contextType
+                ? `Source · ${listening.contextType}`
+                : 'Source not reported by Spotify'}
+            </p>
+            <div aria-label="Observed songs in this session">
               {listening.tracks.slice(-8).map((item, index) => (
-                <div key={`${item.observedAt}:${index}`} style={runRow}>
-                  <span
-                    style={{
-                      flex: 1,
-                      minWidth: 0,
-                      overflow: 'hidden',
-                      textOverflow: 'ellipsis',
-                      whiteSpace: 'nowrap',
-                      fontSize: 12.5
-                    }}
-                  >
+                <div key={`${item.observedAt}:${index}`} style={historyRow}>
+                  <span style={{ ...trackTitle, fontSize: 13, flex: 1, minWidth: 0 }}>
                     {item.track}
                   </span>
-                  <span
-                    style={{
-                      color: 'var(--z-secondary-ink)',
-                      fontSize: 11,
-                      overflow: 'hidden',
-                      textOverflow: 'ellipsis',
-                      whiteSpace: 'nowrap'
-                    }}
-                  >
-                    {item.artist}
-                  </span>
+                  <span style={{ ...trackArtist, fontSize: 11 }}>{item.artist}</span>
                 </div>
               ))}
             </div>
-            <span style={noticeStyle}>
-              Only tracks observed since this session began are listed.
-            </span>
+            <p style={noteStyle}>Only songs observed since this session began appear here.</p>
+            <div
+              style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 6 }}
+            >
+              <button
+                type="button"
+                disabled
+                aria-describedby="playlist-unavailable"
+                style={{
+                  padding: '7px 11px',
+                  border: '1px solid var(--z-line)',
+                  borderRadius: 6,
+                  background: 'var(--z-card-cream)',
+                  color: 'var(--z-secondary-ink)',
+                  font: `700 10px ${ZERO_TYPE.mono}`,
+                  letterSpacing: '0.08em',
+                  cursor: 'not-allowed'
+                }}
+              >
+                MAKE PLAYLIST
+              </button>
+              <p id="playlist-unavailable" style={noteStyle}>
+                Spotify account connection is required before tracks can be reviewed or added to a
+                playlist.
+              </p>
+            </div>
           </>
         )}
-      </div>
-
-      <AgentRunsCard />
-
-      {gitParts.length > 0 ? <span style={gitStyle}>git · {gitParts.join(' · ')}</span> : null}
-    </div>
+      </section>
+      {conn !== 'live' ? (
+        <p style={noteStyle} role="status">
+          {connectivity(conn, snapshot).detail}
+        </p>
+      ) : null}
+    </main>
   )
 })

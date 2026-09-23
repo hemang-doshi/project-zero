@@ -70,6 +70,8 @@ const GPU_SECTION = `+-o AGXAcceleratorG16G  <class AGXAcceleratorG16G, id 0x100
 const BATCH_OUTPUT = [
   '===PS===',
   PS_SECTION,
+  '===PROCESS===',
+  '12 22.5 111 /Applications/Editor',
   '===VM_STAT===',
   VM_STAT_SECTION,
   '===SYSCTL===',
@@ -157,6 +159,26 @@ describe('CPU system/user/idle split', () => {
     expect(second.cpu?.system).toBeNull()
     expect(second.cpu?.user).toBeNull()
     expect(second.cpu?.idle).toBeNull()
+  })
+})
+
+describe('main telemetry history', () => {
+  it('retains timestamped measured samples and reports failed families', async () => {
+    let now = 1000
+    const sampler = createTelemetrySampler(fakeDeps({ now: () => now }))
+    await sampler.sample()
+    now = 3000
+    const history = sampler.history()
+    expect(history).toHaveLength(1)
+    expect(history[0]).toMatchObject({ at: 1000, sample: { gpu: 29, processes: [{ pid: 12 }] }, failures: [] })
+  })
+
+  it('marks GPU unavailable without turning it into zero', async () => {
+    const output = BATCH_OUTPUT.replace(`===GPU===\n${GPU_SECTION}`, '')
+    const sampler = createTelemetrySampler(fakeDeps({ spawnBatch: () => Promise.resolve(output) }))
+    const sample = await sampler.sample()
+    expect(sample.gpu).toBeNull()
+    expect(sampler.history()[0]?.failures).toContain('gpu')
   })
 })
 

@@ -6,6 +6,7 @@ import type { BridgeDeps, HarnessId, RpcEvent } from './bridges'
 import { attachBridgePush, createDispatch, type SocketDeps } from './ipc'
 import { defaultPrefs, type Prefs } from './prefs'
 import { PrefsStore } from './prefs'
+import { createSkillLearningStore } from './skills-learning'
 import type { DevicesListResult, TelemetrySample } from '../shared/ipc'
 
 type FakeBridge = {
@@ -700,9 +701,11 @@ describe('wallpaper.pick', () => {
   it('returns the picked image path from the injected dialog and touches no socket', async () => {
     const d = deps()
     d.pickImage = vi.fn(() => Promise.resolve('/Users/x/w.png'))
+    d.importWallpaper = vi.fn(() => '/profile/wallpapers/managed.png')
     const invoke = createDispatch(d, () => fakePair(fakeBridge('live'), fakeBridge('live')))
-    await expect(invoke('wallpaper.pick')).resolves.toBe('/Users/x/w.png')
+    await expect(invoke('wallpaper.pick')).resolves.toBe('/profile/wallpapers/managed.png')
     expect(d.pickImage).toHaveBeenCalledOnce()
+    expect(d.importWallpaper).toHaveBeenCalledWith('/Users/x/w.png')
     expect(d.fetchSnapshot).not.toHaveBeenCalled()
   })
   it('returns null when the dialog is canceled', async () => {
@@ -719,6 +722,16 @@ describe('telemetry.sample', () => {
     const invoke = createDispatch(d, () => fakePair(fakeBridge('live'), fakeBridge('live')))
     await expect(invoke('telemetry.sample')).resolves.toBe(TELEMETRY_SAMPLE)
     expect(d.sampleTelemetry).toHaveBeenCalledOnce()
+    expect(d.fetchSnapshot).not.toHaveBeenCalled()
+  })
+
+  it('returns buffered local telemetry history without daemon contact', async () => {
+    const d = deps()
+    const point = { at: 123, sample: TELEMETRY_SAMPLE, failures: [] }
+    d.telemetryHistory = vi.fn(() => [point])
+    const invoke = createDispatch(d, () => fakePair(fakeBridge('live'), fakeBridge('live')))
+    await expect(invoke('telemetry.history')).resolves.toEqual([point])
+    expect(d.telemetryHistory).toHaveBeenCalledOnce()
     expect(d.fetchSnapshot).not.toHaveBeenCalled()
   })
 })
@@ -819,7 +832,6 @@ describe('skills.discover', () => {
         id: 'gstack',
         name: 'Gstack',
         color: '#10B981',
-        glyph: 'flask' as const,
         skills: [{ id: 'browse', name: 'Browse', source: 'installed' as const, pluginId: 'gstack' }]
       }
     ],
@@ -868,6 +880,106 @@ describe('skills.discover', () => {
     expect(result.groups).toEqual([])
     expect(result.selfLearnt).toEqual([])
     expect(typeof result.note).toBe('string')
+  })
+})
+
+describe('skills.learning IPC', () => {
+  it('persists opt-in and accepts only an explicitly selected bounded transcript', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'zero-skills-ipc-'))
+    const skillLearning = createSkillLearningStore({
+      stateFile: path.join(root, 'state.json'),
+      learnedRoot: path.join(root, 'learned')
+    })
+    const d = { ...deps(), skillLearning } as SocketDeps & { skillLearning: typeof skillLearning }
+    const codex = fakeBridge('live')
+    const opencode = fakeBridge('live')
+    const invoke = createDispatch(d, () => fakePair(codex, opencode))
+    await expect(invoke('skills.learning.get')).resolves.toMatchObject({ learningEnabled: false })
+    await expect(invoke('skills.learning.observe', {
+      provider: 'codex',
+      sourceId: 'thread-1',
+      items: [
+        { kind: 'exec', command: 'rg --files && git status && npm test' },
+        { kind: 'exec', command: 'rg --files && git status && npm test' }
+      ]
+    })).resolves.toEqual([])
+    await invoke('skills.learning.set', { enabled: true })
+    await invoke('skills.learning.observe', {
+      provider: 'codex', sourceId: 'thread-1',
+      items: [{ kind: 'exec', command: 'rg --files && git status && npm test' }]
+    })
+    const proposals = await invoke('skills.learning.observe', {
+      provider: 'opencode', sourceId: 'session-2',
+      items: [{ kind: 'exec', command: 'rg --files && git status && npm test' }]
+    })
+    expect(proposals).toMatchObject([{ status: 'proposed', steps: ['rg', 'git', 'npm'] }])
+    expect(codex.sends).toEqual([])
+    expect(opencode.sends).toEqual([])
+    fs.rmSync(root, { recursive: true, force: true })
+  })
+
+  it('learns from transcript reads already requested in Zero when opted in', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'zero-skills-observe-'))
+    const skillLearning = createSkillLearningStore({
+      stateFile: path.join(root, 'state.json'),
+      learnedRoot: path.join(root, 'learned')
+    })
+    skillLearning.setLearningEnabled(true)
+    const d = { ...deps(), skillLearning } as SocketDeps & { skillLearning: typeof skillLearning }
+    const codex = fakeBridge('live')
+    codex.send = vi.fn(async (method, params) => {
+      codex.sends.push({ method, params: params ?? {} })
+      return method === 'thread/read' ? {
+        thread: { turns: [{ items: [
+          { type: 'commandExecution', command: 'rg --files && git status && npm test' }
+        ] }] }
+      } : {}
+    })
+    const invoke = createDispatch(d, () => fakePair(codex, fakeBridge('disconnected')))
+    await invoke('codex.thread.get', { threadId: 'thread-1' })
+    await invoke('codex.thread.get', { threadId: 'thread-2' })
+    await expect(invoke('skills.learning.get')).resolves.toMatchObject({
+      learningEnabled: true,
+      proposals: [{ status: 'proposed', steps: ['rg', 'git', 'npm'] }]
+    })
+    expect(codex.sends).toHaveLength(2)
+    expect(codex.sends.every((entry) => entry.method === 'thread/read')).toBe(true)
+    fs.rmSync(root, { recursive: true, force: true })
+  })
+
+  it('observes read-only OpenCode transcripts without retaining command text', async () => {
+    const { DatabaseSync } = await import('node:sqlite')
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'zero-skills-opencode-'))
+    const dbPath = path.join(root, 'opencode.db')
+    const db = new DatabaseSync(dbPath)
+    db.exec(`
+      CREATE TABLE session (id TEXT PRIMARY KEY, directory TEXT NOT NULL, title TEXT, agent TEXT, model TEXT, time_created INTEGER, time_updated INTEGER);
+      CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT NOT NULL, time_created INTEGER, time_updated INTEGER, data TEXT NOT NULL);
+      CREATE TABLE part (id TEXT PRIMARY KEY, message_id TEXT NOT NULL, session_id TEXT NOT NULL, time_created INTEGER, time_updated INTEGER, data TEXT NOT NULL);
+    `)
+    for (const [index, id] of ['session-1', 'session-2'].entries()) {
+      db.prepare('INSERT INTO session VALUES (?, ?, ?, ?, ?, ?, ?)').run(id, '/repo', `Session ${index}`, null, null, index + 1, index + 1)
+      db.prepare('INSERT INTO message VALUES (?, ?, ?, ?, ?)').run(`message-${index}`, id, 1, 1, JSON.stringify({ role: 'assistant' }))
+      db.prepare('INSERT INTO part VALUES (?, ?, ?, ?, ?, ?)').run(
+        `part-${index}`, `message-${index}`, id, 1, 1,
+        JSON.stringify({ type: 'tool', tool: 'bash', state: { input: { command: 'rg --files && git status && npm test' } } })
+      )
+    }
+    db.close()
+    const skillLearning = createSkillLearningStore({
+      stateFile: path.join(root, 'learning.json'),
+      learnedRoot: path.join(root, 'learned')
+    })
+    skillLearning.setLearningEnabled(true)
+    const d = { ...deps(), skillLearning, openCodeDbPath: dbPath } as SocketDeps & { skillLearning: typeof skillLearning }
+    const invoke = createDispatch(d)
+    await invoke('ocp.thread.get', { threadId: 'session-1' })
+    await invoke('ocp.thread.get', { threadId: 'session-2' })
+    const state = skillLearning.get()
+    expect(state.proposals).toMatchObject([{ status: 'proposed', steps: ['rg', 'git', 'npm'] }])
+    expect(JSON.stringify(state)).not.toContain('npm test')
+    expect(JSON.stringify(state)).not.toContain('/repo')
+    fs.rmSync(root, { recursive: true, force: true })
   })
 })
 

@@ -8,10 +8,8 @@ import {
   defaultSkillRoots,
   discoverPlugins,
   discoverSelfLearnt,
-  glyphForPlugin,
   parseSkillFrontmatter,
   PLUGIN_COLORS,
-  PLUGIN_GLYPHS,
   pluginPackageSkillRoots,
   SINGLETON_FAMILIES,
   STANDALONE_GROUP_ID,
@@ -252,25 +250,21 @@ describe('discoverPlugins', () => {
   })
 })
 
-describe('glyphForPlugin / colorForPlugin', () => {
+describe('colorForPlugin', () => {
   it('is deterministic', () => {
     for (const id of ['gstack', 'superpowers', 'playwright', STANDALONE_GROUP_ID, '']) {
-      expect(glyphForPlugin(id)).toBe(glyphForPlugin(id))
       expect(colorForPlugin(id)).toBe(colorForPlugin(id))
     }
   })
 
   it('stays inside the contract vocabularies', () => {
     for (const id of ['gstack', 'superpowers', 'playwright', 'alpha', 'zebra', STANDALONE_GROUP_ID]) {
-      expect(PLUGIN_GLYPHS).toContain(glyphForPlugin(id))
       expect(PLUGIN_COLORS).toContain(colorForPlugin(id))
     }
   })
 
-  it('pins known assignments so scene drift is visible', () => {
-    expect(glyphForPlugin('gstack')).toBe('flask')
+  it('pins known decorative vial colors so scene drift is visible', () => {
     expect(colorForPlugin('gstack')).toBe('#10B981')
-    expect(glyphForPlugin(STANDALONE_GROUP_ID)).toBe('bolt')
     expect(colorForPlugin(STANDALONE_GROUP_ID)).toBe('#A83300')
   })
 })

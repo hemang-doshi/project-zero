@@ -118,6 +118,14 @@ describe('connectivity', () => {
     expect(connectivity('connecting', snap).tone).toBe('attention')
   })
 
+  it('calls a never-established runtime unavailable instead of reconnecting', () => {
+    expect(connectivity('reconnecting', null)).toEqual({
+      label: 'OFFLINE',
+      detail: 'Runtime unavailable · waiting to reconnect',
+      tone: 'error'
+    })
+  })
+
   it('reports connected display nodes when live', () => {
     const c = connectivity('live', snap)
     expect(c.tone).toBe('healthy')
@@ -212,7 +220,14 @@ describe('extrapolate', () => {
 
 describe('machine sample shape', () => {
   it('starts with every panel unavailable', () => {
-    const sample: MachineSample = { cpu: null, memory: null, io: null, net: null, gpu: null }
+    const sample: MachineSample = {
+      cpu: null,
+      memory: null,
+      io: null,
+      net: null,
+      gpu: null,
+      processes: []
+    }
     expect(sample).toEqual(EMPTY_MACHINE_SAMPLE)
   })
 })
@@ -251,12 +266,39 @@ const WELL_FORMED: Record<string, unknown> = {
     dataReceivedPerSec: 40_960,
     dataSentPerSec: 20_480
   },
-  gpu: 29
+  gpu: 29,
+  processes: [{ pid: 72, name: 'Codex', cpuPercent: 1.25, residentBytes: 4_194_304 }]
 }
 
 describe('parseTelemetry', () => {
   it('parses a well-formed sampler payload into the panel sample', () => {
     expect(parseTelemetry(WELL_FORMED)).toEqual(WELL_FORMED)
+  })
+
+  it('keeps only ten attributable process rows and bounds process names', () => {
+    const sample = parseTelemetry({
+      ...WELL_FORMED,
+      processes: [
+        { pid: 72, name: 'Codex', cpuPercent: 1.25, residentBytes: 4_194_304 },
+        null,
+        { pid: 'not-a-pid', name: 'Invalid', cpuPercent: 3, residentBytes: 5 },
+        ...Array.from({ length: 10 }, (_, index) => ({
+          pid: 100 + index,
+          name: `process-${index}-${'x'.repeat(90)}`,
+          cpuPercent: null,
+          residentBytes: 1024
+        }))
+      ]
+    })
+
+    expect(sample.processes).toHaveLength(10)
+    expect(sample.processes?.[0]).toEqual({
+      pid: 72,
+      name: 'Codex',
+      cpuPercent: 1.25,
+      residentBytes: 4_194_304
+    })
+    expect(sample.processes?.[9]?.name).toHaveLength(80)
   })
 
   it('keeps nulls for absent or malformed parts instead of dropping the sample', () => {
@@ -294,7 +336,8 @@ describe('parseTelemetry', () => {
         dataWrittenPerSec: null
       },
       net: null,
-      gpu: 9
+      gpu: 9,
+      processes: []
     })
     expect(parseTelemetry(null)).toEqual(EMPTY_MACHINE_SAMPLE)
     expect(parseTelemetry('nonsense')).toEqual(EMPTY_MACHINE_SAMPLE)
