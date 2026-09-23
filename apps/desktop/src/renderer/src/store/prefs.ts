@@ -7,6 +7,7 @@ import { migrateIconsToGrid, snapIconToGrid } from '../desktop/items'
 import { useWindows } from './windows'
 
 type DesktopPrefsData = {
+  theme: 'light' | 'dark'
   wallpaper: WallpaperState
   icons: Record<string, { x: number; y: number }>
   windows: Record<string, Rect>
@@ -17,6 +18,7 @@ type DesktopPrefsData = {
 const DEFAULT_WALLPAPER: WallpaperState = { kind: 'dotted-green', mode: 'cover' }
 
 export const useDesktopPrefs = create<DesktopPrefsData>(() => ({
+  theme: 'light',
   wallpaper: { ...DEFAULT_WALLPAPER },
   icons: {},
   windows: {},
@@ -25,6 +27,7 @@ export const useDesktopPrefs = create<DesktopPrefsData>(() => ({
 }))
 
 type PrefsPayload = {
+  theme?: 'light' | 'dark'
   wallpaper?: Partial<WallpaperState>
   icons?: Record<string, { x: number; y: number }>
   windows?: Record<string, Rect>
@@ -51,6 +54,7 @@ export async function hydrateDesktopPrefs(bounds?: CanvasBounds): Promise<void> 
     if (isSnapEntry(entry)) snaps[route] = { kind: entry.kind, preSnap: { ...entry.preSnap } }
   }
   useDesktopPrefs.setState({
+    theme: parseTheme(p?.theme),
     wallpaper: {
       kind: wallpaper.kind ?? DEFAULT_WALLPAPER.kind,
       path: wallpaper.path,
@@ -65,6 +69,13 @@ export async function hydrateDesktopPrefs(bounds?: CanvasBounds): Promise<void> 
   if (bounds !== undefined && Object.keys(snaps).length > 0) {
     useWindows.getState().hydrateSnaps(snaps, bounds)
   }
+}
+
+const parseTheme = (theme: unknown): 'light' | 'dark' => (theme === 'dark' ? 'dark' : 'light')
+
+export function setTheme(theme: 'light' | 'dark'): void {
+  useDesktopPrefs.setState({ theme })
+  void window.zero.invoke('prefs.set', { theme }).catch(() => {})
 }
 
 export function setWallpaper(next: WallpaperState): void {

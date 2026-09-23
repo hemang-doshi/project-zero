@@ -168,13 +168,47 @@ final class ShellLayoutTests: XCTestCase {
         XCTAssertFalse(manager.zOrder.contains(where: { $0.rawValue == "bogus-route" }))
     }
 
-    func testDesktopManagerOriginClampsNegative() {
+    func testDesktopManagerOriginPreservesFreeMovement() {
         let defaults = trackSuite("ShellLayoutTests.desktopOrigin")
         defaults.set(["x": -40.0, "y": -5.0], forKey: "zero.desktop.origin.desk")
         let manager = DesktopWindowManager(defaults: defaults)
         let origin = manager.origin(for: .desk)
-        XCTAssertGreaterThanOrEqual(origin.x, 0)
-        XCTAssertGreaterThanOrEqual(origin.y, 0)
+        XCTAssertEqual(origin.x, -40.0, accuracy: 0.001)
+        XCTAssertEqual(origin.y, -5.0, accuracy: 0.001)
+    }
+
+    func testDesktopMigrationSeparatesStackedOrigins() {
+        let defaults = trackSuite("ShellLayoutTests.desktopStacked")
+        for route in CockpitRoute.allCases {
+            defaults.set(["x": 28.0, "y": 28.0], forKey: "zero.desktop.origin.\(route.rawValue)")
+        }
+        let manager = DesktopWindowManager(defaults: defaults)
+        let origins = CockpitRoute.allCases.map { manager.origin(for: $0) }
+        XCTAssertEqual(Set(origins.map { "\($0.x),\($0.y)" }).count, CockpitRoute.allCases.count)
+    }
+
+    func testDesktopMigrationKeepsDistinctOrigins() {
+        let defaults = trackSuite("ShellLayoutTests.desktopDistinct")
+        defaults.set(["x": 100.0, "y": 50.0], forKey: "zero.desktop.origin.desk")
+        defaults.set(["x": -40.0, "y": -5.0], forKey: "zero.desktop.origin.runtime")
+        let manager = DesktopWindowManager(defaults: defaults)
+        XCTAssertEqual(manager.origin(for: .desk), CGPoint(x: 100, y: 50))
+        XCTAssertEqual(manager.origin(for: .runtime), CGPoint(x: -40, y: -5))
+    }
+
+    func testDesktopMigrationRunsOnce() {
+        let defaults = trackSuite("ShellLayoutTests.desktopMigrationOnce")
+        for route in CockpitRoute.allCases {
+            defaults.set(["x": 28.0, "y": 28.0], forKey: "zero.desktop.origin.\(route.rawValue)")
+        }
+        _ = DesktopWindowManager(defaults: defaults)
+        // A deliberate stack made after migration must persist across relaunch.
+        for route in CockpitRoute.allCases {
+            defaults.set(["x": 28.0, "y": 28.0], forKey: "zero.desktop.origin.\(route.rawValue)")
+        }
+        let reloaded = DesktopWindowManager(defaults: defaults)
+        XCTAssertEqual(reloaded.origin(for: .desk), CGPoint(x: 28, y: 28))
+        XCTAssertEqual(reloaded.origin(for: .runtime), CGPoint(x: 28, y: 28))
     }
 
     func testDesktopCloseFallsBackSelectionToFrontWindow() {
@@ -276,9 +310,10 @@ final class ShellLayoutTests: XCTestCase {
             desktopInitialOrigin(for: 3, stored: CGPoint(x: 100, y: 50)),
             CGPoint(x: 100, y: 50)
         )
-        let clamped = desktopInitialOrigin(for: 3, stored: CGPoint(x: -10, y: -5))
-        XCTAssertGreaterThanOrEqual(clamped.x, 0)
-        XCTAssertGreaterThanOrEqual(clamped.y, 0)
+        XCTAssertEqual(
+            desktopInitialOrigin(for: 3, stored: CGPoint(x: -10, y: -5)),
+            CGPoint(x: -10, y: -5)
+        )
     }
 
     func testDesktopOpenWithoutStoredOriginAppliesCascade() {

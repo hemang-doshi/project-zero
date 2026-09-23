@@ -1,4 +1,33 @@
+import AppKit
 import SwiftUI
+
+/// One 24 pt tile of the grass/dot-grid wallpaper, built once. Tiling a cached
+/// bitmap is a GPU blit instead of a per-redraw CPU dot loop.
+private let desktopWallpaperTile: NSImage = {
+    let tile = NSSize(width: 24, height: 24)
+    let image = NSImage(size: tile)
+    image.lockFocus()
+    NSColor(ZeroTheme.wallpaper).setFill()
+    NSRect(origin: .zero, size: tile).fill()
+    NSColor(ZeroTheme.wallpaperDot).setFill()
+    NSBezierPath(ovalIn: NSRect(x: 12, y: 12, width: 2, height: 2)).fill()
+    image.unlockFocus()
+    return image
+}()
+
+/// Grass/dot-grid fallback when no owner wallpaper asset is supplied.
+///
+/// Mirrors the shell's dot wallpaper: grass `ZeroTheme.wallpaper` base with a
+/// `ZeroTheme.wallpaperDot` grid. Missing asset degrades here, never crashes.
+struct DesktopWallpaper: View {
+    var body: some View {
+        Image(nsImage: desktopWallpaperTile)
+            .resizable(resizingMode: .tile)
+            .ignoresSafeArea()
+            .accessibilityHidden(true)
+            .allowsHitTesting(false)
+    }
+}
 
 /// One app tile on the in-window desktop canvas.
 ///
@@ -15,25 +44,6 @@ public struct DesktopApp: Identifiable, Equatable, Sendable {
         self.id = id
         self.title = title
         self.route = route
-    }
-}
-
-/// Grass/dot-grid fallback when no owner wallpaper asset is supplied.
-///
-/// Mirrors the shell's dot wallpaper: grass `ZeroTheme.wallpaper` base with a
-/// `ZeroTheme.wallpaperDot` grid. Missing asset degrades here, never crashes.
-struct DesktopWallpaper: View {
-    var body: some View {
-        Canvas { context, size in
-            for x in stride(from: 12.0, through: size.width, by: 24) {
-                for y in stride(from: 12.0, through: size.height, by: 24) {
-                    context.fill(Path(ellipseIn: CGRect(x: x, y: y, width: 2, height: 2)), with: .color(ZeroTheme.wallpaperDot))
-                }
-            }
-        }
-        .background(ZeroTheme.wallpaper)
-        .accessibilityHidden(true)
-        .allowsHitTesting(false)
     }
 }
 
@@ -64,7 +74,11 @@ public struct DesktopCanvas<Content: View>: View {
             }
             .ignoresSafeArea()
             .accessibilityHidden(true)
+            // Anchor card coordinates to the canvas top-left. Without this the
+            // content stack sizes to the largest card and centers, so one
+            // card's resize/open would shift every other card's screen spot.
             content()
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
     }
 }
@@ -112,6 +126,8 @@ struct DesktopTrafficLights: View {
             Circle()
                 .fill(isActive ? color : Color.gray.opacity(0.4))
                 .frame(width: 12, height: 12)
+                .frame(width: 18, height: 18)
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .focusEffectDisabled()
@@ -120,6 +136,11 @@ struct DesktopTrafficLights: View {
         .disabled(action == nil)
     }
 }
+
+/// Hoisted crosshair cursor so gesture-driven card body evaluations don't
+/// allocate a cursor per corner per event. Initialized on first card layout
+/// (main thread).
+private let desktopCornerCursor = NSCursor(image: NSCursor.crosshair.image, hotSpot: .zero)
 
 /// One draggable/resizable/fullscreen app card on the desktop canvas.
 ///
@@ -145,7 +166,9 @@ struct DesktopCard<Content: View, Panel: View>: View {
     var onResize: ((CGSize) -> Void)? = nil
 
     @State private var origin: CGPoint
-    @State private var dragTranslation = CGSize.zero
+    /// Live drag translation. `@GestureState` resets on end/cancel, so a
+    /// cancelled drag can never leave a card offset from its committed spot.
+    @GestureState private var dragTranslation: CGSize = .zero
     @State private var windowSize: CGSize
     @State private var isFullscreen = false
     @State private var panelSelection: PanelSelection = .primary
@@ -179,31 +202,38 @@ struct DesktopCard<Content: View, Panel: View>: View {
         _windowSize = State(initialValue: desktopClampSize(initialSize))
     }
 
-    @State private var resizeBase: (origin: CGPoint, size: CGSize)? = nil
+    /// Live resize gesture: translation plus the handle's fixed-corner anchor.
+    /// `@GestureState` resets automatically when the gesture ends or is
+    /// cancelled, so a preview can never get stuck.
+    @GestureState private var resizeSession: ResizeSession? = nil
 
-    private func resize(trailingBy dx: CGFloat) {
-        let base = resizeBase ?? (origin, windowSize)
-        windowSize.width = desktopClampSize(CGSize(width: base.size.width + dx, height: base.size.height)).width
+    private struct ResizeSession: Equatable {
+        var translation: CGSize
+        var anchor: UnitPoint
     }
 
-    private func resize(leadingBy dx: CGFloat) {
-        let base = resizeBase ?? (origin, windowSize)
-        let newWidth = min(max(base.size.width - dx, 320), 1100)
-        origin.x = base.origin.x + (base.size.width - newWidth)
-        windowSize.width = newWidth
+    /// Target rect for the active gesture, computed from the committed rect.
+    /// `anchor` names the fixed corner; moving edges invert their delta sign
+    /// and the origin moves so the fixed corner stays put.
+    private func resizeRect(dx: CGFloat, dy: CGFloat, anchor: UnitPoint) -> (origin: CGPoint, size: CGSize) {
+        let fixedRight = anchor == .topTrailing || anchor == .bottomTrailing
+        let fixedBottom = anchor == .bottomLeading || anchor == .bottomTrailing
+        let width = min(max(windowSize.width + (fixedRight ? -dx : dx), 320), 1100)
+        let height = min(max(windowSize.height + (fixedBottom ? -dy : dy), 240), 900)
+        var x = origin.x
+        var y = origin.y
+        if fixedRight { x = origin.x + (windowSize.width - width) }
+        if fixedBottom { y = origin.y + (windowSize.height - height) }
+        return (CGPoint(x: x, y: y), CGSize(width: width, height: height))
     }
 
-    private func resize(bottomBy dy: CGFloat) {
-        let base = resizeBase ?? (origin, windowSize)
-        windowSize.height = desktopClampSize(CGSize(width: base.size.width, height: base.size.height + dy)).height
+    /// Target rect during a gesture; committed rect otherwise.
+    private var resizeTarget: (origin: CGPoint, size: CGSize) {
+        guard let session = resizeSession else { return (origin, windowSize) }
+        return resizeRect(dx: session.translation.width, dy: session.translation.height, anchor: session.anchor)
     }
 
-    private func resize(topBy dy: CGFloat) {
-        let base = resizeBase ?? (origin, windowSize)
-        let newHeight = min(max(base.size.height - dy, 240), 900)
-        origin.y = base.origin.y + (base.size.height - newHeight)
-        windowSize.height = newHeight
-    }
+    private var resizeAnchor: UnitPoint { resizeSession?.anchor ?? .topLeading }
 
     private func adjustSize(by delta: CGSize) {
         windowSize = desktopClampSize(CGSize(width: windowSize.width + delta.width, height: windowSize.height + delta.height))
@@ -235,6 +265,15 @@ struct DesktopCard<Content: View, Panel: View>: View {
                             .strokeBorder(isActive ? ZeroTheme.orange : ZeroTheme.ink.opacity(0.2), lineWidth: isActive ? 2 : 1)
                     )
                     .overlay(resizeHandles)
+                    // Live preview is a pure transform. The layout footprint
+                    // stays at the committed size until release, so pointer
+                    // events never re-layout the card, its route content, or
+                    // the canvas — one scale change per event, nothing more.
+                    .scaleEffect(
+                        x: resizeTarget.size.width / max(windowSize.width, 1),
+                        y: resizeTarget.size.height / max(windowSize.height, 1),
+                        anchor: resizeAnchor
+                    )
                     .accessibilityElement(children: .contain)
                     .accessibilityLabel("\(app.title) window")
                     .accessibilityValue("\(Int(windowSize.width)) by \(Int(windowSize.height)) points")
@@ -259,50 +298,34 @@ struct DesktopCard<Content: View, Panel: View>: View {
                 .offset(x: displayOrigin.x, y: displayOrigin.y)
             }
         }
-        .onTapGesture { onFocus?() }
     }
 
-    /// 4 edges + 4 corners. Edge drag resizes one axis with anchor math
-    /// (leading/top edges move the origin); corners resize both axes.
+    /// 4 edges + 4 corners. Each handle names the fixed corner; drags are
+    /// measured in global space so the moving preview cannot distort them.
     private var resizeHandles: some View {
         ZStack {
-            edgeHandle(id: "trailing", cursor: .resizeLeftRight, alignment: .trailing, size: CGSize(width: 8, height: 60)) { t in
-                resize(trailingBy: t.width)
-            }
-            edgeHandle(id: "leading", cursor: .resizeLeftRight, alignment: .leading, size: CGSize(width: 8, height: 60)) { t in
-                resize(leadingBy: t.width)
-            }
-            edgeHandle(id: "bottom", cursor: .resizeUpDown, alignment: .bottom, size: CGSize(width: 60, height: 8)) { t in
-                resize(bottomBy: t.height)
-            }
-            edgeHandle(id: "top", cursor: .resizeUpDown, alignment: .top, size: CGSize(width: 60, height: 8)) { t in
-                resize(topBy: t.height)
-            }
+            edgeHandle(id: "trailing", cursor: .resizeLeftRight, alignment: .trailing, size: CGSize(width: 8, height: 60), anchor: .topLeading)
+            edgeHandle(id: "leading", cursor: .resizeLeftRight, alignment: .leading, size: CGSize(width: 8, height: 60), anchor: .topTrailing)
+            edgeHandle(id: "bottom", cursor: .resizeUpDown, alignment: .bottom, size: CGSize(width: 60, height: 8), anchor: .topLeading)
+            edgeHandle(id: "top", cursor: .resizeUpDown, alignment: .top, size: CGSize(width: 60, height: 8), anchor: .bottomLeading)
             ForEach(cornerSpecs, id: \.id) { spec in
-                edgeHandle(id: spec.id, cursor: spec.cursor, alignment: spec.alignment, size: CGSize(width: 14, height: 14)) { t in
-                    switch spec.id {
-                    case "topLeading": resize(leadingBy: t.width); resize(topBy: t.height)
-                    case "topTrailing": resize(trailingBy: t.width); resize(topBy: t.height)
-                    case "bottomLeading": resize(leadingBy: t.width); resize(bottomBy: t.height)
-                    default: resize(trailingBy: t.width); resize(bottomBy: t.height)
-                    }
-                }
+                edgeHandle(id: spec.id, cursor: spec.cursor, alignment: spec.alignment, size: CGSize(width: 14, height: 14), anchor: spec.anchor)
             }
         }
     }
 
-    private struct CornerSpec { let id: String; let cursor: NSCursor; let alignment: Alignment }
+    private struct CornerSpec { let id: String; let cursor: NSCursor; let alignment: Alignment; let anchor: UnitPoint }
 
     private var cornerSpecs: [CornerSpec] {
         [
-            CornerSpec(id: "topLeading", cursor: .init(image: NSCursor.crosshair.image, hotSpot: .zero), alignment: .topLeading),
-            CornerSpec(id: "topTrailing", cursor: .init(image: NSCursor.crosshair.image, hotSpot: .zero), alignment: .topTrailing),
-            CornerSpec(id: "bottomLeading", cursor: .init(image: NSCursor.crosshair.image, hotSpot: .zero), alignment: .bottomLeading),
-            CornerSpec(id: "bottomTrailing", cursor: .init(image: NSCursor.crosshair.image, hotSpot: .zero), alignment: .bottomTrailing),
+            CornerSpec(id: "topLeading", cursor: desktopCornerCursor, alignment: .topLeading, anchor: .bottomTrailing),
+            CornerSpec(id: "topTrailing", cursor: desktopCornerCursor, alignment: .topTrailing, anchor: .bottomLeading),
+            CornerSpec(id: "bottomLeading", cursor: desktopCornerCursor, alignment: .bottomLeading, anchor: .topTrailing),
+            CornerSpec(id: "bottomTrailing", cursor: desktopCornerCursor, alignment: .bottomTrailing, anchor: .topLeading),
         ]
     }
 
-    private func edgeHandle(id: String, cursor: NSCursor, alignment: Alignment, size: CGSize, onDrag: @escaping (CGSize) -> Void) -> some View {
+    private func edgeHandle(id: String, cursor: NSCursor, alignment: Alignment, size: CGSize, anchor: UnitPoint) -> some View {
         Rectangle()
             .fill(hoveringHandle == id ? ZeroTheme.orange.opacity(0.35) : Color.clear)
             .frame(width: size.width, height: size.height)
@@ -313,13 +336,14 @@ struct DesktopCard<Content: View, Panel: View>: View {
                 if hovering { cursor.push() } else { NSCursor.pop() }
             }
             .gesture(
-                DragGesture(minimumDistance: 1)
-                    .onChanged {
-                        if resizeBase == nil { resizeBase = (origin, windowSize) }
-                        onDrag($0.translation)
+                DragGesture(minimumDistance: 1, coordinateSpace: .global)
+                    .updating($resizeSession) { value, state, _ in
+                        state = ResizeSession(translation: value.translation, anchor: anchor)
                     }
-                    .onEnded { _ in
-                        resizeBase = nil
+                    .onEnded { value in
+                        let rect = resizeRect(dx: value.translation.width, dy: value.translation.height, anchor: anchor)
+                        origin = rect.origin
+                        windowSize = rect.size
                         onResize?(windowSize)
                         onMove?(origin)
                     }
@@ -338,9 +362,10 @@ struct DesktopCard<Content: View, Panel: View>: View {
                 onZoom: { isFullscreen.toggle() }
             )
             Image(systemName: app.route.symbol)
-                .accessibilityHidden(true)
+                .allowsHitTesting(false)
             Text(app.title)
-                .font(.system(size: 13, weight: .semibold))
+                .font(.zero(size: 13, weight: .semibold))
+                .allowsHitTesting(false)
             Spacer(minLength: 8)
             if let kind = InspectorPopoutKind(desktopRoute: app.route) {
                 InspectorPopoutButton(kind: kind)
@@ -349,17 +374,23 @@ struct DesktopCard<Content: View, Panel: View>: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
         .background(ZeroTheme.frameBand)
-        .onTapGesture { onFocus?() }
+        // The whole band is the drag surface. The shape is defined on the
+        // header itself (not the background child) so the Spacer/padding area
+        // always hit-tests; the traffic lights and Pop-out keep their clicks
+        // as child views. Tap and drag are one gesture: a release with no
+        // movement focuses, any movement moves the card.
+        .contentShape(Rectangle())
         .gesture(
-            DragGesture(minimumDistance: 4)
-                .onChanged { value in
-                    dragTranslation = value.translation
-                }
+            DragGesture(minimumDistance: 0, coordinateSpace: .global)
+                .updating($dragTranslation) { value, state, _ in state = value.translation }
                 .onEnded { value in
-                    let end = CGPoint(x: origin.x + value.translation.width, y: origin.y + value.translation.height)
-                    origin = CGPoint(x: max(end.x, 0), y: max(end.y, 0))
-                    dragTranslation = .zero
-                    onMove?(origin)
+                    if value.translation != .zero {
+                        origin = CGPoint(
+                            x: origin.x + value.translation.width,
+                            y: origin.y + value.translation.height
+                        )
+                        onMove?(origin)
+                    }
                     onFocus?()
                 }
         )
@@ -371,7 +402,7 @@ struct DesktopCard<Content: View, Panel: View>: View {
         VStack(spacing: 0) {
             HStack {
                 Text(app.title)
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.zero(size: 13, weight: .semibold))
                 Spacer()
                 Button("Done") { isFullscreen = false }
                     .buttonStyle(ZeroButtonStyle(.standard))

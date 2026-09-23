@@ -387,13 +387,13 @@ public struct FlightRecorderView: View {
     private func header(wide: Bool) -> some View {
         let title = VStack(alignment: .leading, spacing: 8) {
             Text("Flight Recorder: Chronological Event & Evidence Explorer")
-                .font(.system(size: wide ? 35 : 27, weight: .black))
+                .font(.zero(size: wide ? 35 : 27, weight: .black))
                 .tracking(-1.05)
                 .minimumScaleFactor(0.68)
                 .lineLimit(2)
             HStack(spacing: 8) {
                 Text("Deterministic Event Ledger")
-                    .font(.system(size: 12, weight: .bold))
+                    .font(.zero(size: 12, weight: .bold))
                     .padding(.horizontal, 5)
                     .background(ZeroTheme.markerYellow.opacity(0.78))
                     .rotationEffect(.degrees(-0.7))
@@ -402,7 +402,7 @@ public struct FlightRecorderView: View {
                                 tone: projection.isRuntimeLive ? .healthy : .attention).equatable()
             }
             Text("Dense bounded runtime evidence and separately identified Codex bridge state. Missing timestamps, payloads, and proof are labelled rather than inferred.")
-                .font(.system(size: 12, weight: .medium))
+                .font(.zero(size: 12, weight: .medium))
                 .foregroundStyle(ZeroTheme.secondaryInk)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -421,7 +421,7 @@ public struct FlightRecorderView: View {
         VStack(alignment: .trailing, spacing: 6) {
             ZeroStatusBadge("READ-ONLY EVIDENCE", symbol: "eye.fill", tone: .neutral).equatable()
             Text("No verify, export, audit, or recording-control primitive is exposed.")
-                .font(.system(size: 8, weight: .medium, design: .monospaced))
+                .font(.zeroMono(size: 8, weight: .medium))
                 .foregroundStyle(ZeroTheme.secondaryInk)
         }
     }
@@ -454,7 +454,7 @@ public struct FlightRecorderView: View {
             VStack(alignment: .leading, spacing: 12) {
                 HStack {
                     Label("EVIDENCE FILTER SCRUBBER", systemImage: "line.3.horizontal.decrease.circle")
-                        .font(.system(size: 10, weight: .bold, design: .monospaced))
+                        .font(.zeroMono(size: 10, weight: .bold))
                     Spacer()
                     ZeroStatusBadge("CURRENT BOUNDED PROJECTION", tone: .neutral)
                 }
@@ -473,7 +473,7 @@ public struct FlightRecorderView: View {
                     }
                 }
                 Toggle("Show all records (include render/clock noise)", isOn: $model.showAllRecords)
-                    .font(.system(size: 10, weight: .bold, design: .monospaced))
+                    .font(.zeroMono(size: 10, weight: .bold))
                     .accessibilityLabel("Show all records")
                 HStack(spacing: 9) {
                     Image(systemName: "magnifyingglass")
@@ -481,7 +481,7 @@ public struct FlightRecorderView: View {
                         .accessibilityHidden(true)
                     TextField("Filter actor, channel, target, ID, or outcome", text: $query)
                         .textFieldStyle(.plain)
-                        .font(.system(size: 11, weight: .medium, design: .monospaced))
+                        .font(.zeroMono(size: 11, weight: .medium))
                         .accessibilityLabel("Filter flight records")
                     if !query.isEmpty {
                         Button { query = "" } label: { Image(systemName: "xmark.circle.fill") }
@@ -495,7 +495,7 @@ public struct FlightRecorderView: View {
                 .background(ZeroTheme.workstation, in: RoundedRectangle(cornerRadius: 6))
                 .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(ZeroTheme.line))
                 Text(projection.historyNotice)
-                    .font(.system(size: 9, weight: .medium, design: .monospaced))
+                    .font(.zeroMono(size: 9, weight: .medium))
                     .foregroundStyle(ZeroTheme.secondaryInk)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -533,7 +533,7 @@ public struct FlightRecorderView: View {
                             ForEach(visibleRecords.prefix(FlightChronology.maxRenderedRows)) { record in flightRow(record) }
                             if visibleRecords.count > FlightChronology.maxRenderedRows {
                                 Text("+\(visibleRecords.count - FlightChronology.maxRenderedRows) more matching records (bounded render)")
-                                    .font(.system(size: 9, weight: .medium, design: .monospaced))
+                                    .font(.zeroMono(size: 9, weight: .medium))
                                     .foregroundStyle(ZeroTheme.secondaryInk)
                                     .padding(.vertical, 6)
                             }
@@ -593,7 +593,7 @@ public struct FlightRecorderView: View {
 
     private func flightCell(_ value: String, width: CGFloat, header: Bool = false, lines: Int = 1, tone: ZeroTone? = nil) -> some View {
         Text(value)
-            .font(.system(size: header ? 9 : 10, weight: header ? .bold : .medium, design: .monospaced))
+            .font(.zeroMono(size: header ? 9 : 10, weight: header ? .bold : .medium))
             .foregroundStyle(tone?.color ?? (header ? ZeroTheme.secondaryInk : ZeroTheme.ink))
             .multilineTextAlignment(.leading)
             .textSelection(.enabled)
@@ -612,10 +612,10 @@ public struct FlightRecorderView: View {
                     HStack(alignment: .top) {
                         VStack(alignment: .leading, spacing: 4) {
                             Text(record.evidence)
-                                .font(.system(size: 17, weight: .black, design: .monospaced))
+                                .font(.zeroMono(size: 17, weight: .black))
                                 .textSelection(.enabled)
                             Text(record.timestamp)
-                                .font(.system(size: 9, weight: .medium, design: .monospaced))
+                                .font(.zeroMono(size: 9, weight: .medium))
                                 .foregroundStyle(ZeroTheme.secondaryInk)
                                 .textSelection(.enabled)
                         }
@@ -635,7 +635,7 @@ public struct FlightRecorderView: View {
                     ]).equatable()
                     VStack(alignment: .leading, spacing: 8) {
                         Label("SAFE EVIDENCE FIELDS", systemImage: "doc.text.magnifyingglass")
-                            .font(.system(size: 10, weight: .bold, design: .monospaced))
+                            .font(.zeroMono(size: 10, weight: .bold))
                         ScrollView(.horizontal, showsIndicators: true) {
                             NetworkFlightEvidenceRows(rows: record.fields.isEmpty ? [("Fields", "No allowlisted field projected")] : record.fields)
                                 .frame(minWidth: 360)
@@ -643,7 +643,7 @@ public struct FlightRecorderView: View {
                         Text(record.origin == .runtime
                             ? "The owner-local snapshot omits raw event payloads and results. Full evidence requires an authorized runtime operation not exposed here."
                             : "Only allowlisted identifiers and state are shown. Unknown Codex parameters are not rendered as raw payloads.")
-                            .font(.system(size: 9, weight: .medium))
+                            .font(.zero(size: 9, weight: .medium))
                             .foregroundStyle(ZeroTheme.secondaryInk)
                             .fixedSize(horizontal: false, vertical: true)
                     }
@@ -651,7 +651,7 @@ public struct FlightRecorderView: View {
                     .background(ZeroTheme.cardCream, in: RoundedRectangle(cornerRadius: 7))
                     .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(ZeroTheme.line))
                     Text("Mark audited, verify tree, export, and replay are unavailable because this projection supplies no exact owner-authorized primitive.")
-                        .font(.system(size: 9, weight: .medium, design: .monospaced))
+                        .font(.zeroMono(size: 9, weight: .medium))
                         .foregroundStyle(ZeroTheme.secondaryInk)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -677,7 +677,7 @@ public struct FlightRecorderView: View {
         VStack(alignment: .leading, spacing: 12) {
             NetworkFlightEmptyState(symbol: "scope", title: title, detail: detail)
             Text(id)
-                .font(.system(size: 9, weight: .medium, design: .monospaced))
+                .font(.zeroMono(size: 9, weight: .medium))
                 .foregroundStyle(ZeroTheme.secondaryInk)
                 .textSelection(.enabled)
                 .accessibilityLabel("Selected evidence identity")

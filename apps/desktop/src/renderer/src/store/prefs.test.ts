@@ -2,6 +2,7 @@ import { afterEach, describe, it, expect, vi } from 'vitest'
 import {
   hydrateDesktopPrefs,
   setIconPosition,
+  setTheme,
   setWallpaper,
   setWindowRect,
   setWindowSnap,
@@ -25,6 +26,7 @@ afterEach(() => {
   resetWindow()
   useWindows.setState(initialWindows())
   useDesktopPrefs.setState({
+    theme: 'light',
     wallpaper: { kind: 'dotted-green', mode: 'cover' },
     icons: {},
     windows: {},
@@ -39,6 +41,7 @@ describe('hydrateDesktopPrefs', () => {
       vi.fn(() =>
         Promise.resolve({
           wallpaper: { kind: 'canvas-tan', mode: 'cover' },
+          theme: 'dark',
           icons: { 'icon-desk': { x: 112, y: 28 } },
           windows: { desk: { x: 5, y: 6, w: 560, h: 480 } }
         })
@@ -47,9 +50,17 @@ describe('hydrateDesktopPrefs', () => {
     await hydrateDesktopPrefs()
     expect(zero.invoke).toHaveBeenCalledWith('prefs.get')
     expect(useDesktopPrefs.getState().wallpaper).toEqual({ kind: 'canvas-tan', mode: 'cover' })
+    expect(useDesktopPrefs.getState().theme).toBe('dark')
     expect(useDesktopPrefs.getState().icons['icon-desk']).toEqual({ x: 112, y: 28 })
     expect(useDesktopPrefs.getState().loaded).toBe(true)
     expect(useWindows.getState().rects.desk).toEqual({ x: 5, y: 6, w: 560, h: 480 })
+  })
+
+  it('writes theme changes through prefs.set', () => {
+    const zero = stubZero(vi.fn(() => Promise.resolve({})))
+    setTheme('dark')
+    expect(useDesktopPrefs.getState().theme).toBe('dark')
+    expect(zero.invoke).toHaveBeenCalledWith('prefs.set', { theme: 'dark' })
   })
 
   it('rounds free-placed icon positions to their grid slot on load (one-way)', async () => {

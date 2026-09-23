@@ -691,14 +691,20 @@ describe('ZeroBotRoute thread surface', () => {
     act(() => {
       toggle?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
     })
-    expect(host?.querySelector('[data-region="inspector"]')).toBeNull()
+    const collapsed = host?.querySelector('[data-region="inspector"]')
+    expect(collapsed).not.toBeNull()
+    expect(collapsed?.classList.contains('is-collapsed')).toBe(true)
+    expect(collapsed?.getAttribute('aria-hidden')).toBe('true')
+    expect(collapsed?.hasAttribute('inert')).toBe(true)
     const reopen = Array.from(host?.querySelectorAll('button') ?? []).find(
       (b) => b.textContent === 'Show inspector'
     )
     act(() => {
       reopen?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
     })
-    expect(host?.querySelector('[data-region="inspector"]')).not.toBeNull()
+    expect(
+      host?.querySelector('[data-region="inspector"]')?.classList.contains('is-collapsed')
+    ).toBe(false)
     expect(invoke.mock.calls.some(([op]) => op === 'codex.threads')).toBe(false)
   })
 
@@ -724,7 +730,9 @@ describe('ZeroBotRoute thread surface', () => {
         '42%'
       )
     })
-    expect(host?.querySelector('[data-region="inspector"]')).toBeNull()
+    expect(
+      host?.querySelector('[data-region="inspector"]')?.classList.contains('is-collapsed')
+    ).toBe(true)
   })
 
   it('attributes open-thread turns to Zero with muted provider models and summaries', async () => {

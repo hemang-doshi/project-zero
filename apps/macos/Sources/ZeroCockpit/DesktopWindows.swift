@@ -15,14 +15,15 @@ func desktopCascadeOffset(for index: Int) -> CGSize {
     return CGSize(width: CGFloat(slot) * step, height: CGFloat(slot) * step)
 }
 
-/// Pure initial origin: stored origin wins (clamped ≥ 0); when there is no
-/// stored origin, cascade by open count so cards never share 0,0.
+/// Pure initial origin: stored origin wins as-is (free movement, including
+/// partially off-canvas); when there is no stored origin, cascade by open
+/// count so cards never share 0,0.
 func desktopInitialOrigin(for openCount: Int, stored: CGPoint?) -> CGPoint {
     guard let stored else {
         let cascade = desktopCascadeOffset(for: openCount)
         return CGPoint(x: cascade.width, y: cascade.height)
     }
-    return CGPoint(x: max(stored.x, 0), y: max(stored.y, 0))
+    return stored
 }
 
 /// Pure launch stagger: distinct cascade origins by index in
@@ -64,13 +65,18 @@ struct DesktopWindowGeometry {
     var origin: CGPoint {
         get {
             guard let dict = defaults.dictionary(forKey: originKey) else { return .zero }
-            let x = max((dict["x"] as? Double) ?? 0, 0)
-            let y = max((dict["y"] as? Double) ?? 0, 0)
+            let x = (dict["x"] as? Double) ?? 0
+            let y = (dict["y"] as? Double) ?? 0
             return CGPoint(x: x, y: y)
         }
         nonmutating set {
-            defaults.set(["x": max(newValue.x, 0), "y": max(newValue.y, 0)], forKey: originKey)
+            defaults.set(["x": newValue.x, "y": newValue.y], forKey: originKey)
         }
+    }
+
+    /// Stored origin, or nil when never persisted (distinct from `.zero`).
+    var storedOrigin: CGPoint? {
+        defaults.dictionary(forKey: originKey) == nil ? nil : origin
     }
 
     var size: CGSize {
@@ -135,6 +141,46 @@ final class DesktopWindowManager: ObservableObject {
                 DesktopWindowGeometry(route: route, defaults: defaults).origin = stagger[index]
             }
         }
+        // One-time layout repair for origins written before canvas-anchored
+        // placement: those builds stored the same near-corner origin for every
+        // route, so all windows opened stacked in the top-left.
+        migrateStackedOriginsIfNeeded()
+    }
+
+    /// Keeps the first route of each origin cluster and moves the rest to free
+    /// cascade slots (32 pt inset, 48 pt steps, so every header stays
+    /// grabbable). Runs once per layout version; later drags persist.
+    private func migrateStackedOriginsIfNeeded() {
+        let key = "zero.desktop.layout.version"
+        guard (defaults.object(forKey: key) as? Int ?? 0) < 2 else { return }
+        defaults.set(2, forKey: key)
+
+        let tolerance: CGFloat = 40
+        let spacing: CGFloat = 48
+        var occupied: [CGPoint] = []
+        var nextSlot = 0
+
+        for route in CockpitRoute.allCases {
+            let geometry = DesktopWindowGeometry(route: route, defaults: defaults)
+            guard let stored = geometry.storedOrigin else { continue }
+            let collides = occupied.contains {
+                abs($0.x - stored.x) < tolerance && abs($0.y - stored.y) < tolerance
+            }
+            guard collides else {
+                occupied.append(stored)
+                continue
+            }
+            var candidate = CGPoint(x: 32 + CGFloat(nextSlot) * spacing, y: 32 + CGFloat(nextSlot) * spacing)
+            while occupied.contains(where: {
+                abs($0.x - candidate.x) < tolerance && abs($0.y - candidate.y) < tolerance
+            }) {
+                nextSlot += 1
+                candidate = CGPoint(x: 32 + CGFloat(nextSlot) * spacing, y: 32 + CGFloat(nextSlot) * spacing)
+            }
+            geometry.origin = candidate
+            occupied.append(candidate)
+            nextSlot += 1
+        }
     }
 
     var openCount: Int { openRoutes.count }
@@ -142,13 +188,29 @@ final class DesktopWindowManager: ObservableObject {
     func isOpen(_ route: CockpitRoute) -> Bool { openRoutes.contains(route) }
 
     func open(_ route: CockpitRoute) {
-        if !openRoutes.contains(route) && !hasStoredOrigin(for: route) {
-            setOrigin(desktopInitialOrigin(for: openRoutes.count, stored: nil), for: route)
+        var changed = false
+        if !openRoutes.contains(route) {
+            if !hasStoredOrigin(for: route) {
+                setOrigin(desktopInitialOrigin(for: openRoutes.count, stored: nil), for: route)
+            }
+            openRoutes.insert(route)
+            changed = true
         }
-        openRoutes.insert(route)
-        minimized.remove(route)
-        if !zOrder.contains(route) { zOrder.append(route) } else { bringToFront(route) }
-        persist()
+        if minimized.contains(route) {
+            minimized.remove(route)
+            changed = true
+        }
+        if !zOrder.contains(route) {
+            zOrder.append(route)
+            changed = true
+        } else if zOrder.last != route {
+            zOrder.removeAll { $0 == route }
+            zOrder.append(route)
+            changed = true
+        }
+        // Skip the publish/persist when nothing moved: focusing an already
+        // front window must not re-render every open route.
+        if changed { persist() }
     }
 
     func close(_ route: CockpitRoute) {
@@ -163,6 +225,7 @@ final class DesktopWindowManager: ObservableObject {
     }
 
     func bringToFront(_ route: CockpitRoute) {
+        guard zOrder.last != route else { return }
         zOrder.removeAll { $0 == route }
         zOrder.append(route)
         persist()
@@ -186,10 +249,9 @@ final class DesktopWindowManager: ObservableObject {
         desktopInitialOrigin(for: 0, stored: rawStoredOrigin(for: route))
     }
 
-    /// Raw stored origin (nil when never persisted); `origin(for:)` routes
-    /// it through `desktopInitialOrigin` for the ≥ 0 clamp. A nil stored
-    /// origin resolves to the index-0 cascade, which is `.zero` — identical
-    /// to the previous unclamped read for missing keys.
+    /// Raw stored origin (nil when never persisted); `origin(for:)` returns
+    /// it as-is so free drag positions survive relaunch. A nil stored
+    /// origin resolves to the index-0 cascade, which is `.zero`.
     private func rawStoredOrigin(for route: CockpitRoute) -> CGPoint? {
         guard let dict = defaults.dictionary(forKey: "zero.desktop.origin.\(route.rawValue)") else { return nil }
         let x = (dict["x"] as? Double) ?? 0

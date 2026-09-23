@@ -1,4 +1,5 @@
 :root {
+  color-scheme: light;
   --z-brand-orange: #F54E00;
   --z-primary-authority: #A83300;
   --z-card-cream: #FAF8F5;
@@ -22,5 +23,105 @@
 }
 
 body {
-  font-family: Inter, system-ui, -apple-system, sans-serif;
+  font-family:
+    Inter,
+    system-ui,
+    -apple-system,
+    sans-serif;
+  background: var(--z-card-cream);
+  color: var(--z-ink);
+}
+
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  --z-brand-orange: #ff7846;
+  --z-primary-authority: #ff9c75;
+  --z-card-cream: #25272b;
+  --z-nav-cream: #1d1f22;
+  --z-nav-border: #3a3d42;
+  --z-canvas-tan: #303338;
+  --z-window-canvas: #24282a;
+  --z-hover-orange: #ff7846;
+  --z-marker-yellow: #594a26;
+  --z-status-green: #42d5a2;
+  --z-highlight-blue: #69a8ff;
+  --z-error-red: #ff7777;
+  --z-wallpaper: #22252a;
+  --z-wallpaper-dot: #34383f;
+  --z-ink: #f0f1f3;
+  --z-secondary-ink: #b1b5bc;
+  --z-line: #3a3d42;
+  --z-orange: #ff7846;
+  --z-orange-pressed: #ff9c75;
+  --z-card-white: #292b30;
+}
+
+.zw-transcript {
+  width: min(100%, 960px);
+  align-self: center;
+  box-sizing: border-box;
+}
+
+.zw-composer-shell {
+  width: min(100%, 900px);
+  box-sizing: border-box;
+  margin: 8px auto 12px;
+  padding: 14px 16px;
+  border: 1px solid var(--z-line);
+  border-radius: 18px;
+  background: color-mix(in srgb, var(--z-card-white) 94%, transparent);
+  box-shadow: 0 14px 36px rgb(25 28 32 / 10%);
+}
+
+:root[data-theme='dark'] .zw-composer-shell {
+  box-shadow: 0 16px 40px rgb(0 0 0 / 28%);
+}
+
+.zw-inspector {
+  overflow: hidden !important;
+  transition:
+    width 220ms ease,
+    padding 220ms ease,
+    opacity 180ms ease,
+    transform 220ms ease,
+    border-color 220ms ease;
+}
+
+.zw-inspector.is-collapsed {
+  width: 0 !important;
+  padding: 0 !important;
+  border-left-width: 0 !important;
+  border-left-color: transparent !important;
+  opacity: 0;
+  transform: translateX(12px);
+  pointer-events: none;
+}
+
+.zw-thread-row {
+  transition:
+    background-color 140ms ease,
+    color 140ms ease;
+}
+
+.zw-thread-row:hover {
+  background: color-mix(in srgb, var(--z-hover-orange) 9%, transparent) !important;
+}
+
+.zw-thread-row:focus-visible {
+  outline: 2px solid var(--z-orange);
+  outline-offset: 1px;
+}
+
+.zw-composer-shell:focus-within {
+  border-color: color-mix(in srgb, var(--z-orange) 52%, var(--z-line));
+  box-shadow:
+    0 14px 36px rgb(25 28 32 / 12%),
+    0 0 0 3px color-mix(in srgb, var(--z-orange) 12%, transparent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .zw-inspector,
+  .zw-thread-row {
+    transition: none;
+  }
 }

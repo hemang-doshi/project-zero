@@ -573,6 +573,7 @@ describe('prefs ops', () => {
     const invoke = createDispatch(d, () => fakePair(fakeBridge('live'), fakeBridge('live')))
     const p = (await invoke('prefs.get')) as Prefs
     expect(p.version).toBe(1)
+    expect(p.theme).toBe('light')
     expect(p.wallpaper).toEqual({ kind: 'cream', mode: 'cover' })
     expect(d.fetchSnapshot).not.toHaveBeenCalled()
   })
@@ -580,10 +581,12 @@ describe('prefs ops', () => {
     const d = deps()
     const invoke = createDispatch(d, () => fakePair(fakeBridge('live'), fakeBridge('live')))
     await invoke('prefs.set', {
+      theme: 'dark',
       icons: { 'icon-desk': { x: 40, y: 44 } },
       windows: { network: { x: 0, y: 0, w: 560, h: 480 } }
     })
     const p = (await invoke('prefs.get')) as Prefs
+    expect(p.theme).toBe('dark')
     expect(p.icons['icon-desk']).toEqual({ x: 40, y: 44 })
     expect(p.windows.network).toEqual({ x: 0, y: 0, w: 560, h: 480 })
     expect(p.windows.desk).toEqual(defaultPrefs().windows.desk)

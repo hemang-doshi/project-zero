@@ -77,7 +77,7 @@ public struct MenuCompanion: View {
     private func statusRow(title: String, value: String, symbol: String, tone: ZeroTone) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 10) {
             Text(title.uppercased())
-                .font(.system(size: 9, weight: .bold, design: .monospaced))
+                .font(.zeroMono(size: 9, weight: .bold))
                 .foregroundStyle(ZeroTheme.secondaryInk)
                 .frame(width: 62, alignment: .leading)
             ZeroStatusBadge(value, symbol: symbol, tone: tone)

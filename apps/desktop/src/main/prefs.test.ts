@@ -50,6 +50,12 @@ describe('applyPrefsPatch', () => {
     })
     expect(next.wallpaper).toEqual({ kind: 'custom', path: '/a/b.png', mode: 'tile' })
   })
+  it('persists only supported appearance themes', () => {
+    expect(applyPrefsPatch(defaultPrefs(), { theme: 'dark' }).theme).toBe('dark')
+    expect(applyPrefsPatch({ ...defaultPrefs(), theme: 'dark' }, { theme: 'sepia' }).theme).toBe(
+      'dark'
+    )
+  })
   it('drops malformed wallpaper, icons and windows fields (fail-soft)', () => {
     const base = defaultPrefs()
     const next = applyPrefsPatch(base, {
@@ -107,6 +113,11 @@ describe('applyPrefsPatch', () => {
     const next = applyPrefsPatch(defaultPrefs(), { snaps: [] })
     expect(next.snaps).toEqual({})
   })
+})
+
+it('migrates legacy preferences to the light theme', () => {
+  const legacy = { ...defaultPrefs(), theme: undefined } as unknown as Prefs
+  expect(startupMigrate(legacy).theme).toBe('light')
 })
 
 describe('startupMigrate', () => {

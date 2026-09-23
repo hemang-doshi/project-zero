@@ -96,12 +96,15 @@ private struct CockpitWindow: View {
                         onMinimize: { minimizeRoute(app.route) },
                         onFocus: {
                             windows.bringToFront(app.route)
-                            model.selection.route = app.route
+                            if model.selection.route != app.route {
+                                model.selection.route = app.route
+                            }
                         },
                         onMove: { windows.setOrigin($0, for: app.route) },
                         onResize: { windows.setSize($0, for: app.route) },
                         content: {
                             CockpitRouteView(route: app.route, model: model)
+                                .equatable()
                                 .padding(12)
                         },
                         panel: { _ in EmptyView() }
@@ -109,7 +112,6 @@ private struct CockpitWindow: View {
                     .zIndex(zIndex(for: app.route))
                 }
             }
-            .padding(48)
             VStack {
                 Spacer()
                 dockStrip
@@ -188,7 +190,7 @@ private struct CockpitWindow: View {
                     VStack(spacing: 2) {
                         Label(route.title, systemImage: route.symbol)
                             .labelStyle(.iconOnly)
-                            .font(.system(size: 18))
+                            .font(.zero(size: 18))
                             .frame(width: 44, height: 44)
                             .background(isOpen ? ZeroTheme.orange.opacity(0.25) : ZeroTheme.workstation, in: RoundedRectangle(cornerRadius: 10))
                         Circle()
@@ -209,9 +211,17 @@ private struct CockpitWindow: View {
     }
 }
 
-struct CockpitRouteView: View {
+struct CockpitRouteView: View, Equatable {
     let route: CockpitRoute
     @ObservedObject var model: CockpitModel
+
+    /// Equal when the route and model are unchanged. Wrapping this in
+    /// `.equatable()` lets desktop gestures (drag/resize) re-render the card
+    /// chrome without re-running the heavy route body; model publishes still
+    /// update it through the inner `@ObservedObject`.
+    static func == (lhs: CockpitRouteView, rhs: CockpitRouteView) -> Bool {
+        lhs.route == rhs.route && lhs.model === rhs.model
+    }
 
     @ViewBuilder
     var body: some View {
@@ -244,6 +254,6 @@ private struct CockpitSettings: View {
     var body: some View {
         Text("Project Zero settings will appear here.")
             .padding()
-            .background(ZeroTheme.panel)
+            .background(ZeroTheme.cardCream)
     }
 }
