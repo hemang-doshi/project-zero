@@ -11,6 +11,7 @@ import type { Tone } from './runtime.types'
 import {
   applyBridgeEvent,
   groupThreadsByRegisteredProject,
+  groupThreadsByFolder,
   groupVisibleItems,
   EMPTY_HARNESS_LOG,
   mergeTranscript,
@@ -248,14 +249,6 @@ const eventCell: React.CSSProperties = {
   whiteSpace: 'nowrap'
 }
 
-const folderHead: React.CSSProperties = {
-  display: 'flex',
-  alignItems: 'baseline',
-  justifyContent: 'space-between',
-  gap: 8,
-  minWidth: 0
-}
-
 const sessionRow: React.CSSProperties = {
   display: 'grid',
   gridTemplateColumns: '1fr auto',
@@ -343,18 +336,26 @@ export function FolderGroupList({
   selectedId: string | null
   onSelect: (id: string) => void
 }): React.JSX.Element {
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({})
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 10, minWidth: 0 }}>
-      {groups.map((g) => (
-        <div key={g.path} style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}>
-          <div style={folderHead}>
-            <span data-voice="human" style={{ ...sectionLabel, fontSize: 10 }}>
-              {g.folder.toUpperCase()} · {g.count}
-            </span>
-            <span data-voice="machine" style={{ ...machineMeta, textAlign: 'right' }}>
-              {g.path}
-            </span>
-          </div>
+      {groups.map((g, index) => (
+        <details
+          key={g.path}
+          className="zw-group-details"
+          open={
+            expanded[g.path] ??
+            (index === 0 || g.sessions.some((session) => session.id === selectedId))
+          }
+          onToggle={(event) => {
+            const open = event.currentTarget.open
+            setExpanded((current) => ({ ...current, [g.path]: open }))
+          }}
+        >
+          <summary title={g.path}>
+            {g.folder} · {g.count}
+            {g.sessions.some((session) => session.id === selectedId) ? ' · selected' : ''}
+          </summary>
           {g.sessions.map((s) => (
             <button
               key={s.id}
@@ -380,7 +381,7 @@ export function FolderGroupList({
               </span>
             </button>
           ))}
-        </div>
+        </details>
       ))}
     </div>
   )
@@ -490,6 +491,8 @@ export const ZeroBotRoute = memo(function ZeroBotRoute(): React.JSX.Element {
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [inspectorOpen, setInspectorOpen] = useState(false)
+  const [expandedProjects, setExpandedProjects] = useState<Record<string, boolean>>({})
+  const [expandedFolders, setExpandedFolders] = useState<Record<string, boolean>>({})
   const openRoute = useWindows((state) => state.openRoute)
   const [workspaceWidth, setWorkspaceWidth] = useState<number | null>(null)
   const workspaceRef = useRef<HTMLDivElement>(null)
@@ -957,6 +960,7 @@ export const ZeroBotRoute = memo(function ZeroBotRoute(): React.JSX.Element {
     () => groupThreadsByRegisteredProject(projects, codexRows),
     [projects, codexRows]
   )
+  const firstProjectWithRows = projectThreads.groups.findIndex((group) => group.rows.length > 0)
   const openRow = lane.rows.find((r) => r.id === lane.threadId) ?? null
   const openProject =
     projectThreads.groups.find(({ rows }) => rows.some((row) => row.id === openRow?.id))?.project ??
@@ -1198,33 +1202,69 @@ export const ZeroBotRoute = memo(function ZeroBotRoute(): React.JSX.Element {
                 REGISTERED PROJECTS
               </span>
               {projectsError !== null ? (
-                <p style={warnNotice}>Projects unavailable: {projectsError}</p>
+                <details className="zw-group-details">
+                  <summary style={warnNotice}>Projects unavailable · Zero runtime offline</summary>
+                  <p style={warnNotice}>{projectsError}</p>
+                </details>
               ) : null}
-              {projectThreads.groups.map(({ project, rows }) => (
-                <section
+              {projectThreads.groups.map(({ project, rows }, projectIndex) => (
+                <details
                   key={project.id}
                   aria-label={`Project ${project.name}`}
-                  style={{ display: 'flex', flexDirection: 'column', gap: 4 }}
+                  className="zw-group-details"
+                  open={
+                    expandedProjects[project.id] ??
+                    (projectIndex === firstProjectWithRows ||
+                      rows.some((row) => row.id === lanes.codex.threadId))
+                  }
+                  onToggle={(event) => {
+                    const open = event.currentTarget.open
+                    setExpandedProjects((current) => ({ ...current, [project.id]: open }))
+                  }}
                 >
-                  <span data-voice="human" style={sectionLabel}>
+                  <summary data-voice="human" title={project.path}>
                     {project.name} · {rows.length}
-                  </span>
-                  <span data-voice="machine" style={machineMeta}>
-                    {project.path}
-                  </span>
-                  <ThreadList rows={rows} selectedId={lanes.codex.threadId} onSelect={openThread} />
-                </section>
+                    {rows.some((row) => row.id === lanes.codex.threadId) ? ' · selected' : ''}
+                  </summary>
+                  {groupThreadsByFolder(project.path, rows).map((folder) => (
+                    <details
+                      key={folder.path ?? 'unknown'}
+                      className="zw-group-details zw-folder-details"
+                      open={
+                        expandedFolders[`${project.id}:${folder.path}`] ??
+                        folder.rows.some((row) => row.id === lanes.codex.threadId)
+                      }
+                      onToggle={(event) => {
+                        const open = event.currentTarget.open
+                        setExpandedFolders((current) => ({
+                          ...current,
+                          [`${project.id}:${folder.path}`]: open
+                        }))
+                      }}
+                    >
+                      <summary title={folder.path ?? undefined}>
+                        {folder.label} · {folder.rows.length}
+                      </summary>
+                      <ThreadList
+                        rows={folder.rows}
+                        selectedId={lanes.codex.threadId}
+                        onSelect={openThread}
+                      />
+                    </details>
+                  ))}
+                </details>
               ))}
               {projects.length === 0 && projectsError === null ? (
                 <p style={bodyText}>No registered projects yet.</p>
               ) : null}
-              <section
+              <details
                 aria-label="Unprojected conversations"
-                style={{ marginTop: 'auto', display: 'flex', flexDirection: 'column', gap: 4 }}
+                className="zw-group-details"
+                style={{ marginTop: 'auto' }}
               >
-                <span data-voice="human" style={sectionLabel}>
+                <summary data-voice="human">
                   UNPROJECTED · {projectThreads.unprojected.length}
-                </span>
+                </summary>
                 {projectThreads.unprojected.length > 0 ? (
                   <ThreadList
                     rows={projectThreads.unprojected}
@@ -1241,7 +1281,7 @@ export const ZeroBotRoute = memo(function ZeroBotRoute(): React.JSX.Element {
                     }
                   />
                 )}
-              </section>
+              </details>
             </>
           ) : opencodeResult !== null && opencodeResult.folders.length > 0 ? (
             <FolderGroupList
