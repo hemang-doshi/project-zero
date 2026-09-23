@@ -1,4 +1,5 @@
 import { app, shell, BrowserWindow, protocol, net, dialog } from 'electron'
+import { mkdirSync } from 'node:fs'
 import { join } from 'path'
 import { is } from '@electron-toolkit/utils'
 import { CockpitModel } from './cockpit-model'
@@ -10,10 +11,17 @@ import { createSkillDiscoverer } from './skills'
 import { createDeviceLister } from './devices'
 import { createTelemetrySampler } from './telemetry'
 import { createTray } from './tray'
+import { desktopRuntimePaths } from './runtime-paths'
 
-const appSupport = join(process.env.HOME ?? '', 'Library', 'Application Support', 'ProjectZero')
-const socketPath = join(appSupport, 'zero.sock')
-const prefsStoreDir = join(appSupport, 'desktop-electron')
+const development = is.dev || process.env.ZERO_DESKTOP_DEV_PROFILE === '1'
+const runtimePaths = desktopRuntimePaths(process.env.HOME ?? '', development)
+if (development) {
+  mkdirSync(runtimePaths.userDataDir, { recursive: true })
+  mkdirSync(runtimePaths.sessionDataDir, { recursive: true })
+  app.setPath('userData', runtimePaths.userDataDir)
+  app.setPath('sessionData', runtimePaths.sessionDataDir)
+}
+const { socketPath, prefsStoreDir } = runtimePaths
 
 protocol.registerSchemesAsPrivileged([
   { scheme: 'zero-img', privileges: { standard: true, secure: true, supportFetchAPI: true } }

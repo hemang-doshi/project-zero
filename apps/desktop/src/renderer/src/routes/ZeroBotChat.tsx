@@ -336,10 +336,10 @@ const NoticeRow = memo(function NoticeRow({ item }: { item: NoticeItem }): React
 
 const userBubble: React.CSSProperties = {
   alignSelf: 'flex-end',
-  maxWidth: '88%',
-  background: 'var(--z-card-cream)',
-  border: '1px solid var(--z-orange)',
-  borderRadius: '10px 10px 3px 10px',
+  maxWidth: '78%',
+  background: 'color-mix(in srgb, var(--z-orange) 9%, var(--z-card-cream))',
+  border: '1px solid transparent',
+  borderRadius: '14px 14px 4px 14px',
   padding: '8px 12px',
   minWidth: 0,
   display: 'flex',
@@ -349,11 +349,11 @@ const userBubble: React.CSSProperties = {
 
 const assistantBubble: React.CSSProperties = {
   alignSelf: 'flex-start',
-  maxWidth: '92%',
-  background: 'var(--z-card-white)',
-  border: '1px solid var(--z-line)',
-  borderRadius: '10px 10px 10px 3px',
-  padding: '8px 12px',
+  maxWidth: '88%',
+  background: 'transparent',
+  border: '1px solid transparent',
+  borderRadius: 12,
+  padding: '6px 2px',
   minWidth: 0,
   display: 'flex',
   flexDirection: 'column',
@@ -435,6 +435,7 @@ export const ThreadList = memo(function ThreadList({
           <button
             key={row.id}
             type="button"
+            className="zw-thread-row"
             onClick={() => onSelect(row.id)}
             aria-pressed={selected}
             style={{
@@ -444,9 +445,9 @@ export const ThreadList = memo(function ThreadList({
               textAlign: 'left',
               padding: '7px 10px',
               borderRadius: 8,
-              border: `1px solid ${selected ? 'var(--z-orange)' : 'var(--z-line)'}`,
+              border: '1px solid transparent',
               background: selected
-                ? 'color-mix(in srgb, var(--z-hover-orange) 12%, var(--z-card-white))'
+                ? 'color-mix(in srgb, var(--z-hover-orange) 12%, transparent)'
                 : 'transparent',
               cursor: 'pointer',
               minWidth: 0

@@ -340,7 +340,7 @@ enum ZeroBotTypography {
         weight: Font.Weight = .regular,
         design: Font.Design = .default
     ) -> Font {
-        .system(style, design: design, weight: weight)
+        (design == .monospaced ? Font.zeroMono(style) : Font.zero(style)).weight(weight)
     }
 }
 
@@ -1444,7 +1444,7 @@ public struct ZeroBotView: View {
             }
             .padding(10)
             .background(
-                isOperator ? ZeroTheme.authority : Color.white,
+                isOperator ? ZeroTheme.orange : Color.white,
                 in: RoundedRectangle(cornerRadius: 14)
             )
             if !isOperator { Spacer(minLength: 36) }

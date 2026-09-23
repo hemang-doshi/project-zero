@@ -5,6 +5,8 @@ import { SettingsSheet, type SettingsSheetProps } from './SettingsSheet'
 import { WALLPAPER_KIND_LABELS } from './wallpaper'
 
 const base: SettingsSheetProps = {
+  theme: 'light',
+  onTheme: () => {},
   wallpaper: { kind: 'dotted-green', mode: 'cover' },
   onKind: () => {},
   onMode: () => {},
@@ -28,7 +30,14 @@ describe('SettingsSheet', () => {
   it('marks the selected wallpaper kind', () => {
     const out = html(base)
     expect(out).toContain('aria-pressed="true"')
-    expect((out.match(/aria-pressed="true"/g) ?? []).length).toBe(1)
+    expect((out.match(/aria-pressed="true"/g) ?? []).length).toBe(2)
+  })
+  it('offers persistent light and dark appearance choices', () => {
+    const out = html({ ...base, theme: 'dark' })
+    expect(out).toContain('APPEARANCE')
+    expect(out).toContain('LIGHT')
+    expect(out).toContain('DARK')
+    expect((out.match(/aria-pressed="true"/g) ?? []).length).toBe(2)
   })
   it('shows the custom image picker and cover/tile mode only for custom', () => {
     const custom = html({ ...base, wallpaper: { kind: 'custom', path: '/x/a.png', mode: 'tile' } })
@@ -36,7 +45,7 @@ describe('SettingsSheet', () => {
     expect(custom).toContain('COVER')
     expect(custom).toContain('TILE')
     expect(custom).toContain('aria-pressed="true"')
-    expect((custom.match(/aria-pressed="true"/g) ?? []).length).toBe(2)
+    expect((custom.match(/aria-pressed="true"/g) ?? []).length).toBe(3)
     expect(html(base)).not.toContain('CHOOSE IMAGE')
   })
 })

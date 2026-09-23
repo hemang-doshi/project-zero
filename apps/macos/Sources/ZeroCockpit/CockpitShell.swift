@@ -67,12 +67,12 @@ public struct ZeroRailItem: View {
         return Button(action: action) {
             VStack(spacing: 6) {
                 Image(systemName: route.symbol)
-                    .font(.system(size: 22, weight: .medium))
+                    .font(.zero(size: 22, weight: .medium))
                     .frame(width: 44, height: 44)
                     .background(presentation.background, in: RoundedRectangle(cornerRadius: 10))
                     .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(presentation.border))
                 Text(route.title)
-                    .font(.system(size: 10, weight: .semibold))
+                    .font(.zero(size: 10, weight: .semibold))
                     .multilineTextAlignment(.center)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -123,15 +123,15 @@ struct CockpitGlobalHeader: View, Equatable {
     var body: some View {
         HStack(spacing: 12) {
             Text("Z0")
-                .font(.system(size: 16, weight: .black, design: .monospaced))
+                .font(.zeroMono(size: 16, weight: .black))
                 .foregroundStyle(ZeroTheme.navigation)
                 .padding(6)
                 .background(ZeroTheme.ink, in: RoundedRectangle(cornerRadius: 5))
                 .accessibilityHidden(true)
-            Text("Project Zero").font(.system(size: 16, weight: .bold))
+            Text("Project Zero").font(.zero(size: 16, weight: .bold))
             Spacer(minLength: 16)
             Text(status)
-                .font(.system(size: 10, weight: .medium, design: .monospaced))
+                .font(.zeroMono(size: 10, weight: .medium))
                 .foregroundStyle(ZeroTheme.secondaryInk)
                 .lineLimit(2)
         }
@@ -152,7 +152,7 @@ struct CockpitFooter: View, Equatable {
             Spacer()
             Text(routeTitle)
         }
-        .font(.system(size: 9, weight: .medium, design: .monospaced))
+        .font(.zeroMono(size: 9, weight: .medium))
         .padding(.horizontal, 20)
         .padding(.vertical, 6)
         .background(ZeroTheme.navigation)
@@ -231,7 +231,7 @@ public struct CockpitShell<Content: View, Instruments: View>: View {
                 Spacer()
                 Text(version)
             }
-            .font(.system(size: 10, weight: .medium, design: .monospaced))
+            .font(.zeroMono(size: 10, weight: .medium))
             .foregroundStyle(ZeroTheme.secondaryInk)
             .padding(.horizontal, 14)
             .padding(.vertical, 8)

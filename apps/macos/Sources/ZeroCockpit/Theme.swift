@@ -1,9 +1,9 @@
 import SwiftUI
 
 public enum ZeroTheme {
-    public static let environment = Color(red: 0.75, green: 0.79, blue: 0.68)
-    public static let panel = Color(red: 0.96, green: 0.94, blue: 0.87)
-    public static let authority = Color(red: 0.81, green: 0.34, blue: 0.17)
+    // Canonical Stitch tokens live here and in ZeroControls.swift.
+    // `environment`, `panel`, and `authority` were removed: their values
+    // matched no Stitch reference (see the screen-anatomy spec).
 }
 public enum ZeroType {
     public static let bodyFontName = "Inter"
@@ -21,4 +21,5 @@ public extension ZeroTheme {
     static let markerYellow = Color(red: 0xF7/255, green: 0xDF/255, blue: 0x94/255)
     static let statusGreen = Color(red: 0x10/255, green: 0xB9/255, blue: 0x81/255)
     static let highlightBlue = Color(red: 0x3B/255, green: 0x82/255, blue: 0xF6/255)
+    static let errorRed = Color(red: 0xDC/255, green: 0x26/255, blue: 0x26/255)
 }

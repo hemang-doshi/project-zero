@@ -42,7 +42,7 @@ struct TopologySceneView: View, Equatable {
 #endif
             if !upcoming.isEmpty {
                 Text("GATED — UPCOMING")
-                    .font(.system(size: 9, weight: .bold, design: .monospaced))
+                    .font(.zeroMono(size: 9, weight: .bold))
                     .foregroundStyle(ZeroTheme.secondaryInk)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 5)
@@ -73,10 +73,10 @@ struct TopologyFallbackList: View, Equatable {
                     Image(systemName: symbol(for: node.kind))
                         .foregroundStyle(ZeroTheme.secondaryInk)
                     Text(node.id)
-                        .font(.system(size: 11, weight: .medium, design: .monospaced))
+                        .font(.zeroMono(size: 11, weight: .medium))
                     Spacer()
                     Text(node.status)
-                        .font(.system(size: 9, weight: .bold, design: .monospaced))
+                        .font(.zeroMono(size: 9, weight: .bold))
                         .foregroundStyle(ZeroTheme.secondaryInk)
                 }
                 .padding(.horizontal, 10)

@@ -1038,7 +1038,7 @@ public struct AirlockView: View {
                         }
                         if projection.audit.count > 100 {
                             Text("+\(projection.audit.count - 100) more audit rows in the bounded snapshot")
-                                .font(.system(size: 9, weight: .medium, design: .monospaced))
+                                .font(.zeroMono(size: 9, weight: .medium))
                                 .foregroundStyle(ZeroTheme.secondaryInk)
                                 .padding(.vertical, 6)
                         }

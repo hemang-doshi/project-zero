@@ -229,14 +229,14 @@ enum DeskTypeScale {
 }
 
 enum DeskRuntimeType {
-    static let hero = Font.system(.largeTitle, design: .default).weight(.black)
-    static let title = Font.system(size: 24, weight: .black, design: .default)
-    static let heading = Font.system(.headline, design: .default).weight(.black)
-    static let body = Font.system(size: 15, weight: .medium, design: .default)
-    static let callout = Font.system(.callout, design: .default).weight(.medium)
-    static let caption = Font.system(.caption, design: .default).weight(.medium)
-    static let micro = Font.system(.caption2, design: .monospaced).weight(.bold)
-    static let evidence = Font.system(.caption, design: .monospaced).weight(.medium)
+    static let hero = Font.zero(.largeTitle).weight(.black)
+    static let title = Font.zero(size: 24, weight: .black)
+    static let heading = Font.zero(.headline).weight(.black)
+    static let body = Font.zero(size: 15, weight: .medium)
+    static let callout = Font.zero(.callout).weight(.medium)
+    static let caption = Font.zero(.caption).weight(.medium)
+    static let micro = Font.zeroMono(.caption2).weight(.bold)
+    static let evidence = Font.zeroMono(.caption).weight(.medium)
 }
 
 enum DeskEvidenceTab: String, CaseIterable, Hashable {
@@ -357,7 +357,7 @@ public struct DeskView: View {
                         .font(DeskRuntimeType.heading)
                         .textSelection(.enabled)
                     FocusElapsedText(model: model)
-                        .font(.system(.title, design: .monospaced).weight(.black))
+                        .font(.zeroMono(.title).weight(.black))
                         .monospacedDigit()
                     Text(facts.deliveryState.presentation.detail)
                         .font(DeskRuntimeType.caption)
@@ -818,7 +818,7 @@ struct DeskRuntimeMetricCard: View, Equatable {
                     ZeroStatusBadge(badge, tone: tone).equatable()
                 }
                 Text(value)
-                    .font(.system(.title2, design: .rounded).weight(.black))
+                    .font(.zero(.title2).weight(.black))
                     .fixedSize(horizontal: false, vertical: true)
                 Text(detail)
                     .font(DeskRuntimeType.caption)

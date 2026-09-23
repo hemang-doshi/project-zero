@@ -21,6 +21,7 @@ import { DESKTOP_ITEMS, fileById, viewerTitle, type DesktopIcon } from './items'
 import {
   hydrateDesktopPrefs,
   setIconPosition,
+  setTheme,
   setWallpaper,
   setWindowRect,
   setWindowSnap,
@@ -90,11 +91,15 @@ export function DesktopCanvas({
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [dragPreview, setDragPreview] = useState<DragPreview | null>(null)
   const wallpaper = useDesktopPrefs((s) => s.wallpaper)
+  const theme = useDesktopPrefs((s) => s.theme)
   const iconPositions = useDesktopPrefs((s) => s.icons)
   const focus = useWindows((s) => s.focus)
   useEffect(() => {
     void hydrateDesktopPrefs(canvasBounds())
   }, [])
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme
+  }, [theme])
   useEffect(() => {
     // Maximized and snapped windows keep spanning the canvas when the app
     // window itself is resized (the store refits both from their kinds).
@@ -242,6 +247,8 @@ export function DesktopCanvas({
       />
       {settingsOpen ? (
         <SettingsSheet
+          theme={theme}
+          onTheme={setTheme}
           wallpaper={wallpaper}
           onKind={(kind) =>
             setWallpaper(

@@ -2,7 +2,7 @@ import SwiftUI
 
 public extension ZeroTheme {
     static let wallpaper = Color(red: 140 / 255, green: 158 / 255, blue: 130 / 255)
-    static let wallpaperDot = Color(red: 108 / 255, green: 126 / 255, blue: 99 / 255)
+    static let wallpaperDot = Color(red: 122 / 255, green: 140 / 255, blue: 112 / 255)
     static let workstation = Color(red: 250 / 255, green: 248 / 255, blue: 245 / 255)
     static let navigation = Color(red: 243 / 255, green: 236 / 255, blue: 223 / 255)
     static let frameBand = Color(red: 206 / 255, green: 216 / 255, blue: 196 / 255)
@@ -54,8 +54,8 @@ enum ZeroControlTypography {
     static let buttonTextStyle = Font.TextStyle.callout
     static let statusTextStyle = Font.TextStyle.caption2
 
-    static let button = Font.system(buttonTextStyle, design: .default).weight(.semibold)
-    static let status = Font.system(statusTextStyle, design: .monospaced).weight(.semibold)
+    static let button = Font.zero(buttonTextStyle).weight(.semibold)
+    static let status = Font.zeroMono(statusTextStyle).weight(.semibold)
 }
 
 struct ZeroAuthorityPresentation {

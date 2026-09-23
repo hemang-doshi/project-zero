@@ -94,18 +94,15 @@ const transcriptStyle: React.CSSProperties = {
   display: 'flex',
   flexDirection: 'column',
   gap: 8,
-  padding: '4px 16px 12px',
+  padding: '4px 20px 12px',
   overflowY: 'auto',
   minHeight: 60
 }
 
 const composerStyle: React.CSSProperties = {
-  borderTop: '1px solid var(--z-line)',
-  padding: '10px 16px 14px',
   display: 'flex',
   flexDirection: 'column',
-  gap: 8,
-  background: 'var(--z-card-white)'
+  gap: 8
 }
 
 const composerBox: React.CSSProperties = {
@@ -1270,6 +1267,7 @@ export const ZeroBotRoute = memo(function ZeroBotRoute(): React.JSX.Element {
               type="button"
               style={actionButton}
               aria-expanded={inspectorOpen}
+              aria-controls="turn-inspector"
               onClick={() => setInspectorOpen((v) => !v)}
             >
               {inspectorOpen ? 'Hide inspector' : 'Show inspector'}
@@ -1277,7 +1275,7 @@ export const ZeroBotRoute = memo(function ZeroBotRoute(): React.JSX.Element {
           </div>
         </div>
 
-        <div style={transcriptStyle}>
+        <div className="zw-transcript" style={transcriptStyle}>
           {pendingPermission !== null ? (
             <div role="alert" aria-label="Provider permission" style={warnNotice}>
               <p>{pendingPermission.title}</p>
@@ -1341,7 +1339,7 @@ export const ZeroBotRoute = memo(function ZeroBotRoute(): React.JSX.Element {
           ) : null}
         </div>
 
-        <div data-region="composer" style={composerStyle}>
+        <div className="zw-composer-shell" data-region="composer" style={composerStyle}>
           <div
             style={{
               display: 'flex',
@@ -1473,128 +1471,134 @@ export const ZeroBotRoute = memo(function ZeroBotRoute(): React.JSX.Element {
         </div>
       </main>
 
-      {inspectorOpen ? (
-        <aside data-region="inspector" style={inspectorStyle} aria-label="Turn inspector">
-          <span data-voice="human" style={sectionLabel}>
-            INSPECTOR · TURN DETAILS
-          </span>
-          {openRow !== null ? (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}>
-              <p data-voice="human" style={{ ...bodyText, fontWeight: 700 }}>
-                {threadTitle(openRow)}
-              </p>
-              <p data-voice="machine" style={machineMeta}>
-                {openRow.id}
-              </p>
-              <p data-voice="machine" style={machineMeta}>
-                {threadTime(threadTimestamp(openRow))}
-                {openRow.model !== null ? ` · ${openRow.model}` : ''}
-                {openRow.status !== '' ? ` · ${openRow.status}` : ''}
-              </p>
-            </div>
-          ) : (
-            <EmptyState
-              title="No turn selected"
-              explanation="Open a thread to inspect its details, tool calls and context here."
-            />
-          )}
-
-          <span data-voice="human" style={sectionLabel}>
-            TOOLS · {toolItems.length}
-          </span>
-          {toolItems.length === 0 ? (
-            <p data-voice="human" style={bodyText}>
-              No tool calls in this turn yet.
+      <aside
+        id="turn-inspector"
+        className={`zw-inspector${inspectorOpen ? '' : ' is-collapsed'}`}
+        data-region="inspector"
+        style={{ ...inspectorStyle, width: compact ? 220 : 288 }}
+        aria-label="Turn inspector"
+        aria-hidden={!inspectorOpen}
+        inert={!inspectorOpen}
+      >
+        <span data-voice="human" style={sectionLabel}>
+          INSPECTOR · TURN DETAILS
+        </span>
+        {openRow !== null ? (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}>
+            <p data-voice="human" style={{ ...bodyText, fontWeight: 700 }}>
+              {threadTitle(openRow)}
             </p>
-          ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0 }}>
-              <p data-voice="human" style={{ ...bodyText, fontSize: 12 }}>
-                {toolSummary.completed} completed · {toolSummary.failed} failed ·{' '}
-                {toolSummary.running} running
-              </p>
-              <details>
-                <summary data-voice="human" style={{ ...bodyText, cursor: 'pointer' }}>
-                  Calls by tool
-                </summary>
-                {toolSummary.groups.map((group) => (
-                  <p key={group.name} data-voice="human" style={{ ...bodyText, fontSize: 12 }}>
-                    {group.name} · {group.count}
-                  </p>
-                ))}
-              </details>
-            </div>
-          )}
-
-          <span data-voice="human" style={sectionLabel}>
-            CONTEXT
-          </span>
-          <p data-voice="human" style={bodyText}>
-            Provider: {PROVIDER_DISPLAY[harness]} · Model: {selectedModel} · Project:{' '}
-            {openProject?.name ?? 'Unavailable'}
-          </p>
-          <p data-voice="human" style={bodyText}>
-            {counts.messages} message{counts.messages === 1 ? '' : 's'} · {counts.thinking} thinking
-            · {counts.tools} tool call{counts.tools === 1 ? '' : 's'}
-            {counts.notices > 0
-              ? ` · ${counts.notices} protocol note${counts.notices === 1 ? '' : 's'}`
-              : ''}
-          </p>
-          {lane.dropped > 0 ? (
-            <p data-voice="human" style={bodyText}>
-              +{lane.dropped} earlier item(s) beyond the bounded view.
+            <p data-voice="machine" style={machineMeta}>
+              {openRow.id}
             </p>
-          ) : null}
-          <p data-voice="human" style={bodyText}>
-            Project and branch context, provider handoff and automatic routing are designed but
-            pending — this build has no context-packet backend, so every turn stays inside its own
-            provider thread.
-          </p>
-
-          <span data-voice="human" style={sectionLabel}>
-            USAGE & COST
-          </span>
-          <p data-voice="human" style={bodyText}>
-            {lane.usage !== null
-              ? `${lane.usage.input.toLocaleString()} input · ${lane.usage.output.toLocaleString()} output · ${lane.usage.reasoning.toLocaleString()} reasoning tokens · provider-reported cost ${lane.usage.cost}`
-              : 'Token usage and cost: Unavailable. This bridge view has no verified usage totals; item counts above are not token counts.'}
-          </p>
-
-          <span data-voice="human" style={sectionLabel}>
-            AIRLOCK
-          </span>
-          <p data-voice="human" style={bodyText}>
-            {harness === 'codex'
-              ? 'Codex prompts pass through local screening. Detected sensitive text requires a one-time Send once decision; no approval applies to later edits.'
-              : 'OpenCode prompts pass through local screening and a verified active ACP session. Tool permissions require an explicit provider decision.'}
-          </p>
-
-          <span data-voice="human" style={sectionLabel}>
-            CONVERSATION · BRIDGE EVENTS
-          </span>
-          {shownEvents.length === 0 ? (
-            <p data-voice="human" style={bodyText}>
-              {live
-                ? 'Connected; no bridge event has streamed into this window yet.'
-                : 'No bridge events in this window yet. Connect manually to surface streamed protocol state.'}
+            <p data-voice="machine" style={machineMeta}>
+              {threadTime(threadTimestamp(openRow))}
+              {openRow.model !== null ? ` · ${openRow.model}` : ''}
+              {openRow.status !== '' ? ` · ${openRow.status}` : ''}
             </p>
-          ) : (
-            <>
-              {shownEvents.map((e, i) => (
-                <BridgeEventRow key={`${e.harness}-${i}`} event={e} />
-              ))}
-              {log.dropped > 0 ? (
-                <p data-voice="human" style={bodyText}>
-                  +{log.dropped} older event(s) kept out of bounded {harness} memory.
+          </div>
+        ) : (
+          <EmptyState
+            title="No turn selected"
+            explanation="Open a thread to inspect its details, tool calls and context here."
+          />
+        )}
+
+        <span data-voice="human" style={sectionLabel}>
+          TOOLS · {toolItems.length}
+        </span>
+        {toolItems.length === 0 ? (
+          <p data-voice="human" style={bodyText}>
+            No tool calls in this turn yet.
+          </p>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0 }}>
+            <p data-voice="human" style={{ ...bodyText, fontSize: 12 }}>
+              {toolSummary.completed} completed · {toolSummary.failed} failed ·{' '}
+              {toolSummary.running} running
+            </p>
+            <details>
+              <summary data-voice="human" style={{ ...bodyText, cursor: 'pointer' }}>
+                Calls by tool
+              </summary>
+              {toolSummary.groups.map((group) => (
+                <p key={group.name} data-voice="human" style={{ ...bodyText, fontSize: 12 }}>
+                  {group.name} · {group.count}
                 </p>
-              ) : null}
-            </>
-          )}
+              ))}
+            </details>
+          </div>
+        )}
+
+        <span data-voice="human" style={sectionLabel}>
+          CONTEXT
+        </span>
+        <p data-voice="human" style={bodyText}>
+          Provider: {PROVIDER_DISPLAY[harness]} · Model: {selectedModel} · Project:{' '}
+          {openProject?.name ?? 'Unavailable'}
+        </p>
+        <p data-voice="human" style={bodyText}>
+          {counts.messages} message{counts.messages === 1 ? '' : 's'} · {counts.thinking} thinking ·{' '}
+          {counts.tools} tool call{counts.tools === 1 ? '' : 's'}
+          {counts.notices > 0
+            ? ` · ${counts.notices} protocol note${counts.notices === 1 ? '' : 's'}`
+            : ''}
+        </p>
+        {lane.dropped > 0 ? (
           <p data-voice="human" style={bodyText}>
-            Events are retained bounded memory, never a live or actionable run while the bridge is
-            not connected.
+            +{lane.dropped} earlier item(s) beyond the bounded view.
           </p>
-        </aside>
-      ) : null}
+        ) : null}
+        <p data-voice="human" style={bodyText}>
+          Project and branch context, provider handoff and automatic routing are designed but
+          pending — this build has no context-packet backend, so every turn stays inside its own
+          provider thread.
+        </p>
+
+        <span data-voice="human" style={sectionLabel}>
+          USAGE & COST
+        </span>
+        <p data-voice="human" style={bodyText}>
+          {lane.usage !== null
+            ? `${lane.usage.input.toLocaleString()} input · ${lane.usage.output.toLocaleString()} output · ${lane.usage.reasoning.toLocaleString()} reasoning tokens · provider-reported cost ${lane.usage.cost}`
+            : 'Token usage and cost: Unavailable. This bridge view has no verified usage totals; item counts above are not token counts.'}
+        </p>
+
+        <span data-voice="human" style={sectionLabel}>
+          AIRLOCK
+        </span>
+        <p data-voice="human" style={bodyText}>
+          {harness === 'codex'
+            ? 'Codex prompts pass through local screening. Detected sensitive text requires a one-time Send once decision; no approval applies to later edits.'
+            : 'OpenCode prompts pass through local screening and a verified active ACP session. Tool permissions require an explicit provider decision.'}
+        </p>
+
+        <span data-voice="human" style={sectionLabel}>
+          CONVERSATION · BRIDGE EVENTS
+        </span>
+        {shownEvents.length === 0 ? (
+          <p data-voice="human" style={bodyText}>
+            {live
+              ? 'Connected; no bridge event has streamed into this window yet.'
+              : 'No bridge events in this window yet. Connect manually to surface streamed protocol state.'}
+          </p>
+        ) : (
+          <>
+            {shownEvents.map((e, i) => (
+              <BridgeEventRow key={`${e.harness}-${i}`} event={e} />
+            ))}
+            {log.dropped > 0 ? (
+              <p data-voice="human" style={bodyText}>
+                +{log.dropped} older event(s) kept out of bounded {harness} memory.
+              </p>
+            ) : null}
+          </>
+        )}
+        <p data-voice="human" style={bodyText}>
+          Events are retained bounded memory, never a live or actionable run while the bridge is not
+          connected.
+        </p>
+      </aside>
     </div>
   )
 })

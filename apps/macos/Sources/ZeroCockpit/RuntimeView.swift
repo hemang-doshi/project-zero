@@ -73,7 +73,7 @@ public struct RuntimeView: View {
                 }
             }
             .font(layout == .compact
-                ? .system(.title2, design: .default).weight(.black)
+                ? Font.zero(.title2).weight(.black)
                 : DeskRuntimeType.hero)
             .fixedSize(horizontal: false, vertical: true)
             if !facts.isLive {
@@ -173,7 +173,7 @@ public struct RuntimeView: View {
                     ZeroStatusBadge(facts.sessionState, tone: sessionTone(facts.sessionState)).equatable()
                 }
                 FocusElapsedText(model: model)
-                    .font(.system(.title2, design: .rounded).weight(.black))
+                    .font(.zero(.title2).weight(.black))
                     .fixedSize(horizontal: false, vertical: true)
                 Text(facts.activeProjectName)
                     .font(DeskRuntimeType.caption)
@@ -649,7 +649,7 @@ public struct RuntimeView: View {
                 .font(DeskRuntimeType.micro)
                 .foregroundStyle(ZeroTheme.secondaryInk)
             Text(value)
-                .font(.system(.title3, design: .rounded).weight(.bold))
+                .font(.zero(.title3).weight(.bold))
                 .lineLimit(1)
                 .minimumScaleFactor(0.8)
             Text(detail)

@@ -207,7 +207,7 @@ public struct NetworkView: View {
     private func header(layout: NetworkLayout) -> some View {
         let title = VStack(alignment: .leading, spacing: 8) {
             Text("Network: Spatial Topology & Node Authority")
-                .font(.system(size: layout == .compact ? 27 : 35, weight: .black))
+                .font(.zero(size: layout == .compact ? 27 : 35, weight: .black))
                 .tracking(-1.05)
                 .minimumScaleFactor(0.68)
                 .lineLimit(2)
@@ -218,9 +218,9 @@ public struct NetworkView: View {
                     .background(ZeroTheme.markerYellow.opacity(0.78))
                     .rotationEffect(.degrees(-0.7))
             }
-            .font(.system(size: 12, weight: .bold))
+            .font(.zero(size: 12, weight: .bold))
             Text("Local node registration, projected capabilities, lifecycle freshness, and delivery evidence. No public relay or unsupported bus operation is inferred.")
-                .font(.system(size: 12, weight: .medium))
+                .font(.zero(size: 12, weight: .medium))
                 .foregroundStyle(ZeroTheme.secondaryInk)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -233,7 +233,7 @@ public struct NetworkView: View {
                                     symbol: facts.isLive ? "lock.shield.fill" : "clock.badge.questionmark",
                                     tone: facts.isLive ? .healthy : .attention).equatable()
                     Text("Enrollment changes are unavailable in this display projection.")
-                        .font(.system(size: 9, weight: .medium, design: .monospaced))
+                        .font(.zeroMono(size: 9, weight: .medium))
                         .foregroundStyle(ZeroTheme.secondaryInk)
                 }
             }
@@ -244,7 +244,7 @@ public struct NetworkView: View {
                                 symbol: facts.isLive ? "lock.shield.fill" : "clock.badge.questionmark",
                                 tone: facts.isLive ? .healthy : .attention).equatable()
                 Text("Enrollment changes are unavailable in this display projection.")
-                    .font(.system(size: 9, weight: .medium, design: .monospaced))
+                    .font(.zeroMono(size: 9, weight: .medium))
                     .foregroundStyle(ZeroTheme.secondaryInk)
             }
         }
@@ -289,7 +289,7 @@ public struct NetworkView: View {
             VStack(alignment: .leading, spacing: 14) {
                 NetworkFlightSectionHeader("Spatial Topology Grid", badge: facts.isLive ? "OWNER-LOCAL LIVE" : "HISTORICAL SNAPSHOT").equatable()
                 Text(facts.topologyNotice)
-                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                    .font(.zeroMono(size: 10, weight: .medium))
                     .foregroundStyle(ZeroTheme.secondaryInk)
                 TopologySceneView(nodes: buildTopologyNodes(snapshotNodes: facts.nodes)).equatable()
                 if layout == .wide {
@@ -321,14 +321,14 @@ public struct NetworkView: View {
         VStack(alignment: .leading, spacing: 13) {
             HStack(alignment: .top, spacing: 10) {
                 Image(systemName: "desktopcomputer")
-                    .font(.system(size: 22, weight: .semibold))
+                    .font(.zero(size: 22, weight: .semibold))
                     .foregroundStyle(ZeroTheme.orangePressed)
                     .frame(width: 42, height: 42)
                     .background(ZeroTheme.orange.opacity(0.11), in: RoundedRectangle(cornerRadius: 7))
                 VStack(alignment: .leading, spacing: 3) {
-                    Text("This Mac").font(.system(size: 17, weight: .black))
+                    Text("This Mac").font(.zero(size: 17, weight: .black))
                     Text("OWNER-LOCAL RUNTIME AUTHORITY")
-                        .font(.system(size: 9, weight: .bold, design: .monospaced))
+                        .font(.zeroMono(size: 9, weight: .bold))
                         .foregroundStyle(ZeroTheme.secondaryInk)
                 }
                 Spacer()
@@ -343,7 +343,7 @@ public struct NetworkView: View {
                 ("Transport", facts.connection.rawValue.uppercased())
             ])
             Text("The snapshot does not project host latency, key-enclave state, or authority transfer. Those claims are intentionally absent.")
-                .font(.system(size: 10, weight: .medium))
+                .font(.zero(size: 10, weight: .medium))
                 .foregroundStyle(ZeroTheme.secondaryInk)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -360,14 +360,14 @@ public struct NetworkView: View {
         return VStack(alignment: .leading, spacing: 11) {
             HStack(alignment: .top, spacing: 8) {
                 Image(systemName: node.capabilities.contains(where: { $0.hasPrefix("display.") }) ? "display" : "point.3.connected.trianglepath.dotted")
-                    .font(.system(size: 16, weight: .semibold))
+                    .font(.zero(size: 16, weight: .semibold))
                     .foregroundStyle(delivery.tone.color)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(node.id)
-                        .font(.system(size: 12, weight: .black, design: .monospaced))
+                        .font(.zeroMono(size: 12, weight: .black))
                         .textSelection(.enabled)
                     Text(profileSummary(profile))
-                        .font(.system(size: 9, weight: .medium, design: .monospaced))
+                        .font(.zeroMono(size: 9, weight: .medium))
                         .foregroundStyle(ZeroTheme.secondaryInk)
                         .lineLimit(2)
                 }
@@ -381,12 +381,12 @@ public struct NetworkView: View {
                 ("Delivery", delivery.label)
             ])
             Text(delivery.detail)
-                .font(.system(size: 9, weight: .medium))
+                .font(.zero(size: 9, weight: .medium))
                 .foregroundStyle(ZeroTheme.secondaryInk)
                 .fixedSize(horizontal: false, vertical: true)
             if node.capabilities.isEmpty {
                 Text("NO PROJECTED CAPABILITIES")
-                    .font(.system(size: 9, weight: .bold, design: .monospaced))
+                    .font(.zeroMono(size: 9, weight: .bold))
                     .foregroundStyle(ZeroTheme.secondaryInk)
             } else {
                 FlowChips(values: node.capabilities)
@@ -406,7 +406,7 @@ public struct NetworkView: View {
             VStack(alignment: .leading, spacing: 12) {
                 NetworkFlightSectionHeader("Capability Invocation & Delivery Evidence", badge: facts.snapshot?.truncated["invocations"] == true ? "LOWER BOUND" : "BOUNDED").equatable()
                 Text(facts.evidenceNotice)
-                    .font(.system(size: 10, weight: .medium))
+                    .font(.zero(size: 10, weight: .medium))
                     .foregroundStyle(ZeroTheme.secondaryInk)
                 if facts.evidenceRows.isEmpty {
                     NetworkFlightEmptyState(
@@ -421,7 +421,7 @@ public struct NetworkView: View {
                             ForEach(facts.evidenceRows.prefix(100)) { row in networkEvidenceRow(row) }
                             if facts.evidenceRows.count > 100 {
                                 Text("+\(facts.evidenceRows.count - 100) more rows in the bounded snapshot")
-                                    .font(.system(size: 9, weight: .medium, design: .monospaced))
+                                    .font(.zeroMono(size: 9, weight: .medium))
                                     .foregroundStyle(ZeroTheme.secondaryInk)
                                     .padding(.vertical, 6)
                             }
@@ -464,7 +464,7 @@ public struct NetworkView: View {
 
     private func networkTargetCell(_ value: String, header: Bool = false) -> some View {
         Text(value)
-            .font(.system(size: header ? 9 : 10, weight: header ? .bold : .medium, design: .monospaced))
+            .font(.zeroMono(size: header ? 9 : 10, weight: header ? .bold : .medium))
             .foregroundStyle(header ? ZeroTheme.secondaryInk : ZeroTheme.ink)
             .textSelection(.enabled)
             .lineLimit(nil)
@@ -480,7 +480,7 @@ public struct NetworkView: View {
 
     private func networkCell(_ value: String, width: CGFloat, header: Bool = false, tone: ZeroTone? = nil) -> some View {
         Text(value)
-            .font(.system(size: header ? 9 : 10, weight: header ? .bold : .medium, design: .monospaced))
+            .font(.zeroMono(size: header ? 9 : 10, weight: header ? .bold : .medium))
             .foregroundStyle(tone?.color ?? (header ? ZeroTheme.secondaryInk : ZeroTheme.ink))
             .textSelection(.enabled)
             .lineLimit(1)
@@ -526,17 +526,17 @@ struct NetworkFlightMetricCard: View, Equatable {
             VStack(alignment: .leading, spacing: 9) {
                 HStack(alignment: .top) {
                     Text(label.uppercased())
-                        .font(.system(size: 9, weight: .bold, design: .monospaced))
+                        .font(.zeroMono(size: 9, weight: .bold))
                         .foregroundStyle(ZeroTheme.secondaryInk)
                     Spacer()
                     ZeroStatusBadge(badge, tone: tone).equatable()
                 }
                 Text(value)
-                    .font(.system(size: 21, weight: .black, design: .rounded))
+                    .font(.zero(size: 21, weight: .black))
                     .minimumScaleFactor(0.65)
                     .lineLimit(1)
                 Text(detail)
-                    .font(.system(size: 10, weight: .medium))
+                    .font(.zero(size: 10, weight: .medium))
                     .foregroundStyle(ZeroTheme.secondaryInk)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -555,11 +555,11 @@ struct NetworkFlightSectionHeader: View, Equatable {
 
     var body: some View {
         HStack(alignment: .firstTextBaseline) {
-            Text(title).font(.system(size: 15, weight: .black))
+            Text(title).font(.zero(size: 15, weight: .black))
             Spacer()
             if let badge {
                 Text(badge)
-                    .font(.system(size: 9, weight: .bold, design: .monospaced))
+                    .font(.zeroMono(size: 9, weight: .bold))
                     .foregroundStyle(ZeroTheme.secondaryInk)
             }
         }
@@ -582,11 +582,11 @@ struct NetworkFlightEvidenceRows: View, Equatable {
             ForEach(Array(rows.prefix(100).enumerated()), id: \.offset) { index, row in
                 HStack(alignment: .top, spacing: 10) {
                     Text(row.0.uppercased())
-                        .font(.system(size: 8, weight: .bold, design: .monospaced))
+                        .font(.zeroMono(size: 8, weight: .bold))
                         .foregroundStyle(ZeroTheme.secondaryInk)
                         .frame(width: 76, alignment: .leading)
                     Text(row.1)
-                        .font(.system(size: 9, weight: .medium, design: .monospaced))
+                        .font(.zeroMono(size: 9, weight: .medium))
                         .textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
@@ -607,11 +607,11 @@ struct NetworkFlightEmptyState: View, Equatable {
     var body: some View {
         VStack(alignment: .leading, spacing: 9) {
             Image(systemName: symbol)
-                .font(.system(size: 23, weight: .semibold))
+                .font(.zero(size: 23, weight: .semibold))
                 .foregroundStyle(ZeroTheme.secondaryInk)
-            Text(title).font(.system(size: 16, weight: .bold))
+            Text(title).font(.zero(size: 16, weight: .bold))
             Text(detail)
-                .font(.system(size: 11, weight: .medium))
+                .font(.zero(size: 11, weight: .medium))
                 .foregroundStyle(ZeroTheme.secondaryInk)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -634,7 +634,7 @@ private struct FlowChips: View {
     @ViewBuilder private var chips: some View {
         ForEach(values, id: \.self) { value in
             Text(value)
-                .font(.system(size: 8, weight: .bold, design: .monospaced))
+                .font(.zeroMono(size: 8, weight: .bold))
                 .foregroundStyle(ZeroTheme.secondaryInk)
                 .padding(.horizontal, 6)
                 .padding(.vertical, 4)
