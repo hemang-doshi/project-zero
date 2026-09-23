@@ -87,6 +87,31 @@ func supportsArtwork(ctx context.Context, tx *sql.Tx, node string) bool {
 	var profile map[string]string
 	return tx.QueryRowContext(ctx, "SELECT value FROM entities WHERE kind='node_profile' AND key=?", node).Scan(&raw) == nil && json.Unmarshal(raw, &profile) == nil && profile["artwork"] == "rgb565-32"
 }
+
+// Artwork serves one cached artwork asset by its content digest. The cockpit
+// display projection deliberately omits artwork blobs; this read-only accessor
+// keeps the asset on the evidence API instead.
+func (r *Runtime) Artwork(ctx context.Context, id string) (map[string]string, error) {
+	if len(id) != 64 {
+		return nil, fmt.Errorf("VALIDATION: artwork digest length")
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	tx, e := r.db.BeginTx(ctx, nil)
+	if e != nil {
+		return nil, e
+	}
+	defer tx.Rollback()
+	var raw []byte
+	var asset map[string]string
+	if e = tx.QueryRowContext(ctx, "SELECT value FROM entities WHERE kind='artwork' AND key=?", id).Scan(&raw); e != nil {
+		return nil, fmt.Errorf("VALIDATION: artwork not found")
+	}
+	if e = json.Unmarshal(raw, &asset); e != nil {
+		return nil, e
+	}
+	return asset, nil
+}
 func shortText(s string) string {
 	if len(s) <= 64 {
 		return s

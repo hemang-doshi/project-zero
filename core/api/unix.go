@@ -155,6 +155,14 @@ func ServeUnix(ctx context.Context, r *runtime.Runtime, path string, ca *identit
 	mux.HandleFunc("GET /v0.1/costs/today", func(w http.ResponseWriter, q *http.Request) {
 		reply(w, map[string]any{"version": "0.2", "model_adapter": "NOT_CONNECTED", "zero_model_calls": 0, "monetary_cost": nil, "account_usage": "unavailable"})
 	})
+	mux.HandleFunc("GET /v0.1/artwork/{id}", func(w http.ResponseWriter, q *http.Request) {
+		asset, e := r.Artwork(q.Context(), q.PathValue("id"))
+		if e != nil {
+			fail(w, e)
+			return
+		}
+		reply(w, map[string]any{"version": "0.2", "id": q.PathValue("id"), "artwork": asset})
+	})
 	mux.HandleFunc("GET /v0.1/projects/{id}", func(w http.ResponseWriter, q *http.Request) {
 		ps, e := r.Projects(q.Context())
 		if e != nil {
