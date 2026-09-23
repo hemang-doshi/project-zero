@@ -22,7 +22,6 @@ import {
 } from './chat.model'
 import {
   HARNESS_DEFAULT_MODEL,
-  HARNESS_MODELS,
   SEND_BLOCKED_NOTICE,
   VOICE_DISABLED_NOTICE,
   bridgeEventSummary,
@@ -487,6 +486,9 @@ export const ZeroBotRoute = memo(function ZeroBotRoute(): React.JSX.Element {
   const [workspaceWidth, setWorkspaceWidth] = useState<number | null>(null)
   const workspaceRef = useRef<HTMLDivElement>(null)
   const [composerText, setComposerText] = useState('')
+  const [draft, setDraft] = useState<{ provider: Harness; cwd: string; draftId: string } | null>(
+    null
+  )
   const [promptBusy, setPromptBusy] = useState(false)
   const [promptHold, setPromptHold] = useState<{
     id: string
@@ -702,6 +704,10 @@ export const ZeroBotRoute = memo(function ZeroBotRoute(): React.JSX.Element {
   }
 
   const openThread = (threadId: string): void => {
+    setDraft(null)
+    const selectedRow = lanesRef.current.codex.rows.find((row) => row.id === threadId)
+    if (selectedRow?.model)
+      setModels((current) => ({ ...current, codex: selectedRow.model as string }))
     activePromptRef.current = null
     setPromptHold(null)
     // Codex-only by construction: it reads the codex lane and the read-only
@@ -737,6 +743,7 @@ export const ZeroBotRoute = memo(function ZeroBotRoute(): React.JSX.Element {
   }
 
   const openOpenCodeThread = (threadId: string): void => {
+    setDraft(null)
     openRef.current = { ...openRef.current, opencode: threadId }
     const laneNow = lanesRef.current.opencode
     const opened: HarnessState = {
@@ -833,32 +840,27 @@ export const ZeroBotRoute = memo(function ZeroBotRoute(): React.JSX.Element {
       .flatMap((group) => group.sessions)
       .find((session) => session.id === currentId)
     const cwd = harness === 'codex' ? (codexRow?.cwd ?? codexProject?.path) : openCodeRow?.directory
-    if (!live || !cwd || selectedModel === '') {
+    if (!live || !cwd || !result?.models.some((model) => model.id === selectedModel)) {
       setNotice(
         'Select a connected conversation with a verified directory and advertised model before creating a new one.'
       )
       return
     }
-    setInFlight(true)
-    void window.zero
-      .invoke('conversation.new', { provider: harness, cwd, model: selectedModel })
-      .then((value) => {
-        const result =
-          typeof value === 'object' && value !== null ? (value as { threadId?: unknown }) : {}
-        if (typeof result.threadId !== 'string') throw new Error('Malformed conversation creation')
-        setNotice('New provider conversation created. No prompt was sent.')
-        if (harness === 'codex') {
-          void loadThreads('codex').then(() => openThread(result.threadId as string))
-        } else {
-          void window.zero.invoke('ocp.discover').then((discovered) => {
-            const parsed = parseDiscovery(discovered)
-            if (parsed !== null) setDiscovery((current) => ({ ...current, opencode: parsed }))
-            openOpenCodeThread(result.threadId as string)
-          })
-        }
-      })
-      .catch((err: unknown) => setError(err instanceof Error ? err.message : String(err)))
-      .finally(() => setInFlight(false))
+    setDraft({
+      provider: harness,
+      cwd,
+      draftId: `draft-${Date.now()}-${Math.random().toString(36).slice(2)}`
+    })
+    openRef.current = { ...openRef.current, [harness]: null }
+    const current = lanesRef.current[harness]
+    const next: HarnessState = {
+      ...lanesRef.current,
+      [harness]: { ...current, threadId: null, items: [], dropped: 0, usage: null }
+    }
+    lanesRef.current = next
+    setLanes(next)
+    setComposerText('')
+    setNotice('New conversation draft. The provider creates a conversation when you send.')
   }
 
   const run = (action: 'connect' | 'disconnect' | 'discover'): void => {
@@ -913,9 +915,7 @@ export const ZeroBotRoute = memo(function ZeroBotRoute(): React.JSX.Element {
       .finally(() => setInFlight(false))
   }
 
-  const modelOptions = Array.from(
-    new Set([...HARNESS_MODELS[harness], ...(result?.models.map((m) => m.id) ?? [])])
-  )
+  const modelOptions = result?.models.map((model) => model.id) ?? []
 
   const codexRows = lanes.codex.rows
   const projectThreads = useMemo(
@@ -928,19 +928,29 @@ export const ZeroBotRoute = memo(function ZeroBotRoute(): React.JSX.Element {
     null
   const canSend =
     live &&
-    lane.threadId !== null &&
+    (lane.threadId !== null || draft?.provider === harness) &&
     selectedModel !== '' &&
-    (harness === 'opencode' || Boolean(openProject)) &&
+    modelOptions.includes(selectedModel) &&
+    (draft?.provider === harness || harness === 'opencode' || Boolean(openProject)) &&
     composerText.trim() !== '' &&
     !promptBusy
   const promptRequest = (): PromptSubmitPayload | null =>
-    lane.threadId === null
-      ? null
-      : { provider: harness, model: selectedModel, threadId: lane.threadId, text: composerText }
+    draft?.provider === harness
+      ? {
+          provider: harness,
+          model: selectedModel,
+          cwd: draft.cwd,
+          draftId: draft.draftId,
+          text: composerText
+        }
+      : lane.threadId === null
+        ? null
+        : { provider: harness, model: selectedModel, threadId: lane.threadId, text: composerText }
   const promptResult = (value: unknown, request: PromptSubmitPayload): void => {
     const result = value as {
       state?: string
       turnId?: string
+      threadId?: string
       holdId?: string
       categories?: string[]
       positions?: number[]
@@ -971,9 +981,52 @@ export const ZeroBotRoute = memo(function ZeroBotRoute(): React.JSX.Element {
       activePromptRef.current = null
       setComposerText((current) => (current === request.text ? '' : current))
       setNotice('Provider accepted the turn. Completion and cost are not yet verified.')
+      if (typeof result.threadId === 'string' && draft?.provider === harness) {
+        if (harness === 'codex') {
+          void loadThreads('codex').then(() => openThread(result.threadId as string))
+        } else {
+          void window.zero.invoke('ocp.discover').then((discovered) => {
+            const parsed = parseDiscovery(discovered)
+            if (parsed !== null) setDiscovery((current) => ({ ...current, opencode: parsed }))
+            openOpenCodeThread(result.threadId as string)
+          })
+        }
+      }
     } else {
       setPromptHold(null)
-      setNotice('Prompt was not sent. Review the destination and try again.')
+      if (typeof result.threadId === 'string' && draft?.provider === harness) {
+        setDraft(null)
+        openRef.current = { ...openRef.current, [harness]: result.threadId }
+        const current = lanesRef.current[harness]
+        const next: HarnessState = {
+          ...lanesRef.current,
+          [harness]: { ...current, threadId: result.threadId }
+        }
+        lanesRef.current = next
+        setLanes(next)
+        setNotice(
+          'The provider conversation was created, but the turn failed. Open the new conversation to retry; your draft is intact.'
+        )
+        if (harness === 'codex') void loadThreads('codex')
+        else
+          void window.zero.invoke('ocp.discover').then((discovered) => {
+            const parsed = parseDiscovery(discovered)
+            if (parsed !== null) setDiscovery((current) => ({ ...current, opencode: parsed }))
+          })
+      }
+      const reason = result.reason
+      if (typeof result.threadId !== 'string')
+        setNotice(
+          reason === 'dispatch-unavailable'
+            ? `${PROVIDER_DISPLAY[harness]} could not start this turn. Check the connection and selected conversation; your draft is intact.`
+            : reason === 'thread-unavailable'
+              ? 'This Codex conversation cannot be resumed in Zero. It may be active in Codex; open it there or start a new Zero conversation. Your draft is intact.'
+              : reason === 'scanner-unavailable'
+                ? 'Airlock could not screen this prompt. Nothing was sent; try again after it recovers.'
+                : reason === 'expired-or-changed'
+                  ? 'The Airlock decision expired or the draft changed. Review it and send again.'
+                  : 'Prompt was not sent. Check the text and selected destination.'
+        )
     }
   }
   const submitPrompt = (): void => {
@@ -1400,9 +1453,19 @@ export const ZeroBotRoute = memo(function ZeroBotRoute(): React.JSX.Element {
                   setModels((s) => ({ ...s, [harness]: e.target.value }))
                 }}
               >
-                {Array.from(new Set([...modelOptions, selectedModel])).map((m) => (
-                  <option key={m} value={m}>
-                    {m}
+                {modelOptions.length === 0 && selectedModel === '' ? (
+                  <option value="" disabled>
+                    No advertised models
+                  </option>
+                ) : null}
+                {selectedModel !== '' && !modelOptions.includes(selectedModel) ? (
+                  <option value={selectedModel} disabled>
+                    {selectedModel} · unavailable
+                  </option>
+                ) : null}
+                {result?.models.map((model) => (
+                  <option key={model.id} value={model.id}>
+                    {model.label}
                   </option>
                 ))}
               </select>

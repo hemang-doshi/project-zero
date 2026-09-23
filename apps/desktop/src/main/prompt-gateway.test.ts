@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { PromptGateway } from './prompt-gateway'
+import { ProviderDispatchError } from './provider-dispatch'
 
 const safe = {
   text: 'hello world',
@@ -15,6 +16,39 @@ describe('PromptGateway', () => {
     const gateway = new PromptGateway(dispatch)
     expect((await gateway.submit(safe)).state).toBe('accepted')
     expect(dispatch).toHaveBeenCalledOnce()
+  })
+
+  it('screens a local draft before any provider session is created', async () => {
+    const dispatch = vi.fn(async () => ({ turnId: 'turn-1', threadId: 'new-thread' }))
+    const gateway = new PromptGateway(dispatch)
+    const draft = {
+      provider: 'codex' as const,
+      model: 'test-model',
+      cwd: '/repo/one',
+      draftId: 'draft-1',
+      text: 'password = synthetic-secret-123'
+    }
+    const held = await gateway.submit(draft)
+    expect(held.state).toBe('held')
+    expect(dispatch).not.toHaveBeenCalled()
+    if (held.state !== 'held') return
+    expect(await gateway.decide(held.holdId, 'cancel', draft)).toEqual({
+      state: 'blocked',
+      reason: 'expired-or-changed'
+    })
+    expect(dispatch).not.toHaveBeenCalled()
+    const clean = await gateway.submit({ ...draft, text: 'hello world' })
+    expect(clean).toEqual({ state: 'accepted', turnId: 'turn-1', threadId: 'new-thread' })
+  })
+
+  it('returns a bounded unavailable-thread reason when Codex cannot resume a thread', async () => {
+    const gateway = new PromptGateway(async () => {
+      throw new ProviderDispatchError('thread-unavailable')
+    })
+    expect(await gateway.submit(safe)).toEqual({
+      state: 'blocked',
+      reason: 'thread-unavailable'
+    })
   })
 
   it('holds sensitive text and consumes one authorization atomically', async () => {

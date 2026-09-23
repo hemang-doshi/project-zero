@@ -43,9 +43,11 @@ export type SkillsDiscoverPayload = { refresh?: boolean }
 export type PromptSubmitPayload = {
   provider: 'codex' | 'opencode'
   model: string
-  threadId: string
   text: string
-}
+} & (
+  | { threadId: string; cwd?: never; draftId?: never }
+  | { threadId?: never; cwd: string; draftId: string }
+)
 export type PromptDecidePayload = PromptSubmitPayload & {
   holdId: string
   action: 'cancel' | 'send-once'

@@ -1,15 +1,27 @@
 import { createHmac, randomBytes, randomUUID } from 'node:crypto'
 import { scanPrompt, type ScanResult } from './airlock-scanner'
+import { ProviderDispatchError } from './provider-dispatch'
 
-export type PromptDestination = { provider: 'codex' | 'opencode'; model: string; threadId: string }
+export type PromptDestination = {
+  provider: 'codex' | 'opencode'
+  model: string
+  threadId?: string
+  cwd?: string
+  draftId?: string
+}
 export type PromptRequest = PromptDestination & { text: string }
 export type PromptDecision =
   | { state: 'held'; holdId: string; categories: string[]; positions: number[] }
-  | { state: 'accepted'; turnId: string }
+  | { state: 'accepted'; turnId: string; threadId?: string }
   | {
       state: 'blocked'
       reason:
-        'invalid-request' | 'scanner-unavailable' | 'expired-or-changed' | 'dispatch-unavailable'
+        | 'invalid-request'
+        | 'scanner-unavailable'
+        | 'expired-or-changed'
+        | 'dispatch-unavailable'
+        | 'thread-unavailable'
+      threadId?: string
     }
 
 type Hold = {
@@ -25,14 +37,25 @@ export class PromptGateway {
   private readonly holds = new Map<string, Hold>()
 
   constructor(
-    private readonly dispatch: (request: PromptRequest) => Promise<{ turnId: string }>,
+    private readonly dispatch: (
+      request: PromptRequest
+    ) => Promise<{ turnId: string; threadId?: string }>,
     private readonly scan: (text: unknown) => ScanResult = scanPrompt,
     private readonly now: () => number = Date.now
   ) {}
 
   private digest(request: PromptRequest): string {
     return createHmac('sha256', this.key)
-      .update(JSON.stringify([request.text, request.provider, request.model, request.threadId]))
+      .update(
+        JSON.stringify([
+          request.text,
+          request.provider,
+          request.model,
+          request.threadId,
+          request.cwd,
+          request.draftId
+        ])
+      )
       .digest('hex')
   }
 
@@ -45,9 +68,17 @@ export class PromptGateway {
       typeof request.model === 'string' &&
       request.model.length > 0 &&
       request.model.length <= 120 &&
-      typeof request.threadId === 'string' &&
-      request.threadId.length > 0 &&
-      request.threadId.length <= 120
+      ((typeof request.threadId === 'string' &&
+        request.threadId.length > 0 &&
+        request.threadId.length <= 120 &&
+        request.cwd === undefined &&
+        request.draftId === undefined) ||
+        (request.threadId === undefined &&
+          typeof request.cwd === 'string' &&
+          request.cwd.startsWith('/') &&
+          request.cwd.length <= 4096 &&
+          typeof request.draftId === 'string' &&
+          /^[A-Za-z0-9_-]{1,120}$/.test(request.draftId)))
     )
   }
 
@@ -103,9 +134,15 @@ export class PromptGateway {
       const result = await this.dispatch(request)
       if (typeof result.turnId !== 'string' || result.turnId === '')
         throw new Error('Invalid acceptance')
-      return { state: 'accepted', turnId: result.turnId }
-    } catch {
+      return result.threadId
+        ? { state: 'accepted', turnId: result.turnId, threadId: result.threadId }
+        : { state: 'accepted', turnId: result.turnId }
+    } catch (error) {
       // Provider errors may echo sensitive prompt text. Never forward them.
+      if (error instanceof ProviderDispatchError)
+        return error.threadId
+          ? { state: 'blocked', reason: error.reason, threadId: error.threadId }
+          : { state: 'blocked', reason: error.reason }
       return { state: 'blocked', reason: 'dispatch-unavailable' }
     }
   }

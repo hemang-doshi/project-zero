@@ -8,6 +8,52 @@ const request = {
   threadId: 't1'
 }
 describe('dispatchProviderPrompt', () => {
+  it('resumes a provider thread reported notLoaded before starting its turn', async () => {
+    const send = vi.fn(async (method: string) => {
+      if (method === 'thread/read')
+        return { thread: { id: 't1', cwd: '/repo/one', status: { type: 'notLoaded' } } }
+      if (method === 'thread/resume')
+        return { thread: { id: 't1', cwd: '/repo/one', status: { type: 'idle' } } }
+      return { turn: { id: 'turn-1' } }
+    })
+    const result = await dispatchProviderPrompt(request, {
+      codex: { state: 'live', send },
+      opencode: { state: 'disconnected', send: vi.fn() },
+      openCodeSession: () => null,
+      realpath: (path) => path
+    })
+    expect(result).toEqual({ turnId: 'turn-1' })
+    expect(send.mock.calls.map(([method]) => method)).toEqual([
+      'thread/read',
+      'thread/resume',
+      'turn/start'
+    ])
+  })
+
+  it('reports a failed resume stage without recording the thread id or prompt', async () => {
+    const diagnostics: unknown[] = []
+    const send = vi.fn(async (method: string) => {
+      if (method === 'thread/read')
+        return { thread: { id: 't1', cwd: '/repo/one', status: { type: 'notLoaded' } } }
+      throw new Error('synthetic prompt and secret provider detail')
+    })
+    await expect(
+      dispatchProviderPrompt(request, {
+        codex: { state: 'live', send },
+        opencode: { state: 'disconnected', send: vi.fn() },
+        openCodeSession: () => null,
+        realpath: (path) => path,
+        onDiagnostic: (entry) => diagnostics.push(entry)
+      })
+    ).rejects.toThrow()
+    expect(diagnostics).toEqual([
+      expect.objectContaining({ provider: 'codex', stage: 'thread/resume' })
+    ])
+    expect(JSON.stringify(diagnostics)).not.toContain('t1')
+    expect(JSON.stringify(diagnostics)).not.toContain('synthetic prompt')
+    expect(send.mock.calls.map(([method]) => method)).toEqual(['thread/read', 'thread/resume'])
+  })
+
   it('reads the provider-owned cwd then starts one Codex turn without a daemon projectId', async () => {
     const send = vi.fn(async (method: string) =>
       method === 'thread/read'

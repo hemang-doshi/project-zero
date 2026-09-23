@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { realpathSync } from 'node:fs'
 import { isAbsolute } from 'node:path'
 
@@ -8,12 +8,48 @@ export type ProviderRequest = {
   text: string
   threadId: string
 }
+export class ProviderDispatchError extends Error {
+  constructor(
+    readonly reason: 'thread-unavailable' | 'dispatch-unavailable',
+    readonly threadId?: string
+  ) {
+    super(reason)
+  }
+}
 type Bridge = { state: string; send: (method: string, params: unknown) => Promise<unknown> }
 type Deps = {
   codex: Bridge
   opencode: Bridge
   openCodeSession: (id: string) => { id: string; directory: string } | null
   realpath?: (path: string) => string
+  onDiagnostic?: (entry: {
+    provider: ProviderRequest['provider']
+    stage: string
+    threadHash: string
+  }) => void
+}
+
+async function sendStage(
+  request: ProviderRequest,
+  deps: Deps,
+  bridge: Bridge,
+  method: string,
+  params: unknown
+): Promise<unknown> {
+  try {
+    return await bridge.send(method, params)
+  } catch (error) {
+    try {
+      deps.onDiagnostic?.({
+        provider: request.provider,
+        stage: method,
+        threadHash: createHash('sha256').update(request.threadId).digest('hex').slice(0, 12)
+      })
+    } catch {
+      // Diagnostics must not change prompt dispatch behavior.
+    }
+    throw error
+  }
 }
 
 const record = (value: unknown): Record<string, unknown> | null =>
@@ -36,7 +72,10 @@ function optionValues(config: Record<string, unknown>): string[] {
 async function dispatchCodex(request: ProviderRequest, deps: Deps): Promise<{ turnId: string }> {
   if (deps.codex.state !== 'live') throw new Error('Provider disconnected')
   const read = record(
-    await deps.codex.send('thread/read', { threadId: request.threadId, includeTurns: false })
+    await sendStage(request, deps, deps.codex, 'thread/read', {
+      threadId: request.threadId,
+      includeTurns: false
+    })
   )
   const thread = record(read?.thread)
   if (
@@ -50,8 +89,24 @@ async function dispatchCodex(request: ProviderRequest, deps: Deps): Promise<{ tu
   const resolve = deps.realpath ?? realpathSync
   resolve(thread.cwd)
   if (deps.codex.state !== 'live') throw new Error('Provider disconnected')
+  const status = record(thread.status)
+  if (status?.type === 'notLoaded') {
+    let response: unknown
+    try {
+      response = await sendStage(request, deps, deps.codex, 'thread/resume', {
+        threadId: request.threadId
+      })
+    } catch {
+      throw new ProviderDispatchError('thread-unavailable')
+    }
+    const resumed = record(response)
+    const activeThread = record(resumed?.thread)
+    if (activeThread?.id !== request.threadId || activeThread.cwd !== thread.cwd)
+      throw new ProviderDispatchError('thread-unavailable')
+  }
+  if (deps.codex.state !== 'live') throw new Error('Provider disconnected')
   const response = record(
-    await deps.codex.send('turn/start', {
+    await sendStage(request, deps, deps.codex, 'turn/start', {
       threadId: request.threadId,
       input: [{ type: 'text', text: request.text, text_elements: [] }],
       model: request.model,
@@ -71,7 +126,7 @@ async function dispatchOpenCode(request: ProviderRequest, deps: Deps): Promise<{
     throw new Error('OpenCode session has no verified cwd')
   const resolve = deps.realpath ?? realpathSync
   const loaded = record(
-    await deps.opencode.send('session/load', {
+    await sendStage(request, deps, deps.opencode, 'session/load', {
       sessionId: request.threadId,
       cwd: resolve(binding.directory),
       mcpServers: []
@@ -81,7 +136,7 @@ async function dispatchOpenCode(request: ProviderRequest, deps: Deps): Promise<{
   const model = configs.map(modelOption).find((item) => item !== null) ?? null
   if (!model || !optionValues(model).includes(request.model)) throw new Error('Model unavailable')
   if (model.currentValue !== request.model) {
-    await deps.opencode.send('session/set_config_option', {
+    await sendStage(request, deps, deps.opencode, 'session/set_config_option', {
       sessionId: request.threadId,
       configId: 'model',
       type: 'id',
@@ -90,7 +145,7 @@ async function dispatchOpenCode(request: ProviderRequest, deps: Deps): Promise<{
   }
   if (deps.opencode.state !== 'live') throw new Error('Provider disconnected')
   const result = record(
-    await deps.opencode.send('session/prompt', {
+    await sendStage(request, deps, deps.opencode, 'session/prompt', {
       sessionId: request.threadId,
       prompt: [{ type: 'text', text: request.text }]
     })
