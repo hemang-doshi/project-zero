@@ -1,13 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { codexUsageFromEvent, formatProviderCost, openCodeUsageFromSession } from './providerUsage'
+import { codexUsageFromEvent, openCodeUsageFromSession } from './providerUsage'
 
 describe('provider usage', () => {
-  it('formats only provider-reported cost precision without adding a currency', () => {
-    expect(formatProviderCost(Number('2.7237485199999993'))).toBe('2.723749')
-    expect(formatProviderCost(0)).toBe('0.00')
-    expect(formatProviderCost(null)).toBeNull()
-  })
-
   it('parses Codex thread totals without inventing cost or missing fields', () => {
     expect(
       codexUsageFromEvent(

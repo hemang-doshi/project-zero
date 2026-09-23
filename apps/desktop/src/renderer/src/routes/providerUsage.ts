@@ -20,14 +20,6 @@ const count = (value: unknown): number | null =>
 const amount = (value: unknown): number | null =>
   typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null
 
-export function formatProviderCost(value: number | null): string | null {
-  if (value === null || !Number.isFinite(value) || value < 0) return null
-  const rounded = value.toFixed(6)
-  if (rounded.includes('e')) return value.toString()
-  const [whole, fraction = ''] = rounded.split('.')
-  return `${whole}.${fraction.replace(/0+$/, '').padEnd(2, '0')}`
-}
-
 export function codexUsageFromEvent(value: unknown, observedAt: number): VerifiedUsage | null {
   const root = record(value)
   if (typeof root?.threadId !== 'string' || root.threadId === '') return null

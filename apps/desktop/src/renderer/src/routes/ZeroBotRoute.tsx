@@ -5,6 +5,8 @@ import type { PromptSubmitPayload } from '../../../shared/ipc'
 import { Chip } from './Chip'
 import { ChatRow, ThinkingGroupBlock, ThreadList } from './ZeroBotChat'
 import { parseOpenCodeTranscript, type TranscriptUsage } from './opencodeTranscript'
+import { codexUsageFromEvent } from './providerUsage'
+import { useWindows } from '../store/windows'
 import type { Tone } from './runtime.types'
 import {
   applyBridgeEvent,
@@ -53,6 +55,7 @@ import {
 
 const workspaceStyle: React.CSSProperties = {
   height: '100%',
+  position: 'relative',
   display: 'flex',
   flexDirection: 'row',
   alignItems: 'stretch',
@@ -328,6 +331,9 @@ const threadTime = (seconds: number): string => {
   return Number.isNaN(d.getTime()) ? '—' : d.toISOString().slice(0, 16).replace('T', ' ')
 }
 
+const formatTokenCount = (value: number | null): string =>
+  value === null ? '—' : value.toLocaleString()
+
 export function FolderGroupList({
   groups,
   selectedId,
@@ -483,7 +489,8 @@ export const ZeroBotRoute = memo(function ZeroBotRoute(): React.JSX.Element {
   const [inFlight, setInFlight] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
-  const [inspectorOpen, setInspectorOpen] = useState(true)
+  const [inspectorOpen, setInspectorOpen] = useState(false)
+  const openRoute = useWindows((state) => state.openRoute)
   const [workspaceWidth, setWorkspaceWidth] = useState<number | null>(null)
   const workspaceRef = useRef<HTMLDivElement>(null)
   const [composerText, setComposerText] = useState('')
@@ -502,6 +509,7 @@ export const ZeroBotRoute = memo(function ZeroBotRoute(): React.JSX.Element {
   const [projectsError, setProjectsError] = useState<string | null>(null)
   const lanesRef = useRef<HarnessState>(EMPTY_LANES)
   const logsRef = useRef<Record<Harness, HarnessEventLog>>(EMPTY_HARNESS_LOG)
+  const usageRef = useRef<Map<string, TranscriptUsage>>(new Map())
   const openRef = useRef<Record<Harness, string | null>>({ codex: null, opencode: null })
   const aliveRef = useRef(true)
 
@@ -639,6 +647,24 @@ export const ZeroBotRoute = memo(function ZeroBotRoute(): React.JSX.Element {
         threadId?: unknown
       } | null
       const eventThread = typeof params?.threadId === 'string' ? params.threadId : null
+      if (h === 'codex' && method === 'thread/tokenUsage/updated') {
+        const usage = codexUsageFromEvent(ev.params, Date.now())
+        if (usage !== null) {
+          const key = `codex:${usage.threadId}`
+          usageRef.current.set(key, usage)
+          if (usageRef.current.size > 200)
+            usageRef.current.delete(usageRef.current.keys().next().value as string)
+          if (openId === usage.threadId) {
+            const current = lanesRef.current.codex
+            const next: HarnessState = {
+              ...lanesRef.current,
+              codex: { ...current, usage }
+            }
+            lanesRef.current = next
+            setLanes(next)
+          }
+        }
+      }
       if (openId !== null && (eventThread === null || eventThread === openId)) {
         const lane = lanesRef.current[h]
         const applied = applyBridgeEvent(lane.items, method, ev.params)
@@ -718,7 +744,7 @@ export const ZeroBotRoute = memo(function ZeroBotRoute(): React.JSX.Element {
     const laneNow = lanesRef.current.codex
     const opened: HarnessState = {
       ...lanesRef.current,
-      codex: { ...laneNow, threadId }
+      codex: { ...laneNow, threadId, usage: usageRef.current.get(`codex:${threadId}`) ?? null }
     }
     lanesRef.current = opened
     setLanes(opened)
@@ -749,7 +775,13 @@ export const ZeroBotRoute = memo(function ZeroBotRoute(): React.JSX.Element {
     const laneNow = lanesRef.current.opencode
     const opened: HarnessState = {
       ...lanesRef.current,
-      opencode: { ...laneNow, threadId, items: [], dropped: 0, usage: null }
+      opencode: {
+        ...laneNow,
+        threadId,
+        items: [],
+        dropped: 0,
+        usage: usageRef.current.get(`opencode:${threadId}`) ?? null
+      }
     }
     lanesRef.current = opened
     setLanes(opened)
@@ -808,18 +840,20 @@ export const ZeroBotRoute = memo(function ZeroBotRoute(): React.JSX.Element {
             : null
         const parsed = parseOpenCodeTranscript(session)
         const current = lanesRef.current.opencode
+        if (parsed.usage?.threadId === threadId)
+          usageRef.current.set(`opencode:${threadId}`, parsed.usage)
         const next: HarnessState = {
           ...lanesRef.current,
           opencode: {
             ...current,
             items: parsed.items,
             dropped: parsed.dropped,
-            usage: parsed.usage
+            usage: parsed.usage?.threadId === threadId ? parsed.usage : null
           }
         }
         lanesRef.current = next
         setLanes(next)
-        if (parsed.items.length === 0) setNotice('The OpenCode session has no readable messages.')
+        if (parsed.items.length === 0) setNotice('No messages in this OpenCode session yet.')
       },
       (err: unknown) => {
         if (openRef.current.opencode === threadId)
@@ -1081,6 +1115,7 @@ export const ZeroBotRoute = memo(function ZeroBotRoute(): React.JSX.Element {
     [lane.items]
   )
   const toolSummary = useMemo(() => toolOutcomeSummary(lane.items), [lane.items])
+  const selectedUsage = lane.usage?.threadId === lane.threadId ? lane.usage : null
   // Context indicator from real lane data only: provider, selected model and
   // the items actually in view. Project and branch need the context-packet
   // backend (spec §§32-34), which does not exist — marked pending below.
@@ -1096,6 +1131,7 @@ export const ZeroBotRoute = memo(function ZeroBotRoute(): React.JSX.Element {
       .flatMap((group) => group.sessions)
       .find((session) => session.id === lanes.opencode.threadId) ?? null
   const compact = workspaceWidth !== null && workspaceWidth < 620
+  const overlayInspector = workspaceWidth !== null && workspaceWidth < 1050
 
   return (
     <div ref={workspaceRef} className="zw-route" data-region="workspace" style={workspaceStyle}>
@@ -1544,26 +1580,39 @@ export const ZeroBotRoute = memo(function ZeroBotRoute(): React.JSX.Element {
         id="turn-inspector"
         className={`zw-inspector${inspectorOpen ? '' : ' is-collapsed'}`}
         data-region="inspector"
-        style={{ ...inspectorStyle, width: compact ? 220 : 288 }}
+        style={{
+          ...inspectorStyle,
+          width: compact ? 240 : 288,
+          ...(overlayInspector
+            ? {
+                position: 'absolute',
+                right: 0,
+                top: 0,
+                bottom: 0,
+                zIndex: 5,
+                background: 'var(--z-card-cream)',
+                boxShadow: inspectorOpen ? '-12px 0 30px rgb(0 0 0 / 12%)' : 'none'
+              }
+            : {})
+        }}
         aria-label="Turn inspector"
         aria-hidden={!inspectorOpen}
         inert={!inspectorOpen}
       >
-        <span data-voice="human" style={sectionLabel}>
-          INSPECTOR · TURN DETAILS
-        </span>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <span data-voice="human" style={sectionLabel}>
+            INSPECTOR
+          </span>
+          {overlayInspector ? (
+            <button type="button" style={actionButton} onClick={() => setInspectorOpen(false)}>
+              Close
+            </button>
+          ) : null}
+        </div>
         {openRow !== null ? (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}>
             <p data-voice="human" style={{ ...bodyText, fontWeight: 700 }}>
               {threadTitle(openRow)}
-            </p>
-            <p data-voice="machine" style={machineMeta}>
-              {openRow.id}
-            </p>
-            <p data-voice="machine" style={machineMeta}>
-              {threadTime(threadTimestamp(openRow))}
-              {openRow.model !== null ? ` · ${openRow.model}` : ''}
-              {openRow.status !== '' ? ` · ${openRow.status}` : ''}
             </p>
           </div>
         ) : (
@@ -1600,73 +1649,69 @@ export const ZeroBotRoute = memo(function ZeroBotRoute(): React.JSX.Element {
         )}
 
         <span data-voice="human" style={sectionLabel}>
-          CONTEXT
+          USAGE
         </span>
         <p data-voice="human" style={bodyText}>
-          Provider: {PROVIDER_DISPLAY[harness]} · Model: {selectedModel} · Project:{' '}
-          {openProject?.name ?? 'Unavailable'}
+          {selectedUsage !== null
+            ? `${formatTokenCount(selectedUsage.input)} input · ${formatTokenCount(selectedUsage.output)} output · ${formatTokenCount(selectedUsage.total)} total`
+            : 'No verified token totals for this conversation yet.'}
         </p>
-        <p data-voice="human" style={bodyText}>
-          {counts.messages} message{counts.messages === 1 ? '' : 's'} · {counts.thinking} thinking ·{' '}
-          {counts.tools} tool call{counts.tools === 1 ? '' : 's'}
-          {counts.notices > 0
-            ? ` · ${counts.notices} protocol note${counts.notices === 1 ? '' : 's'}`
-            : ''}
-        </p>
-        {lane.dropped > 0 ? (
-          <p data-voice="human" style={bodyText}>
-            +{lane.dropped} earlier item(s) beyond the bounded view.
+        {selectedUsage !== null ? (
+          <p data-voice="machine" style={machineMeta}>
+            {formatTokenCount(selectedUsage.cachedInput)} cached input ·{' '}
+            {formatTokenCount(selectedUsage.reasoningOutput)} reasoning output
+            {selectedUsage.cost !== null ? ` · provider cost ${selectedUsage.cost}` : ''}
+            <br />
+            {selectedUsage.source === 'codex-live' ? 'Codex live' : 'OpenCode saved'} ·{' '}
+            {new Date(selectedUsage.observedAt).toLocaleTimeString()}
           </p>
         ) : null}
-        <p data-voice="human" style={bodyText}>
-          Project and branch context, provider handoff and automatic routing are designed but
-          pending — this build has no context-packet backend, so every turn stays inside its own
-          provider thread.
-        </p>
 
-        <span data-voice="human" style={sectionLabel}>
-          USAGE & COST
-        </span>
-        <p data-voice="human" style={bodyText}>
-          {lane.usage !== null
-            ? `${lane.usage.input.toLocaleString()} input · ${lane.usage.output.toLocaleString()} output · ${lane.usage.reasoning.toLocaleString()} reasoning tokens · provider-reported cost ${lane.usage.cost}`
-            : 'Token usage and cost: Unavailable. This bridge view has no verified usage totals; item counts above are not token counts.'}
-        </p>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <span data-voice="human" style={sectionLabel}>
+            AIRLOCK · {promptHold !== null ? 'Held' : live ? 'Active' : 'Unavailable'}
+          </span>
+          <button type="button" style={actionButton} onClick={() => openRoute('airlock')}>
+            History
+          </button>
+        </div>
 
-        <span data-voice="human" style={sectionLabel}>
-          AIRLOCK
-        </span>
-        <p data-voice="human" style={bodyText}>
-          {harness === 'codex'
-            ? 'Codex prompts pass through local screening. Detected sensitive text requires a one-time Send once decision; no approval applies to later edits.'
-            : 'OpenCode prompts pass through local screening and a verified active ACP session. Tool permissions require an explicit provider decision.'}
-        </p>
-
-        <span data-voice="human" style={sectionLabel}>
-          CONVERSATION · BRIDGE EVENTS
-        </span>
-        {shownEvents.length === 0 ? (
+        <details>
+          <summary data-voice="human" style={{ ...bodyText, cursor: 'pointer' }}>
+            Details
+          </summary>
+          {openRow !== null ? (
+            <p data-voice="machine" style={machineMeta}>
+              Task {openRow.id} · {threadTime(threadTimestamp(openRow))}
+              {openRow.status !== '' ? ` · ${openRow.status}` : ''}
+            </p>
+          ) : null}
           <p data-voice="human" style={bodyText}>
-            {live
-              ? 'Connected; no bridge event has streamed into this window yet.'
-              : 'No bridge events in this window yet. Connect manually to surface streamed protocol state.'}
+            {PROVIDER_DISPLAY[harness]} · {selectedModel} · {openProject?.name ?? 'No project'}
           </p>
-        ) : (
-          <>
-            {shownEvents.map((e, i) => (
-              <BridgeEventRow key={`${e.harness}-${i}`} event={e} />
+          <p data-voice="human" style={bodyText}>
+            {counts.messages} messages · {counts.thinking} reasoning items · {counts.tools} tools
+            {counts.notices > 0 ? ` · ${counts.notices} protocol notes` : ''}
+          </p>
+          {lane.dropped > 0 ? (
+            <p data-voice="human" style={bodyText}>
+              +{lane.dropped} earlier items outside this view
+            </p>
+          ) : null}
+          <details>
+            <summary data-voice="human" style={{ ...bodyText, cursor: 'pointer' }}>
+              Bridge events · {shownEvents.length}
+            </summary>
+            {shownEvents.map((event, index) => (
+              <BridgeEventRow key={`${event.harness}-${index}`} event={event} />
             ))}
             {log.dropped > 0 ? (
               <p data-voice="human" style={bodyText}>
-                +{log.dropped} older event(s) kept out of bounded {harness} memory.
+                +{log.dropped} older events outside this view
               </p>
             ) : null}
-          </>
-        )}
-        <p data-voice="human" style={bodyText}>
-          Events are retained bounded memory, never a live or actionable run while the bridge is not
-          connected.
-        </p>
+          </details>
+        </details>
       </aside>
     </div>
   )

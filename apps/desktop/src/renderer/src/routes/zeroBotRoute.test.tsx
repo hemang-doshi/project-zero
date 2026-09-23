@@ -736,27 +736,26 @@ describe('ZeroBotRoute thread surface', () => {
     stubZero(fakeZero({}))
     ;(globalThis as unknown as { window: { zero: FakeZero } }).window.zero.invoke = invoke
     renderRoute()
-    const toggle = Array.from(host?.querySelectorAll('button') ?? []).find(
-      (b) => b.textContent === 'Hide inspector'
-    )
-    expect(toggle).toBeDefined()
-    act(() => {
-      toggle?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
-    })
     const collapsed = host?.querySelector('[data-region="inspector"]')
-    expect(collapsed).not.toBeNull()
     expect(collapsed?.classList.contains('is-collapsed')).toBe(true)
     expect(collapsed?.getAttribute('aria-hidden')).toBe('true')
     expect(collapsed?.hasAttribute('inert')).toBe(true)
-    const reopen = Array.from(host?.querySelectorAll('button') ?? []).find(
+    const toggle = Array.from(host?.querySelectorAll('button') ?? []).find(
       (b) => b.textContent === 'Show inspector'
+    )
+    act(() => {
+      toggle?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+    expect(collapsed?.classList.contains('is-collapsed')).toBe(false)
+    const reopen = Array.from(host?.querySelectorAll('button') ?? []).find(
+      (b) => b.textContent === 'Hide inspector'
     )
     act(() => {
       reopen?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
     })
     expect(
       host?.querySelector('[data-region="inspector"]')?.classList.contains('is-collapsed')
-    ).toBe(false)
+    ).toBe(true)
     expect(invoke.mock.calls.some(([op]) => op === 'codex.threads')).toBe(false)
   })
 
@@ -787,6 +786,33 @@ describe('ZeroBotRoute thread surface', () => {
     ).toBe(true)
   })
 
+  it('opens the inspector over the canvas at narrow desktop widths', async () => {
+    vi.stubGlobal(
+      'ResizeObserver',
+      class {
+        constructor(
+          private readonly callback: (entries: Array<{ contentRect: { width: number } }>) => void
+        ) {}
+        observe(): void {
+          this.callback([{ contentRect: { width: 850 } }])
+        }
+        disconnect(): void {
+          // No observed resources in this deterministic test double.
+        }
+      }
+    )
+    stubZero(fakeZero({}))
+    renderRoute()
+    await act(async () => {
+      Array.from(host?.querySelectorAll('button') ?? [])
+        .find((button) => button.textContent === 'Show inspector')
+        ?.click()
+    })
+    const inspector = host?.querySelector<HTMLElement>('[data-region="inspector"]')
+    expect(inspector?.style.position).toBe('absolute')
+    expect(inspector?.style.right).toBe('0px')
+  })
+
   it('attributes open-thread turns to Zero with muted provider models and summaries', async () => {
     const invoke = vi.fn(async (op, payload) => {
       if (op === 'codex.state') return { state: 'live', lastDiagnostic: null }
@@ -812,7 +838,7 @@ describe('ZeroBotRoute thread surface', () => {
     const html = host?.innerHTML ?? ''
     expect(html).toContain('gpt-5.6-sol')
     expect(html).toContain('Ran npm test')
-    expect(html).toContain('designed but pending')
+    expect(html).toContain('Calls by tool')
   })
 
   it('invites starting in the composer from the empty canvas with send honestly blocked', async () => {
@@ -921,6 +947,59 @@ describe('ZeroBotRoute thread surface', () => {
       )
     )
     expect(box.value).toBe('')
+  })
+
+  it('binds live Codex token totals to the matching selected task only', async () => {
+    const invoke = vi.fn(async (op: string) => {
+      if (op === 'projects.list') return [{ id: 'p1', name: 'Project One', path: '/repo/one' }]
+      if (op === 'codex.state') return { state: 'live', lastDiagnostic: null }
+      if (op === 'ocp.state') return { state: 'disconnected', lastDiagnostic: null }
+      if (op === 'codex.threads')
+        return {
+          ...THREAD_ROWS_PAYLOAD,
+          threads: [{ ...THREAD_ROWS_PAYLOAD.threads[0], projectId: 'p1' }]
+        }
+      if (op === 'codex.thread.get') return THREAD_GET_PAYLOAD
+      throw new Error(`unexpected op ${op}`)
+    })
+    stubZero(fakeZero({}))
+    ;(globalThis as unknown as { window: { zero: FakeZero } }).window.zero.invoke = invoke
+    renderRoute()
+    await vi.waitFor(() => expect(host?.innerHTML).toContain('first chat thread'))
+    await act(async () => {
+      Array.from(host?.querySelectorAll('button') ?? [])
+        .find((button) => button.textContent?.includes('first chat thread'))
+        ?.click()
+    })
+    const update = (threadId: string, inputTokens: number): void =>
+      bridgeCb?.({
+        harness: 'codex',
+        event: {
+          method: 'thread/tokenUsage/updated',
+          params: {
+            threadId,
+            turnId: 'turn-1',
+            tokenUsage: {
+              total: {
+                inputTokens,
+                cachedInputTokens: 2,
+                outputTokens: 5,
+                reasoningOutputTokens: 1,
+                totalTokens: inputTokens + 5
+              }
+            }
+          }
+        }
+      })
+    await act(async () => update('other-task', 999))
+    expect(host?.querySelector('[data-region="inspector"]')?.textContent).toContain(
+      'No verified token totals'
+    )
+    await act(async () => update('t1', 100))
+    const inspector = host?.querySelector('[data-region="inspector"]')
+    expect(inspector?.textContent).toContain('100 input')
+    expect(inspector?.textContent).not.toContain('999 input')
+    expect(inspector?.textContent).not.toContain('provider cost')
   })
 
   it('explains bridge failures in human copy with the raw diagnostic behind it', async () => {

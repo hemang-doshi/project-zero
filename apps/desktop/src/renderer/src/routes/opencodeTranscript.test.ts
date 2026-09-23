@@ -60,10 +60,31 @@ describe('OpenCode session export', () => {
   })
 
   it('reports verified session usage and cost from the local store projection', () => {
-    const result = parseOpenCodeTranscript({
-      info: { tokens_input: 120, tokens_output: 45, tokens_reasoning: 10, cost: 0.25 },
-      messages: []
+    const result = parseOpenCodeTranscript(
+      {
+        info: { id: 's1' },
+        messages: [
+          {
+            info: {
+              role: 'assistant',
+              tokens: { input: 120, output: 45, reasoning: 10, cache: { read: 20 } },
+              cost: 0.25
+            },
+            parts: []
+          }
+        ]
+      },
+      123
+    )
+    expect(result.usage).toMatchObject({
+      source: 'opencode-saved',
+      threadId: 's1',
+      observedAt: 123,
+      input: 120,
+      cachedInput: 20,
+      output: 45,
+      reasoningOutput: 10,
+      cost: 0.25
     })
-    expect(result.usage).toEqual({ input: 120, output: 45, reasoning: 10, cost: 0.25 })
   })
 })
