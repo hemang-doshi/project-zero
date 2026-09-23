@@ -178,7 +178,14 @@ func (r *Runtime) Cockpit(ctx context.Context) (map[string]any, error) {
 		return nil, err
 	}
 	truncated := map[string]bool{}
-	out := map[string]any{"version": "0.1", "revision": r.Updates.Revision(), "timestamp": r.Now().UTC(), "status": "RUNNING", "runtime_version": release.Current().Version, "release": release.Current(), "session": session, "integrations": integrations, "policies": policies, "context": currentContext, "truncated": truncated}
+	r.audioMu.Lock()
+	audioFrame := r.audio
+	audioStatus := r.audioStatus
+	r.audioMu.Unlock()
+	if audioStatus == "" {
+		audioStatus = "DISABLED"
+	}
+	out := map[string]any{"version": "0.1", "revision": r.Updates.Revision(), "timestamp": r.Now().UTC(), "status": "RUNNING", "runtime_version": release.Current().Version, "release": release.Current(), "session": session, "integrations": integrations, "policies": policies, "context": currentContext, "audio": map[string]any{"level": audioFrame.Level, "bass": audioFrame.Bass, "sequence": audioFrame.Sequence, "status": audioStatus}, "truncated": truncated}
 	queries := map[string]string{
 		"projects":      "SELECT value FROM entities WHERE kind='project' AND COALESCE(json_extract(value,'$.removed'),0)=0 ORDER BY key",
 		"nodes":         "SELECT id,revoked,capabilities,last_seen FROM nodes ORDER BY id",

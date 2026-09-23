@@ -236,6 +236,48 @@ func TestCockpitSnapshotBoundedAndDisplaySafe(t *testing.T) {
 	}
 }
 
+func TestCockpitSnapshotExposesAudioLevels(t *testing.T) {
+	r := openTest(t, filepath.Join(t.TempDir(), "zero.db"))
+	ctx := context.Background()
+	snapshot, err := r.Cockpit(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := json.Marshal(snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fresh struct {
+		Audio struct {
+			Level    float64 `json:"level"`
+			Bass     float64 `json:"bass"`
+			Sequence float64 `json:"sequence"`
+			Status   string  `json:"status"`
+		} `json:"audio"`
+	}
+	if err = json.Unmarshal(encoded, &fresh); err != nil {
+		t.Fatal(err)
+	}
+	if fresh.Audio.Level != 0 || fresh.Audio.Bass != 0 || fresh.Audio.Sequence != 0 || fresh.Audio.Status != "DISABLED" {
+		t.Fatalf("fresh audio block not the honest zero state: %+v", fresh.Audio)
+	}
+	r.setAudio(9, 178, "LIVE")
+	snapshot, err = r.Cockpit(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err = json.Marshal(snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = json.Unmarshal(encoded, &fresh); err != nil {
+		t.Fatal(err)
+	}
+	if fresh.Audio.Level != 9 || fresh.Audio.Bass != 178 || fresh.Audio.Sequence != 1 || fresh.Audio.Status != "LIVE" {
+		t.Fatalf("audio levels missing or wrong in cockpit projection: %+v", fresh.Audio)
+	}
+}
+
 func TestCockpitSnapshotBoundsUnvalidatedApprovalInput(t *testing.T) {
 	r := openTest(t, filepath.Join(t.TempDir(), "zero.db"))
 	command(t, r, "ask", "grants.set", map[string]string{"principal": "owner", "capability": "session.start", "target": "runtime", "state": "ASK"})

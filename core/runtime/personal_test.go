@@ -181,3 +181,43 @@ func TestArtworkRequiresNegotiationAndExactPixelLength(t *testing.T) {
 		t.Fatal(e)
 	}
 }
+
+func TestArtworkAccessorServesCachedDigest(t *testing.T) {
+	r := openTest(t, filepath.Join(t.TempDir(), "zero.db"))
+	ctx := context.Background()
+	if _, err := r.Artwork(ctx, "missing"); err == nil {
+		t.Fatal("unknown digest served")
+	}
+	command(t, r, "connect", "integrations.connect", map[string]string{"id": "spotify"})
+	pixels := make([]byte, 2048)
+	pixels[0] = 0xF8
+	pixels[2046] = 0x1F
+	image := base64.StdEncoding.EncodeToString(pixels)
+	observed, _ := json.Marshal(Integration{ID: "spotify", Status: "ONLINE", ObservedAt: r.Now().UTC(), Data: map[string]string{"state": "playing", "track": "Track", "artist": "Artist", "artwork_rgb565": image}})
+	if _, err := r.Execute(ctx, "integration:spotify", Request{ID: "observe", Op: "integration.observed", Body: observed}); err != nil {
+		t.Fatal(err)
+	}
+	integrations, err := r.Integrations(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest := ""
+	for _, integration := range integrations {
+		if integration.ID == "spotify" {
+			digest = integration.Data["artwork_id"]
+		}
+	}
+	if len(digest) != 64 {
+		t.Fatalf("missing artwork digest: %q", digest)
+	}
+	asset, err := r.Artwork(ctx, digest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if asset["rgb565"] != image {
+		t.Fatalf("cached rgb565 differs from the ingested artwork")
+	}
+	if _, err := r.Artwork(ctx, "x"); err == nil {
+		t.Fatal("short digest accepted")
+	}
+}

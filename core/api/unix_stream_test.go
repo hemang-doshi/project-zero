@@ -3,6 +3,7 @@ package api
 import (
 	"bufio"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -247,5 +248,67 @@ func TestCockpitSnapshotUnixEndpoint(t *testing.T) {
 	var session runtime.Session
 	if err = json.Unmarshal(value["session"], &session); err != nil || session.State != "RUNNING" {
 		t.Fatalf("%+v %v", session, err)
+	}
+}
+
+func TestArtworkEndpointServesCachedDigest(t *testing.T) {
+	r, _, socket := cockpitServer(t)
+	ctx := context.Background()
+	if _, err := r.Execute(ctx, "owner", runtime.Request{ID: "connect", Op: "integrations.connect", Body: json.RawMessage(`{"id":"spotify"}`)}); err != nil {
+		t.Fatal(err)
+	}
+	pixels := make([]byte, 2048)
+	pixels[0] = 0xF8
+	pixels[2046] = 0x1F
+	image := base64.StdEncoding.EncodeToString(pixels)
+	observed, _ := json.Marshal(map[string]any{"id": "spotify", "status": "ONLINE", "observed_at": time.Now().UTC().Format(time.RFC3339Nano), "data": map[string]string{"state": "playing", "track": "Track", "artist": "Artist", "artwork_rgb565": image}})
+	if _, err := r.Execute(ctx, "integration:spotify", runtime.Request{ID: "observe", Op: "integration.observed", Body: observed}); err != nil {
+		t.Fatal(err)
+	}
+	_, integrations := cockpitGET(t, socket, "/v0.1/integrations")
+	defer integrations.Body.Close()
+	data, err := io.ReadAll(integrations.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var value struct {
+		Integrations []struct {
+			ID   string            `json:"id"`
+			Data map[string]string `json:"data"`
+		} `json:"integrations"`
+	}
+	if err = json.Unmarshal(data, &value); err != nil {
+		t.Fatal(err)
+	}
+	digest := ""
+	for _, integration := range value.Integrations {
+		if integration.ID == "spotify" {
+			digest = integration.Data["artwork_id"]
+		}
+	}
+	if len(digest) != 64 {
+		t.Fatalf("missing artwork digest: %s", data)
+	}
+	_, response := cockpitGET(t, socket, "/v0.1/artwork/"+digest)
+	defer response.Body.Close()
+	if response.StatusCode != 200 {
+		t.Fatal(response.Status)
+	}
+	assetData, err := io.ReadAll(response.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var asset map[string]any
+	if err = json.Unmarshal(assetData, &asset); err != nil {
+		t.Fatal(err)
+	}
+	nested, ok := asset["artwork"].(map[string]any)
+	if !ok || nested["rgb565"] != image || asset["id"] != digest {
+		t.Fatal("endpoint served different artwork bytes")
+	}
+	_, missing := cockpitGET(t, socket, "/v0.1/artwork/not-a-digest")
+	defer missing.Body.Close()
+	if missing.StatusCode != 400 {
+		t.Fatal(missing.Status)
 	}
 }
