@@ -143,26 +143,43 @@ describe('DeskRoute bass waveform', () => {
   })
 })
 
-describe('DeskRoute display status card', () => {
-  it('renders the desk-display-01 status with the daemon-derived lease state', async () => {
+describe('DeskRoute listening session', () => {
+  it('shows locally observed songs and removes the virtual display', async () => {
+    const value = fixture() as Record<string, unknown>
+    const listening = {
+      id: '20260923T120000Z',
+      source: 'local-spotify-observer',
+      started_at: '2026-09-23T12:00:00Z',
+      last_observed_at: '2026-09-23T12:00:30Z',
+      playback_state: 'playing',
+      active_duration_ms: 30000,
+      active_from: '2026-09-23T12:00:00Z',
+      tracks: [
+        { track: 'Observed Track', artist: 'Observed Artist', observed_at: '2026-09-23T12:00:00Z' }
+      ]
+    }
+    fakeZero(() => Promise.resolve({ dataUrl: null }))
+    useCockpit.setState({
+      state: 'live',
+      snapshot: { ...value, listening_session: listening },
+      refreshAt: Date.now()
+    })
+    const el = await mount()
+    expect(el.textContent).toContain('LISTENING SESSION')
+    expect(el.textContent).toContain('Observed Track')
+    expect(el.textContent).toContain('Only tracks observed since this session began are listed.')
+    expect(el.textContent).not.toContain('DESK DISPLAY')
+    expect(el.querySelector('[aria-label="Virtual desk display preview"]')).toBeNull()
+  })
+
+  it('shows a clear state before local playback observation begins', async () => {
     fakeZero(() => Promise.resolve({ dataUrl: null }))
     useCockpit.setState({ state: 'live', snapshot: fixture(), refreshAt: Date.now() })
     const el = await mount()
-    const text = el.textContent ?? ''
-    expect(text).toContain('DESK DISPLAY')
-    expect(text).toContain('desk-display-01')
-    expect(text).toContain('ONLINE')
-    expect(text).toContain('last seen 05:59:49')
-  })
-
-  it('shows the honest empty state when no display node exists', async () => {
-    const value = fixture() as Record<string, unknown>
-    fakeZero(() => Promise.resolve({ dataUrl: null }))
-    useCockpit.setState({ state: 'live', snapshot: { ...value, nodes: [] }, refreshAt: Date.now() })
-    const el = await mount()
-    expect(el.textContent ?? '').toContain('No display node registered')
-    expect(el.querySelector('[aria-label="Virtual desk display preview"]')).not.toBeNull()
-    expect(el.textContent ?? '').toContain('PREVIEW · NO HARDWARE')
+    expect(el.textContent).toContain('NOT OBSERVED')
+    expect(el.textContent).toContain(
+      'Session history starts when local Spotify observation is connected'
+    )
   })
 })
 

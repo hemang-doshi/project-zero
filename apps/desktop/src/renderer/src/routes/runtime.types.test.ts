@@ -54,6 +54,28 @@ describe('parseSnapshot', () => {
       status: 'ONLINE'
     })
     expect(snapshot?.integrations.map((i) => i.id)).toEqual(['git', 'spotify', 'codex'])
+    expect(snapshot?.listeningSession).toBeNull()
+  })
+
+  it('parses bounded Spotify listening observations with provenance', () => {
+    const value = fixture() as Record<string, unknown>
+    const snapshot = parseSnapshot({
+      ...value,
+      listening_session: {
+        id: 'session-1',
+        source: 'local-spotify-observer',
+        started_at: '2026-09-23T12:00:00Z',
+        last_observed_at: '2026-09-23T12:00:10Z',
+        playback_state: 'playing',
+        active_duration_ms: 10000,
+        tracks: [{ track: 'Song', artist: 'Artist', observed_at: '2026-09-23T12:00:00Z' }]
+      }
+    })
+    expect(snapshot?.listeningSession).toMatchObject({
+      source: 'local-spotify-observer',
+      activeDurationMs: 10000,
+      tracks: [{ track: 'Song', artist: 'Artist', uri: null }]
+    })
   })
 
   it('coerces numeric revoked flags', () => {

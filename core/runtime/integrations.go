@@ -133,6 +133,22 @@ func (r *Runtime) integrationAction(ctx context.Context, tx *sql.Tx, q Request, 
 	if e = saveEntity(ctx, tx, q.ID, "integration", b.ID, old, r.Now()); e != nil {
 		return e
 	}
+	if b.ID == "spotify" && (q.Op == "integration.observed" || q.Op == "integrations.disconnect") {
+		previous, err := readListening(ctx, tx)
+		if err != nil {
+			return err
+		}
+		state := old.Data["state"]
+		if q.Op == "integrations.disconnect" {
+			state = "stopped"
+		}
+		next := listeningFromObservation(previous, state, old.Data, r.Now().UTC())
+		if next.ID != "" && next.LastObservedAt.After(previous.LastObservedAt) {
+			if err := saveEntity(ctx, tx, q.ID+":listening", "listening_session", "current", next, r.Now()); err != nil {
+				return err
+			}
+		}
+	}
 	if q.Op == "integration.observed" || q.Op == "integrations.disconnect" {
 		s, e := readSession(ctx, tx)
 		if e != nil {
@@ -260,7 +276,7 @@ func (r *Runtime) SyncIntegration(ctx context.Context, id string) error {
 	// invalidates the snapshot cache and wakes every UI for zero new content.
 	// Liveness still advances via a single unpublished row touch so the
 	// ONLINE/STALE derivation keeps reading a fresh timestamp.
-	if sameObservation(stored, v) {
+	if sameObservation(stored, v) && (id != "spotify" || stamp.Sub(stored.ObservedAt) <= listeningGap) {
 		if e := r.touchIntegrationObserved(ctx, id, stamp); e != nil {
 			return e
 		}
@@ -333,6 +349,22 @@ func (r *Runtime) touchIntegrationObserved(ctx context.Context, id string, at ti
 	}
 	if _, e = tx.ExecContext(ctx, "UPDATE entities SET value=? WHERE kind='integration' AND key=?", b, id); e != nil {
 		return e
+	}
+	if id == "spotify" {
+		listening, err := readListening(ctx, tx)
+		if err != nil {
+			return err
+		}
+		if listening.ID != "" && listening.EndedAt == nil {
+			listening.LastObservedAt = at
+			raw, err := json.Marshal(listening)
+			if err != nil {
+				return err
+			}
+			if _, err = tx.ExecContext(ctx, "UPDATE entities SET value=? WHERE kind='listening_session' AND key='current'", raw); err != nil {
+				return err
+			}
+		}
 	}
 	return tx.Commit()
 }
