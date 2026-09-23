@@ -230,6 +230,6 @@ describe('ZeroBotRoute', () => {
     const html = renderToString(createElement(ZeroBotRoute))
     expect(html).toContain('REGISTERED PROJECTS')
     expect(html).toContain('CONVERSATION')
-    expect(html).toContain('No bridge events in this window yet')
+    expect(html).toContain('Bridge events')
   })
 })

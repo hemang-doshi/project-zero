@@ -80,8 +80,8 @@ export const ThinkingGroupBlock = memo(function ThinkingGroupBlock({
         className="zw-thinking-toggle"
         style={humanVoice}
       >
-        <span aria-hidden="true">{open ? '▾' : '▸'}</span> Thinking · {summary}
-        {items.length > 1 ? ` · ${items.length} updates` : ''}
+        <span aria-hidden="true">{open ? '▾' : '▸'}</span> Thinking ·{' '}
+        {items.length > 1 ? `${items.length} updates` : summary}
       </button>
       {open ? (
         <div className="zw-thinking-detail" data-voice="machine">

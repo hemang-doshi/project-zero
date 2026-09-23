@@ -1,4 +1,5 @@
 import { MAX_CHAT_ITEMS, type ChatItem } from './chat.model'
+import { openCodeUsageFromSession, type VerifiedUsage } from './providerUsage'
 
 type Rec = Record<string, unknown>
 const rec = (value: unknown): Rec | null =>
@@ -13,9 +14,12 @@ const json = (value: unknown): string => {
   }
 }
 
-export type TranscriptUsage = { input: number; output: number; reasoning: number; cost: number }
+export type TranscriptUsage = VerifiedUsage
 
-export function parseOpenCodeTranscript(value: unknown): {
+export function parseOpenCodeTranscript(
+  value: unknown,
+  observedAt = Date.now()
+): {
   items: ChatItem[]
   dropped: number
   usage: TranscriptUsage | null
@@ -65,18 +69,6 @@ export function parseOpenCodeTranscript(value: unknown): {
     }
   }
   const dropped = Math.max(0, items.length - MAX_CHAT_ITEMS)
-  const info = rec(root?.info)
-  const input = info?.tokens_input
-  const output = info?.tokens_output
-  const reasoning = info?.tokens_reasoning
-  const cost = info?.cost
-  const usage = [input, output, reasoning, cost].every((item) => typeof item === 'number')
-    ? {
-        input: input as number,
-        output: output as number,
-        reasoning: reasoning as number,
-        cost: cost as number
-      }
-    : null
+  const usage = openCodeUsageFromSession(value, observedAt)
   return { items: dropped > 0 ? items.slice(dropped) : items, dropped, usage }
 }
