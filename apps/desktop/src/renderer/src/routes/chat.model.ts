@@ -42,6 +42,34 @@ export type ChatItem =
     }
   | { kind: 'notice'; text: string; id: string }
 
+export type ThinkingGroup = {
+  kind: 'thinking-group'
+  id: string
+  items: Array<Extract<ChatItem, { kind: 'thinking' }>>
+}
+export type DisplayItem = Exclude<ChatItem, { kind: 'thinking' }> | ThinkingGroup
+
+export function groupVisibleItems(items: ChatItem[]): DisplayItem[] {
+  const display: DisplayItem[] = []
+  let reasoning: ThinkingGroup['items'] = []
+  const flush = (trailing: boolean): void => {
+    if (reasoning.length === 0) return
+    if (trailing || reasoning.some((item) => item.summary.trim() || item.text.trim())) {
+      display.push({ kind: 'thinking-group', id: `thinking:${reasoning[0]?.id}`, items: reasoning })
+    }
+    reasoning = []
+  }
+  for (const item of items) {
+    if (item.kind === 'thinking') reasoning.push(item)
+    else {
+      flush(false)
+      display.push(item)
+    }
+  }
+  flush(true)
+  return display
+}
+
 export const MAX_CHAT_ITEMS = 400
 
 type Rec = Record<string, unknown>
