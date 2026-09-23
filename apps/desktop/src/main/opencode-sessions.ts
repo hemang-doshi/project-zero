@@ -96,6 +96,33 @@ function parseRow(row: unknown): OpenCodeSessionRow | null {
   }
 }
 
+const genericTitle = (title: string): boolean =>
+  title.trim() === '' || /^New session(?:\s*[-—:]\s*.*)?$/i.test(title.trim())
+
+function firstUserMessage(db: DatabaseSync, sessionId: string): string | null {
+  try {
+    const rows = db
+      .prepare(
+        `SELECT m.data AS message_data, p.data AS part_data
+         FROM message m JOIN part p ON p.message_id = m.id
+         WHERE m.session_id = ?
+         ORDER BY m.time_created, p.time_created LIMIT 40`
+      )
+      .all(sessionId) as Array<Record<string, unknown>>
+    for (const row of rows) {
+      const message = jsonRecord(row['message_data'])
+      const part = jsonRecord(row['part_data'])
+      if (message['role'] !== 'user' || part['type'] !== 'text') continue
+      if (typeof part['text'] !== 'string') continue
+      const line = part['text'].replace(/\s+/g, ' ').trim()
+      if (line !== '') return line.length > 80 ? `${line.slice(0, 79)}…` : line
+    }
+  } catch {
+    // Older stores may not have message/part tables; keep the provider title.
+  }
+  return null
+}
+
 // Read-only scan of OpenCode's on-disk session store (SQLite). Never writes,
 // never spawns, never touches the network: a missing or unreadable store
 // returns honest empty with a note instead of throwing.
@@ -115,7 +142,11 @@ export function readOpenCodeSessionStore(
     const sessions: OpenCodeSessionRow[] = []
     for (const row of rows) {
       const parsed = parseRow(row)
-      if (parsed !== null) sessions.push(parsed)
+      if (parsed !== null) {
+        if (genericTitle(parsed.title))
+          parsed.title = firstUserMessage(db, parsed.id) ?? 'Untitled conversation'
+        sessions.push(parsed)
+      }
     }
     return { ok: true, groups: groupSessionsByFolder(sessions), note: null }
   } catch {

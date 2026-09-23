@@ -170,6 +170,17 @@ describe('groupSessionsByFolder', () => {
 })
 
 describe('readOpenCodeSessionStore', () => {
+  it('uses the first saved user message as a preview for generic session titles', () => {
+    const dbPath = transcriptDb('Investigate a read-only build failure in Project Zero')
+    const db = new DatabaseSync(dbPath)
+    db.prepare('UPDATE session SET title = ? WHERE id = ?').run(
+      'New session - 2026-09-23T14:00:00',
+      's1'
+    )
+    db.close()
+    const session = readOpenCodeSessionStore(dbPath).groups[0]?.sessions[0]
+    expect(session?.title).toBe('Investigate a read-only build failure in Project Zero')
+  })
   it('returns folder-grouped sessions newest-first from a fixture store', () => {
     const dbPath = fixtureDb([
       {
@@ -205,7 +216,7 @@ describe('readOpenCodeSessionStore', () => {
     expect(result.groups.map((g) => g.path)).toEqual(['/repo/alpha', '/repo/beta'])
     expect(result.groups[0]?.sessions.map((s) => s.id)).toEqual(['s-new', 's-old'])
     expect(result.groups[0]?.sessions[0]).toMatchObject({
-      title: 'New session',
+      title: 'Untitled conversation',
       agent: 'build',
       model: 'muse-spark-1.3',
       updatedAt: 300

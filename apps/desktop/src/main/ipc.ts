@@ -1,5 +1,6 @@
 import { ipcMain, type BrowserWindow } from 'electron'
 import { randomUUID } from 'node:crypto'
+import { realpathSync } from 'node:fs'
 import { isAbsolute, join } from 'node:path'
 import {
   validateOp,
@@ -28,7 +29,7 @@ import {
 import { artworkDataUrl } from './artwork-image'
 import { searchSkillsCatalog, type CatalogSkill } from './skills-catalog'
 import { PromptGateway, type PromptRequest } from './prompt-gateway'
-import { dispatchProviderPrompt } from './provider-dispatch'
+import { dispatchProviderPrompt, ProviderDispatchError } from './provider-dispatch'
 import type { CockpitModel, ModelUpdate } from './cockpit-model'
 
 export type PrefsStoreLike = {
@@ -46,7 +47,7 @@ export type SocketDeps = {
   listDevices: (refreshBt: boolean) => Promise<DevicesListResult>
   discoverSkills: (refresh: boolean) => Promise<SkillsDiscoverResult>
   searchSkills?: (query: string) => Promise<CatalogSkill[]>
-  providerDispatch?: (request: PromptRequest) => Promise<{ turnId: string }>
+  providerDispatch?: (request: PromptRequest) => Promise<{ turnId: string; threadId?: string }>
   openCodeDbPath?: string
 }
 
@@ -158,9 +159,14 @@ function promptRequest(
   if (typeof value !== 'object' || value === null || Array.isArray(value))
     throw new Error('Malformed prompt')
   const row = value as Record<string, unknown>
+  const draft = Object.hasOwn(row, 'draftId')
   const required = decision
-    ? ['provider', 'model', 'threadId', 'text', 'holdId', 'action']
-    : ['provider', 'model', 'threadId', 'text']
+    ? draft
+      ? ['provider', 'model', 'cwd', 'draftId', 'text', 'holdId', 'action']
+      : ['provider', 'model', 'threadId', 'text', 'holdId', 'action']
+    : draft
+      ? ['provider', 'model', 'cwd', 'draftId', 'text']
+      : ['provider', 'model', 'threadId', 'text']
   if (
     Object.keys(row).length !== required.length ||
     required.some((key) => !Object.hasOwn(row, key))
@@ -171,9 +177,13 @@ function promptRequest(
     typeof row.model !== 'string' ||
     row.model.length < 1 ||
     row.model.length > 120 ||
-    typeof row.threadId !== 'string' ||
-    row.threadId.length < 1 ||
-    row.threadId.length > 120 ||
+    (draft
+      ? typeof row.cwd !== 'string' ||
+        !isAbsolute(row.cwd) ||
+        row.cwd.length > 4096 ||
+        typeof row.draftId !== 'string' ||
+        !/^[A-Za-z0-9_-]{1,120}$/.test(row.draftId)
+      : typeof row.threadId !== 'string' || row.threadId.length < 1 || row.threadId.length > 120) ||
     typeof row.text !== 'string' ||
     !row.text.trim() ||
     Buffer.byteLength(row.text, 'utf8') > 32_000 ||
@@ -190,21 +200,64 @@ export function createDispatch(
   deps: SocketDeps,
   getBridgePair: () => BridgeDeps = getBridges
 ): (op: unknown, payload?: unknown) => Promise<unknown> {
-  const gateway = new PromptGateway(
-    deps.providerDispatch ??
-      ((request) =>
-        dispatchProviderPrompt(request, {
+  const createdOpenCodeSessions = new Map<string, string>()
+  const draftBindings = new Map<
+    string,
+    { provider: 'codex' | 'opencode'; cwd: string; threadId: string }
+  >()
+  const dispatch = async (
+    request: PromptRequest
+  ): Promise<{ turnId: string; threadId?: string }> => {
+    if (deps.providerDispatch) return deps.providerDispatch(request)
+    let threadId = request.threadId
+    if (!threadId) {
+      if (!request.cwd || !request.draftId) throw new Error('Malformed draft')
+      const cwd = realpathSync(request.cwd)
+      const bound = draftBindings.get(request.draftId)
+      if (bound) {
+        if (bound.provider !== request.provider || bound.cwd !== cwd)
+          throw new Error('Draft binding changed')
+        threadId = bound.threadId
+      } else {
+        const created = (await newConversation({
+          provider: request.provider,
+          cwd,
+          model: request.model
+        })) as { threadId: string }
+        threadId = created.threadId
+        draftBindings.set(request.draftId, { provider: request.provider, cwd, threadId })
+        if (request.provider === 'opencode') createdOpenCodeSessions.set(threadId, cwd)
+      }
+    }
+    try {
+      const result = await dispatchProviderPrompt(
+        { ...request, threadId },
+        {
           codex: getBridgePair().codex,
           opencode: getBridgePair().ocp,
           openCodeSession: (id) => {
+            const createdCwd = createdOpenCodeSessions.get(id)
+            if (createdCwd) return { id, directory: createdCwd }
             const store = readOpenCodeSessionStore(deps.openCodeDbPath ?? defaultOpenCodeDbPath())
             const session = store.groups
               .flatMap((group) => group.sessions)
               .find((row) => row.id === id)
             return session ? { id: session.id, directory: session.directory } : null
-          }
-        }))
-  )
+          },
+          onDiagnostic: (entry) => console.warn('Zero provider dispatch failed', entry)
+        }
+      )
+      return request.draftId ? { ...result, threadId } : result
+    } catch (error) {
+      if (request.draftId)
+        throw new ProviderDispatchError(
+          error instanceof ProviderDispatchError ? error.reason : 'dispatch-unavailable',
+          threadId
+        )
+      throw error
+    }
+  }
+  const gateway = new PromptGateway(dispatch)
   const bridgeState = async (harness: 'codex' | 'ocp'): Promise<unknown> => {
     const bridge = getBridgePair()[harness]
     return { state: bridge.state, lastDiagnostic: bridge.lastDiagnostic }
@@ -308,7 +361,7 @@ export function createDispatch(
         cwd,
         model,
         approvalPolicy: 'on-request',
-        sandbox: { type: 'workspaceWrite' }
+        sandbox: 'workspace-write'
       })
       const root =
         typeof result === 'object' && result !== null ? (result as Record<string, unknown>) : {}

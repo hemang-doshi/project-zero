@@ -191,7 +191,8 @@ describe('conversation.new', () => {
       expect.objectContaining({
         cwd: '/repo/one',
         model: 'gpt-5.6-sol',
-        approvalPolicy: 'on-request'
+        approvalPolicy: 'on-request',
+        sandbox: 'workspace-write'
       })
     )
   })
@@ -209,6 +210,75 @@ describe('conversation.new', () => {
     ).resolves.toEqual({ provider: 'opencode', threadId: 'new-ocp' })
     expect(ocp.send).toHaveBeenCalledWith('session/new', { cwd: '/repo/two', mcpServers: [] })
     expect(ocp.send).not.toHaveBeenCalledWith('session/prompt', expect.anything())
+  })
+})
+
+describe('draft first send', () => {
+  it('creates no provider thread for a held or cancelled draft, then sends once after approval', async () => {
+    const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'zero-draft-'))
+    const codex = fakeBridge('live')
+    codex.send = vi.fn(async (method: string) => {
+      if (method === 'thread/start') return { thread: { id: 'new-thread', cwd } }
+      if (method === 'thread/read') return { thread: { id: 'new-thread', cwd } }
+      if (method === 'turn/start') return { turn: { id: 'new-turn' } }
+      return {}
+    })
+    const invoke = createDispatch(deps(), () => fakePair(codex, fakeBridge('disconnected')))
+    const draft = {
+      provider: 'codex',
+      model: 'gpt-5.6-luna',
+      cwd,
+      draftId: 'draft-1',
+      text: 'password = synthetic-secret-123'
+    }
+    const held = (await invoke('prompt.submit', draft)) as { state: string; holdId: string }
+    expect(held.state).toBe('held')
+    expect(codex.send).not.toHaveBeenCalled()
+    await expect(
+      invoke('prompt.decide', { ...draft, holdId: held.holdId, action: 'send-once' })
+    ).resolves.toEqual({ state: 'accepted', threadId: 'new-thread', turnId: 'new-turn' })
+    expect(vi.mocked(codex.send).mock.calls.map(([method]) => method)).toEqual([
+      'thread/start',
+      'thread/read',
+      'turn/start'
+    ])
+  })
+
+  it('returns a created thread after turn rejection and reuses it on retry', async () => {
+    const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'zero-draft-retry-'))
+    const codex = fakeBridge('live')
+    let attempts = 0
+    codex.send = vi.fn(async (method: string) => {
+      if (method === 'thread/start') return { thread: { id: 'retry-thread', cwd } }
+      if (method === 'thread/read') return { thread: { id: 'retry-thread', cwd } }
+      if (method === 'turn/start') {
+        attempts += 1
+        if (attempts === 1) throw new Error('provider text must be hidden')
+        return { turn: { id: 'retry-turn' } }
+      }
+      return {}
+    })
+    const invoke = createDispatch(deps(), () => fakePair(codex, fakeBridge('disconnected')))
+    const draft = {
+      provider: 'codex',
+      model: 'gpt-5.6-luna',
+      cwd,
+      draftId: 'retry-1',
+      text: 'hello'
+    }
+    expect(await invoke('prompt.submit', draft)).toEqual({
+      state: 'blocked',
+      reason: 'dispatch-unavailable',
+      threadId: 'retry-thread'
+    })
+    expect(await invoke('prompt.submit', draft)).toEqual({
+      state: 'accepted',
+      threadId: 'retry-thread',
+      turnId: 'retry-turn'
+    })
+    expect(
+      vi.mocked(codex.send).mock.calls.filter(([method]) => method === 'thread/start')
+    ).toHaveLength(1)
   })
 })
 
@@ -341,7 +411,9 @@ describe('discovery ops', () => {
     expect(result.folders[0]).toMatchObject({
       folder: 'alpha',
       count: 1,
-      sessions: [{ id: 's-new', title: 'New session', model: 'muse-spark-1.3', updatedAt: 300 }]
+      sessions: [
+        { id: 's-new', title: 'Untitled conversation', model: 'muse-spark-1.3', updatedAt: 300 }
+      ]
     })
     expect(result.note).toBeNull()
     expect(ocp.sends).toEqual([])
