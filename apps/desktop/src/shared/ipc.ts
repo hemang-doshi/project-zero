@@ -7,6 +7,14 @@ export const OPS = {
   'projects.list': true,
   'skills.discover': true,
   'skills.search': true,
+  'skills.learning.get': true,
+  'skills.learning.set': true,
+  'skills.learning.observe': true,
+  'skills.learning.propose': true,
+  'skills.learning.edit': true,
+  'skills.learning.reject': true,
+  'skills.learning.approve': true,
+  'skills.learning.rollback': true,
   'prompt.submit': true,
   'prompt.decide': true,
   'conversation.new': true,
@@ -27,6 +35,7 @@ export const OPS = {
   'ocp.thread.prepare': true,
   'wallpaper.pick': true,
   'telemetry.sample': true,
+  'telemetry.history': true,
   'artwork.fetch': true,
   'devices.list': true
 } as const
@@ -82,7 +91,6 @@ export type DiscoveredPluginGroup = {
   id: string
   name: string
   color: string
-  glyph: 'flask' | 'masks' | 'stack' | 'bolt' | 'orb'
   skills: DiscoveredSkill[]
 }
 export type SkillsDiscoverResult = {
@@ -157,4 +165,18 @@ export type TelemetrySample = {
   io: TelemetryIo | null
   net: TelemetryNet | null
   gpu: number | null
+  processes?: TelemetryProcess[]
+}
+
+export type TelemetryProcess = {
+  pid: number
+  name: string
+  cpuPercent: number | null
+  residentBytes: number | null
+}
+
+export type TelemetryPoint = {
+  at: number
+  sample: TelemetrySample
+  failures: string[]
 }

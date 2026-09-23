@@ -62,7 +62,7 @@ vi.mock('@react-three/drei', () => ({
 }))
 
 // The sibling vial model is lanes A/B territory: stub it at the contract
-// boundary ({ plugin: { id, name, color, glyph }, dimmed?, scale? },
+// boundary ({ plugin: { id, name, color }, dimmed?, scale? },
 // MODEL_FOOTPRINT { w: 0.9, h: 1.6, d: 0.9 }) and capture the props this
 // scene passes through.
 vi.mock('./models/SkillVial', () => ({
@@ -87,7 +87,6 @@ const GROUPS: PluginGroup[] = [
     id: 'p-codex',
     name: 'Codex Tools',
     color: '#F54E00',
-    glyph: 'flask',
     skills: [
       skill({
         id: 's-a',
@@ -102,14 +101,12 @@ const GROUPS: PluginGroup[] = [
     id: 'p-design',
     name: 'Design Kit',
     color: '#3B82F6',
-    glyph: 'stack',
     skills: [skill({ id: 's-c', name: 'Gamma Skill', pluginId: 'p-design' })]
   },
   {
     id: 'p-misc',
     name: 'Misc',
     color: '#10B981',
-    glyph: 'bolt',
     skills: [
       skill({
         id: 's-loose',
@@ -203,14 +200,12 @@ describe('skill lab grid layout (pure)', () => {
         id: 'a',
         name: 'A',
         color: '#000',
-        glyph: 'orb',
         skills: [skill({ id: 'x', name: 'X', pluginId: null })]
       },
       {
         id: 'b',
         name: 'B',
         color: '#000',
-        glyph: 'orb',
         skills: [skill({ id: 'x', name: 'X2', pluginId: null })]
       }
     ]
@@ -260,9 +255,22 @@ describe('SkillLabScene', () => {
     expect(codex?.plugin).toMatchObject({
       id: 'p-codex',
       name: 'Codex Tools',
-      color: '#F54E00',
-      glyph: 'flask'
+      color: '#F54E00'
     })
+  })
+
+  it('shows pinned official plugin art and neutral unknown marks for other identities', async () => {
+    const identities: PluginGroup[] = [
+      { id: 'playwright', name: 'Playwright', color: '#3B82F6', skills: [] },
+      { id: 'gstack', name: 'Gstack', color: '#10B981', skills: [] }
+    ]
+    const el = await mount(identities, [])
+    const playwrightMark = el.querySelector('[data-testid="brand-mark-playwright"]')
+    expect(playwrightMark?.querySelector('img')?.getAttribute('src')).toBeTruthy()
+    expect(playwrightMark?.getAttribute('aria-label')).toBe('Playwright official logo')
+    const gstackMark = el.querySelector('[data-testid="brand-mark-gstack"]')
+    expect(gstackMark?.textContent).toBe('?')
+    expect(gstackMark?.getAttribute('aria-label')).toBe('No verified brand icon for Gstack')
   })
 
   it('clicks a vial into focus with a detail panel listing that plugin\u2019s actual skills', async () => {
@@ -280,7 +288,7 @@ describe('SkillLabScene', () => {
     expect(detail?.textContent).toContain('Alpha description.')
     expect(detail?.textContent).toContain('Beta Skill')
     expect(detail?.textContent).toContain('INSTALLED')
-    expect(detail?.textContent).toContain('glyph flask')
+    expect(detail?.textContent).toContain('NO VERIFIED BRAND ICON')
     // Other plugins stay out of the detail panel.
     expect(detail?.textContent).not.toContain('Gamma Skill')
     expect(el.querySelector('[data-testid="vial-focus-ring-plugin:p-codex"]')).not.toBeNull()
@@ -308,7 +316,7 @@ describe('SkillLabScene', () => {
     const detail = el.querySelector('[data-testid="vial-detail"]')
     expect(detail?.textContent).toContain('Loose Skill')
     expect(detail?.textContent).toContain('No owning plugin.')
-    expect(detail?.textContent).toContain('STANDALONE SKILL')
+    expect(detail?.textContent).toContain('STANDALONE · NO BRAND IDENTITY')
   })
 
   it('shows honest-empty states for an empty grid and standalone row', async () => {
@@ -454,7 +462,6 @@ const LIVE_GROUPS: PluginGroup[] = [
     id: 'gstack',
     name: 'Gstack',
     color: '#10B981',
-    glyph: 'flask',
     skills: [
       liveSkill({ id: 'claude', name: 'Claude', pluginId: 'gstack', description: 'Vendor copy.' }),
       liveSkill({ id: 'browse', name: 'Browse', pluginId: 'gstack' })
@@ -464,7 +471,6 @@ const LIVE_GROUPS: PluginGroup[] = [
     id: 'standalone',
     name: 'Standalone',
     color: '#A83300',
-    glyph: 'bolt',
     skills: [liveSkill({ id: 'claude', name: 'Claude', pluginId: null, description: 'Flat copy.' })]
   }
 ]
@@ -502,8 +508,8 @@ describe('SkillLabRoute (live discovery)', () => {
     const { host, invoke } = await mountRoute(() =>
       Promise.resolve({ ok: true, groups: LIVE_GROUPS, selfLearnt: LIVE_SELF, note: null })
     )
-    expect(invoke).toHaveBeenCalledTimes(1)
     expect(invoke).toHaveBeenCalledWith('skills.discover', { refresh: false })
+    expect(invoke).toHaveBeenCalledWith('skills.learning.get')
     expect(host.querySelector('[role="listbox"]')).not.toBeNull()
     expect(host.textContent).toContain('Gstack')
     expect(host.textContent).toContain('3 LOCAL SKILLS')
@@ -524,14 +530,14 @@ describe('SkillLabRoute (live discovery)', () => {
 
   it('keeps honest-empty states when discovery rejects', async () => {
     const { host, invoke } = await mountRoute(() => Promise.reject(new Error('Unknown op')))
-    expect(invoke).toHaveBeenCalledTimes(1)
+    expect(invoke).toHaveBeenCalledTimes(2)
     expect(host.textContent).toContain('No local skills found.')
   })
 
   it('rescans explicitly through the refresh control', async () => {
     const extended: PluginGroup[] = [
       ...LIVE_GROUPS,
-      { id: 'fresh', name: 'Fresh', color: '#3B82F6', glyph: 'stack', skills: [] }
+      { id: 'fresh', name: 'Fresh', color: '#3B82F6', skills: [] }
     ]
     let calls = 0
     const { host, invoke } = await mountRoute(() => {
@@ -551,8 +557,8 @@ describe('SkillLabRoute (live discovery)', () => {
       await new Promise<void>((r) => setImmediate(r))
       await new Promise<void>((r) => setImmediate(r))
     })
-    expect(invoke).toHaveBeenCalledTimes(2)
-    expect(invoke).toHaveBeenNthCalledWith(2, 'skills.discover', { refresh: true })
+    expect(invoke).toHaveBeenCalledTimes(3)
+    expect(invoke).toHaveBeenCalledWith('skills.discover', { refresh: true })
     expect(host.textContent).toContain('3 LOCAL SKILLS')
   })
 

@@ -4,7 +4,8 @@ import type {
   TelemetryIo,
   TelemetryMemory,
   TelemetryNet,
-  TelemetrySample
+  TelemetrySample,
+  TelemetryProcess
 } from '../../../shared/ipc'
 
 export type Tone = 'neutral' | 'healthy' | 'attention' | 'error'
@@ -133,7 +134,8 @@ export const EMPTY_MACHINE_SAMPLE: MachineSample = {
   memory: null,
   io: null,
   net: null,
-  gpu: null
+  gpu: null,
+  processes: []
 }
 
 // Lenient parse of the telemetry.sample payload from the main-process
@@ -177,7 +179,23 @@ export function parseTelemetry(value: unknown): MachineSample {
     memory: memoryFamily,
     io: io === null ? null : ioCell(io),
     net: net === null ? null : netCell(net),
-    gpu: optNum(root.gpu)
+    gpu: optNum(root.gpu),
+    processes: Array.isArray(root.processes)
+      ? root.processes
+          .flatMap((value) => {
+            const process = asRecord(value)
+            if (process === null || !isNum(process.pid) || !isStr(process.name)) return []
+            return [
+              {
+                pid: process.pid,
+                name: process.name.slice(0, 80),
+                cpuPercent: optNum(process.cpuPercent),
+                residentBytes: optNum(process.residentBytes)
+              } satisfies TelemetryProcess
+            ]
+          })
+          .slice(0, 10)
+      : []
   }
 }
 
@@ -500,13 +518,21 @@ export function selectSpotify(snapshot: unknown): SpotifyMedia | null {
 }
 
 export function connectivity(conn: RuntimeConnState, snapshot: unknown): Connectivity {
-  if (conn === 'connecting' || conn === 'reconnecting') {
+  const parsed = parseSnapshot(snapshot)
+  if (conn === 'connecting') {
+    return { label: 'CONNECTING', detail: 'Connecting to Zero runtime', tone: 'attention' }
+  }
+  if (conn === 'reconnecting' && parsed !== null) {
     return { label: 'RECONNECTING', detail: 'Runtime reconnecting', tone: 'attention' }
   }
   if (conn !== 'live') {
-    return { label: 'OFFLINE', detail: 'Runtime offline', tone: 'error' }
+    return {
+      label: 'OFFLINE',
+      detail:
+        conn === 'reconnecting' ? 'Runtime unavailable · waiting to reconnect' : 'Runtime offline',
+      tone: 'error'
+    }
   }
-  const parsed = parseSnapshot(snapshot)
   if (parsed === null) {
     return { label: 'OFFLINE', detail: 'Runtime unavailable', tone: 'error' }
   }

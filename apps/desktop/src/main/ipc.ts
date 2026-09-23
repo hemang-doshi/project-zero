@@ -17,6 +17,7 @@ import {
   type SkillsDiscoverPayload,
   type SkillsDiscoverResult,
   type TelemetrySample,
+  type TelemetryPoint,
   type ThreadGetPayload
 } from '../shared/ipc'
 import { applyPrefsPatch, type Prefs } from './prefs'
@@ -28,6 +29,7 @@ import {
 } from './opencode-sessions'
 import { artworkDataUrl } from './artwork-image'
 import { searchSkillsCatalog, type CatalogSkill } from './skills-catalog'
+import type { SkillLearningStore } from './skills-learning'
 import { PromptGateway, type PromptRequest } from './prompt-gateway'
 import { dispatchProviderPrompt, ProviderDispatchError } from './provider-dispatch'
 import type { CockpitModel, ModelUpdate } from './cockpit-model'
@@ -44,9 +46,12 @@ export type SocketDeps = {
   store: PrefsStoreLike
   pickImage: () => Promise<string | null>
   sampleTelemetry: () => Promise<TelemetrySample>
+  telemetryHistory?: () => TelemetryPoint[]
+  importWallpaper?: (source: string) => string
   listDevices: (refreshBt: boolean) => Promise<DevicesListResult>
   discoverSkills: (refresh: boolean) => Promise<SkillsDiscoverResult>
   searchSkills?: (query: string) => Promise<CatalogSkill[]>
+  skillLearning?: SkillLearningStore
   providerDispatch?: (request: PromptRequest) => Promise<{ turnId: string; threadId?: string }>
   openCodeDbPath?: string
 }
@@ -150,6 +155,64 @@ function boundCodexThread(value: unknown): unknown {
     turns.unshift({ ...turn, items })
   }
   return { ...thread, turns }
+}
+
+type SkillLearningItem = { kind: 'exec'; command: string } | { kind: 'tool'; tool: string }
+
+function recordOf(value: unknown): Record<string, unknown> | null {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null
+}
+
+function codexLearningItems(value: unknown): SkillLearningItem[] {
+  const thread = recordOf(value)
+  if (!Array.isArray(thread?.['turns'])) return []
+  const items: SkillLearningItem[] = []
+  for (const rawTurn of thread['turns']) {
+    const turn = recordOf(rawTurn)
+    if (!Array.isArray(turn?.['items'])) continue
+    for (const rawItem of turn['items']) {
+      const item = recordOf(rawItem)
+      if (item?.['type'] === 'commandExecution' && typeof item['command'] === 'string') {
+        items.push({ kind: 'exec', command: item['command'] })
+      } else if (
+        ['mcpToolCall', 'dynamicToolCall', 'functionCallOutput', 'webSearch', 'fileChange'].includes(
+          String(item?.['type'] ?? '')
+        )
+      ) {
+        const tool = item?.['type'] === 'functionCallOutput' ? item['name'] :
+          item?.['type'] === 'webSearch' ? 'webSearch' :
+            item?.['type'] === 'fileChange' ? 'fileChange' : item?.['tool']
+        if (typeof tool === 'string') items.push({ kind: 'tool', tool })
+      }
+      if (items.length >= 400) return items
+    }
+  }
+  return items
+}
+
+function openCodeLearningItems(value: unknown): SkillLearningItem[] {
+  const session = recordOf(value)
+  if (!Array.isArray(session?.['messages'])) return []
+  const items: SkillLearningItem[] = []
+  for (const rawMessage of session['messages']) {
+    const message = recordOf(rawMessage)
+    if (!Array.isArray(message?.['parts'])) continue
+    for (const rawPart of message['parts']) {
+      const part = recordOf(rawPart)
+      if (part?.['type'] !== 'tool' || typeof part['tool'] !== 'string') continue
+      const state = recordOf(part['state'])
+      const input = recordOf(state?.['input'])
+      if (part['tool'] === 'bash' && typeof input?.['command'] === 'string') {
+        items.push({ kind: 'exec', command: input['command'] })
+      } else {
+        items.push({ kind: 'tool', tool: part['tool'] })
+      }
+      if (items.length >= 400) return items
+    }
+  }
+  return items
 }
 
 function promptRequest(
@@ -298,6 +361,7 @@ export function createDispatch(
     const result = await bridge.send('thread/read', { threadId, includeTurns: true })
     const root =
       typeof result === 'object' && result !== null ? (result as Record<string, unknown>) : {}
+    deps.skillLearning?.observe('codex', threadId, codexLearningItems(root['thread']))
     return { harness: 'codex', thread: boundCodexThread(root['thread']) }
   }
   const prepareOpenCode = async (payload: unknown): Promise<unknown> => {
@@ -448,8 +512,10 @@ export function createDispatch(
         deps.store.save(next)
         return next
       }
-      case 'wallpaper.pick':
-        return deps.pickImage()
+      case 'wallpaper.pick': {
+        const source = await deps.pickImage()
+        return source === null ? null : (deps.importWallpaper?.(source) ?? source)
+      }
       case 'codex.connect':
         return getBridgePair().codex.connect()
       case 'codex.disconnect':
@@ -497,6 +563,7 @@ export function createDispatch(
           deps.openCodeDbPath ?? defaultOpenCodeDbPath(),
           threadId
         )
+        deps.skillLearning?.observe('opencode', threadId, openCodeLearningItems(session))
         return { harness: 'opencode', session }
       }
       case 'ocp.thread.prepare':
@@ -517,6 +584,8 @@ export function createDispatch(
         return projectList(await deps.fetchSnapshot(deps.socketPath, { path: '/v0.1/projects' }))
       case 'telemetry.sample':
         return deps.sampleTelemetry()
+      case 'telemetry.history':
+        return deps.telemetryHistory?.() ?? []
       case 'devices.list': {
         const { refreshBt } = (payload ?? {}) as Partial<DevicesListPayload>
         return deps.listDevices(refreshBt === true)
@@ -552,6 +621,48 @@ export function createDispatch(
           throw new Error('Malformed catalog query')
         }
         return (deps.searchSkills ?? searchSkillsCatalog)(query.trim())
+      }
+      case 'skills.learning.get':
+        return deps.skillLearning?.get() ?? { learningEnabled: false, proposals: [] }
+      case 'skills.learning.set': {
+        if (typeof payload !== 'object' || payload === null || Array.isArray(payload) ||
+          Object.keys(payload).length !== 1 || typeof (payload as Record<string, unknown>)['enabled'] !== 'boolean') {
+          throw new Error('Malformed skill learning setting')
+        }
+        return deps.skillLearning?.setLearningEnabled((payload as { enabled: boolean }).enabled) ??
+          { learningEnabled: false, proposals: [] }
+      }
+      case 'skills.learning.observe':
+      case 'skills.learning.propose': {
+        if (typeof payload !== 'object' || payload === null || Array.isArray(payload)) throw new Error('Malformed skill learning evidence')
+        const row = payload as Record<string, unknown>
+        if (Object.keys(row).length !== 3 || typeof row['provider'] !== 'string' ||
+          typeof row['sourceId'] !== 'string' || !Array.isArray(row['items'])) throw new Error('Malformed skill learning evidence')
+        const store = deps.skillLearning
+        if (!store) return []
+        if (op === 'skills.learning.observe') return store.observe(row['provider'], row['sourceId'], row['items'])
+        return store.proposeFromWork(row['provider'], row['sourceId'], row['items'])
+      }
+      case 'skills.learning.edit': {
+        if (typeof payload !== 'object' || payload === null || Array.isArray(payload)) throw new Error('Malformed skill proposal edit')
+        const row = payload as Record<string, unknown>
+        if (Object.keys(row).length !== 3 || typeof row['proposalId'] !== 'string' ||
+          typeof row['slug'] !== 'string' || typeof row['draft'] !== 'string') throw new Error('Malformed skill proposal edit')
+        return deps.skillLearning?.updateDraft(row['proposalId'], row['slug'], row['draft']) ?? null
+      }
+      case 'skills.learning.reject':
+      case 'skills.learning.approve':
+      case 'skills.learning.rollback': {
+        if (typeof payload !== 'object' || payload === null || Array.isArray(payload) ||
+          Object.keys(payload).length !== 1 || typeof (payload as Record<string, unknown>)['proposalId'] !== 'string') {
+          throw new Error('Malformed skill proposal action')
+        }
+        const proposalId = (payload as { proposalId: string }).proposalId
+        if (!deps.skillLearning) return null
+        if (op === 'skills.learning.reject') return deps.skillLearning.reject(proposalId)
+        if (op === 'skills.learning.approve') return deps.skillLearning.approve(proposalId)
+        deps.skillLearning.rollback(proposalId)
+        return deps.skillLearning.get()
       }
     }
   }

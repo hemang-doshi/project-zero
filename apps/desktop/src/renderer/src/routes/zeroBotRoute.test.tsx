@@ -656,7 +656,7 @@ describe('ZeroBotRoute thread surface', () => {
     expect(invoke.mock.calls.some(([op]) => op === 'codex.threads')).toBe(false)
   })
 
-  it('renders opencode sessions grouped by folder newest-first without connecting', async () => {
+  it('renders opencode sessions grouped by folder with compact row metadata', async () => {
     const invoke = vi.fn(async (op: string) => {
       if (op === 'codex.state' || op === 'ocp.state') {
         return { state: 'disconnected', lastDiagnostic: null }
@@ -681,7 +681,14 @@ describe('ZeroBotRoute thread surface', () => {
     expect(html.indexOf('Alpha new')).toBeLessThan(html.indexOf('Beta chat'))
     // Sessions render newest-first within the folder.
     expect(html.indexOf('Alpha new')).toBeLessThan(html.indexOf('Old alpha'))
-    expect(html).toContain('muse-spark-1.3')
+    const selectedTitleRow = Array.from(host?.querySelectorAll('button') ?? []).find((button) =>
+      button.textContent?.includes('Alpha new')
+    )
+    expect(selectedTitleRow?.textContent).not.toContain('muse-spark-1.3')
+    expect(selectedTitleRow?.textContent).not.toContain('build')
+    expect(
+      selectedTitleRow?.querySelector('[data-voice="machine"]')?.textContent?.length
+    ).toBeLessThanOrEqual(10)
     expect(invoke).toHaveBeenCalledWith('ocp.discover')
     expect(invoke.mock.calls.some(([op]) => op === 'ocp.connect')).toBe(false)
   })

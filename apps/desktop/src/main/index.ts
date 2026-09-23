@@ -6,8 +6,14 @@ import { CockpitModel } from './cockpit-model'
 import { fetchSnapshot, openStream, postCommand } from './socket'
 import { registerIpcHandlers, attachCockpitPush, attachBridgePush, bridgePair } from './ipc'
 import { PrefsStore, startupMigrate } from './prefs'
-import { createWallpaperImageHandler, IMAGE_EXTENSIONS } from './wallpaper-image'
+import {
+  createWallpaperImageHandler,
+  ensureManagedWallpaper,
+  importWallpaper,
+  IMAGE_EXTENSIONS
+} from './wallpaper-image'
 import { createSkillDiscoverer } from './skills'
+import { createSkillLearningStore } from './skills-learning'
 import { createDeviceLister } from './devices'
 import { createTelemetrySampler } from './telemetry'
 import { createTray } from './tray'
@@ -72,24 +78,53 @@ function createWindow(model: CockpitModel): void {
 app.whenReady().then(() => {
   protocol.handle('zero-img', serveWallpaperImage)
   const store = new PrefsStore(prefsStoreDir)
-  store.save(startupMigrate(store.load()))
-  // Lazy on-demand machine telemetry: the sampler only reads counters when
-  // the renderer asks (at most 1 Hz), no background loop (Task 18 preserved).
+  const prefs = startupMigrate(store.load())
+  const managedWallpaperDir = join(prefsStoreDir, 'wallpapers')
+  if (prefs.wallpaper.kind === 'custom' && prefs.wallpaper.path) {
+    try {
+      prefs.wallpaper = {
+        ...prefs.wallpaper,
+        path: ensureManagedWallpaper(prefs.wallpaper.path, managedWallpaperDir)
+      }
+    } catch {
+      // Keep the saved path so the renderer can use its neutral wallpaper fallback.
+    }
+  }
+  store.save(prefs)
+  // Main owns a short ring buffer so opening Runtime can replay samples already
+  // measured while the desktop window was visible.
   const telemetry = createTelemetrySampler()
+  void telemetry.sample().catch(() => {})
+  const telemetryTimer = setInterval(() => {
+    const visible = BrowserWindow.getAllWindows().some(
+      (win) => win.isVisible() && !win.isMinimized()
+    )
+    if (visible) void telemetry.sample().catch(() => {})
+  }, 2_000)
+  telemetryTimer.unref()
+  app.on('before-quit', () => clearInterval(telemetryTimer))
   // Local devices: USB via fast ioreg on every list call; Bluetooth names
   // via the slow system_profiler path once per launch + explicit refresh
   // (cached inside the lister).
   const deviceLister = createDeviceLister()
   // Skill grid: one app-lifetime discoverer over the real skill roots, cached
   // per launch; the route rescans explicitly via { refresh: true }.
-  const skillDiscoverer = createSkillDiscoverer()
+  const learnedSkillsDir = join(prefsStoreDir, 'skills-learned')
+  const skillDiscoverer = createSkillDiscoverer(undefined, process.env.HOME ?? '', learnedSkillsDir)
+  const skillLearning = createSkillLearningStore({
+    stateFile: join(prefsStoreDir, 'skills-learning.json'),
+    learnedRoot: learnedSkillsDir
+  })
   registerIpcHandlers({
     socketPath,
     fetchSnapshot,
     postCommand,
     store,
     pickImage,
+    importWallpaper: (source) => importWallpaper(source, managedWallpaperDir),
+    skillLearning,
     sampleTelemetry: () => telemetry.sample(),
+    telemetryHistory: () => telemetry.history(),
     listDevices: (refreshBt: boolean) => deviceLister.list(refreshBt),
     discoverSkills: (refresh: boolean) => Promise.resolve(skillDiscoverer.discover(refresh))
   })

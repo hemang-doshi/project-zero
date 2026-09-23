@@ -237,13 +237,16 @@ describe('ChatRow Zero attribution', () => {
 })
 
 describe('ThreadList', () => {
-  it('renders titled, untitled and preview rows with timestamps and selection', () => {
+  it('keeps thread titles prominent and metadata compact', () => {
     const onSelect = vi.fn()
     const html = mount(createElement(ThreadList, { rows, selectedId: 't-new', onSelect }))
     expect(html).toContain('newest one')
     expect(html).toContain('untitled')
-    expect(html).toContain('2025')
     const first = host?.querySelector<HTMLButtonElement>('button')
+    const metadata = first?.querySelector('[data-voice="machine"]')
+    expect(metadata?.textContent).not.toContain('2025')
+    expect(metadata?.textContent).not.toContain('gpt-5.6-sol')
+    expect(metadata?.textContent?.length).toBeLessThanOrEqual(10)
     act(() => {
       first?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
     })
