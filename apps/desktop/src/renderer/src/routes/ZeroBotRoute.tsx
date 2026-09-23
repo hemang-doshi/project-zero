@@ -3,12 +3,13 @@ import { ZERO_TYPE } from '../../../shared/tokens'
 import type { ProjectListItem } from '../../../shared/ipc'
 import type { PromptSubmitPayload } from '../../../shared/ipc'
 import { Chip } from './Chip'
-import { ChatRow, ThreadList } from './ZeroBotChat'
+import { ChatRow, ThinkingGroupBlock, ThreadList } from './ZeroBotChat'
 import { parseOpenCodeTranscript, type TranscriptUsage } from './opencodeTranscript'
 import type { Tone } from './runtime.types'
 import {
   applyBridgeEvent,
   groupThreadsByRegisteredProject,
+  groupVisibleItems,
   EMPTY_HARNESS_LOG,
   mergeTranscript,
   parseThreadRows,
@@ -92,8 +93,8 @@ const transcriptStyle: React.CSSProperties = {
   flex: 1,
   display: 'flex',
   flexDirection: 'column',
-  gap: 8,
-  padding: '4px 20px 12px',
+  gap: 11,
+  padding: '6px 24px 16px',
   overflowY: 'auto',
   minHeight: 60
 }
@@ -137,7 +138,7 @@ const sectionLabel: React.CSSProperties = {
 
 const bodyText: React.CSSProperties = {
   fontFamily: ZERO_TYPE.body,
-  fontSize: 12.5,
+  fontSize: 13.5,
   lineHeight: 1.55,
   color: 'var(--z-ink)',
   margin: 0
@@ -146,7 +147,7 @@ const bodyText: React.CSSProperties = {
 // Machine voice: mono reserved for ids, timestamps, model ids, commands.
 const machineMeta: React.CSSProperties = {
   fontFamily: ZERO_TYPE.mono,
-  fontSize: 10,
+  fontSize: 11,
   color: 'var(--z-secondary-ink)',
   lineHeight: 1.6,
   margin: 0,
@@ -1073,6 +1074,7 @@ export const ZeroBotRoute = memo(function ZeroBotRoute(): React.JSX.Element {
       .catch((err: unknown) => setError(err instanceof Error ? err.message : String(err)))
   }
   const activity = streamingLabel(lane.items)
+  const displayItems = useMemo(() => groupVisibleItems(lane.items), [lane.items])
   const counts = useMemo(() => turnItemCounts(lane.items), [lane.items])
   const toolItems = useMemo(
     () => lane.items.filter((i) => i.kind === 'tool' || i.kind === 'exec'),
@@ -1370,14 +1372,18 @@ export const ZeroBotRoute = memo(function ZeroBotRoute(): React.JSX.Element {
             />
           ) : (
             <>
-              {lane.items.map((item, n) => (
-                <ChatRow
-                  key={item.id === '' ? `${item.kind}-anon-${n}` : item.id}
-                  item={item}
-                  harness={harness}
-                  model={openRow?.model ?? null}
-                />
-              ))}
+              {displayItems.map((item, n) =>
+                item.kind === 'thinking-group' ? (
+                  <ThinkingGroupBlock key={item.id} items={item.items} />
+                ) : (
+                  <ChatRow
+                    key={item.id === '' ? `${item.kind}-anon-${n}` : item.id}
+                    item={item}
+                    harness={harness}
+                    model={openRow?.model ?? null}
+                  />
+                )
+              )}
               {lane.dropped > 0 ? (
                 <p data-voice="human" style={bodyText}>
                   +{lane.dropped} earlier item(s) kept out of this bounded view.

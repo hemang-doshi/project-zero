@@ -71,8 +71,9 @@ export function summarizeToolItem(item: ToolItem): string {
 // Semantic one-line summary for an exec card header. The command stays
 // verbatim (machine metadata); only the framing verb is added.
 export function summarizeExecItem(item: ExecItem): string {
-  if (item.exitCode === null) return `Running ${item.command}`
-  return `Ran ${item.command} · EXIT ${item.exitCode}`
+  const command = item.command.length > 72 ? `${item.command.slice(0, 71)}…` : item.command
+  if (item.exitCode === null) return `Running ${command}`
+  return `Ran ${command}`
 }
 
 // Streaming state grounded in actual lane evidence only: a running exec, an

@@ -22,7 +22,7 @@ export const ZERO_TOKENS: Record<string, string> = {
 }
 
 export const ZERO_TYPE = {
-  body: 'Inter, system-ui, -apple-system, sans-serif',
+  body: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
   mono: 'ui-monospace, SFMono-Regular, Menlo, monospace'
 } as const
 

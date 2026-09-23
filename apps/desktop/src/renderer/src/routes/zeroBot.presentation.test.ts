@@ -120,7 +120,7 @@ describe('summarizeExecItem', () => {
         status: 'completed',
         id: 'e1'
       })
-    ).toBe('Ran npm test · EXIT 0')
+    ).toBe('Ran npm test')
   })
 
   it('marks an in-flight execution as running', () => {

@@ -20,14 +20,12 @@
   --z-orange: #F54E00;
   --z-orange-pressed: #A83300;
   --z-card-white: #FFFFFF;
+  --z-terminal-bg: #171b20;
+  --z-terminal-ink: #ecf2f5;
 }
 
 body {
-  font-family:
-    Inter,
-    system-ui,
-    -apple-system,
-    sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   background: var(--z-card-cream);
   color: var(--z-ink);
 }
@@ -54,12 +52,107 @@ body {
   --z-orange: #ff7846;
   --z-orange-pressed: #ff9c75;
   --z-card-white: #292b30;
+  --z-terminal-bg: #121518;
+  --z-terminal-ink: #ecf2f5;
 }
 
 .zw-transcript {
   width: min(100%, 960px);
   align-self: center;
   box-sizing: border-box;
+}
+
+.zw-transcript > * {
+  animation: zw-item-enter 180ms ease-out both;
+}
+
+@keyframes zw-item-enter {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.zw-thinking-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  padding: 2px 0;
+  border: 0;
+  background: transparent;
+  color: var(--z-secondary-ink);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.4;
+  text-align: left;
+  cursor: pointer;
+}
+
+.zw-thinking-toggle:hover {
+  color: var(--z-ink);
+}
+.zw-thinking-toggle:focus-visible {
+  outline: 2px solid var(--z-orange);
+  outline-offset: 2px;
+}
+.zw-thinking-detail {
+  margin: 4px 0 6px 13px;
+  padding-left: 10px;
+  border-left: 1px solid var(--z-line);
+  color: var(--z-secondary-ink);
+  font:
+    11px/1.55 ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    monospace;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 260px;
+  overflow-y: auto;
+}
+
+.zw-thinking-detail p {
+  margin: 2px 0 8px;
+}
+
+.zw-terminal {
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--z-terminal-bg);
+  color: var(--z-terminal-ink);
+  font:
+    11.5px/1.55 ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    monospace;
+  user-select: text;
+}
+
+.zw-terminal pre {
+  margin: 0;
+  max-height: 240px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+.zw-terminal-command {
+  color: #8eddbb;
+}
+.zw-terminal-cwd {
+  color: #aab5bd;
+  font-size: 10px;
+}
+.zw-terminal-output {
+  border-top: 1px solid #384047;
+  padding-top: 8px;
+  margin-top: 8px !important;
 }
 
 .zw-composer-shell {
@@ -123,5 +216,8 @@ body {
   .zw-inspector,
   .zw-thread-row {
     transition: none;
+  }
+  .zw-transcript > * {
+    animation: none;
   }
 }

@@ -7,6 +7,7 @@ import {
   ChatRow,
   ExecBlock,
   ThinkingBlock,
+  ThinkingGroupBlock,
   ThreadList,
   ToolBlock,
   type ThinkingItem
@@ -86,6 +87,26 @@ const rows: ThreadRow[] = [
 ]
 
 describe('ThinkingBlock', () => {
+  it('shows consecutive provider notes as one keyboard-accessible disclosure', () => {
+    mount(
+      createElement(ThinkingGroupBlock, {
+        items: [
+          { kind: 'thinking', id: 'r0', text: '', summary: '' },
+          thinking,
+          { kind: 'thinking', id: 'r2', text: 'second private detail', summary: 'Checked files' }
+        ]
+      })
+    )
+    const button = host?.querySelector('button')
+    expect(host?.querySelectorAll('button')).toHaveLength(1)
+    expect(button?.getAttribute('aria-expanded')).toBe('false')
+    expect(host?.innerHTML).not.toContain('raw internal reasoning text')
+    expect(host?.innerHTML).not.toContain('second private detail')
+    act(() => button?.dispatchEvent(new MouseEvent('click', { bubbles: true })))
+    expect(button?.getAttribute('aria-expanded')).toBe('true')
+    expect(host?.textContent).toContain('raw internal reasoning text')
+    expect(host?.textContent).toContain('second private detail')
+  })
   it('hides reasoning by default behind a collapsed Thinking row', () => {
     const html = mount(createElement(ThinkingBlock, { item: thinking }))
     expect(html).toContain('Thinking')
@@ -153,6 +174,8 @@ describe('ExecBlock', () => {
     })
     expect(host?.innerHTML).toContain('npm test')
     expect(host?.innerHTML).toContain('all green')
+    expect(host?.querySelector('[role="region"][aria-label="Terminal output"]')).not.toBeNull()
+    expect(host?.querySelector('.zw-terminal-command')?.textContent).toBe('$ npm test')
   })
 
   it('marks a failed execution honestly', () => {
