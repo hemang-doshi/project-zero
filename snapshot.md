@@ -1,19 +1,43 @@
 # Current working snapshot
 
-Updated: **2026-09-23 18:13 IST**. Read [handoff.md](handoff.md) for project context and recovery details. Both app worktrees now share the reconciled source history; this snapshot records the current local preview and the remaining environment limits.
+Updated: **2026-09-24 00:54 IST**. This records the approved implementation work in the isolated app worktree. Read [handoff.md](handoff.md) for architecture and recovery context.
 
-## Canonical app reconciliation
+## Current worktree
 
-The original `build/v0.2` branch was fast-forwarded from `0dbdb66`; both branch refs share the same current tip. The combined app includes the Electron redesign and provider work across Desk, Network, Airlock, Skills Lab, and Zero Bot, plus the native macOS UI changes that were previously uncommitted in the original checkout. Source/UI integration is `524cacb`; app-facing core support in `75b9de1` adds cached artwork serving and audio fields in the cockpit snapshot. Theme preference, centered/floating Zero Bot composition, animated Inspector collapse, provider transcript repairs, Airlock-gated provider dispatch, local Skills Lab discovery/staging, and native window/layout/font refinements are all present in one source version. Unrelated stale-node queue and SQLite/WAL maintenance, release, documentation, and asset lanes remain preserved in the original checkout.
+- Repository: `/Users/hemangdoshi/.codex/worktrees/zero-redesign/project-zero`
+- Branch: `codex/zero-redesign`
+- Implementation commit: `e992b04`; snapshot and handoff edits are being recorded separately.
+- The original checkout at `/Users/hemangdoshi/Developer/project-zero` remains untouched.
+- Only untracked files are three Playwright dark-theme review images under `apps/desktop/output/playwright/`; they contain no transcript or process names.
+- Desktop package is 1.0.0, Electron is 39.8.10. Core release manifest remains product/build 0.2.0 / 0.2.0-7, wire protocol 0.1, schema versions 0.1/0.2, database version 2. OpenCode 1.18.30 is installed.
 
-Verification in the canonical worktree: Electron **896/896 tests across 72 files**, typecheck, changed-file ESLint, and `git diff --check` passed; `build:unpack` passed. `go test ./core/api ./core/runtime` passed for the merged app-facing audio/artwork support. The macOS suite could not get past SwiftPM manifest linking with the selected Command Line Tools; `swiftc -frontend -parse` passed for native sources and the changed layout test, but this is not a substitute for `swift test`. Electron 39.8.10 and OpenCode 1.18.30 are installed. No live provider prompt was sent.
+## Implemented
 
-The running preview is the HMR dev app from this worktree (`npm run dev:watch`, watcher PID 24157, Electron PID 24163). It uses a separate `ProjectZero/dev-electron` profile and socket path; the dev socket is absent and no daemon was started. The Desk window was visibly maximized in the preview, while runtime-backed project/Spotify/device data correctly reports unavailable. The registered-project daemon remains offline, so the Projects warning is still truthful. No signed install or production data migration was attempted; this Mac still reports no valid code-signing identity.
+- Zero Bot combines consecutive reasoning into compact disclosures, uses a selectable command/output panel, keeps the inspector closed by default, shortens list metadata, groups conversations by project/folder and defers provider session creation until the first accepted send. Verified token usage is shown from provider data; cost is never estimated.
+- Desk centers the view on the observed Spotify session and track history; the virtual display card is removed. Playlist creation is visibly disabled until Spotify account authorization is configured.
+- Skills Lab has an opt-in, persisted deterministic learning proposal/review/install flow. Verified local brand art is mapped only for exact identities; unknown brands use an explicit neutral mark.
+- Runtime has timestamped recent history, five measured chart families including GPU when the host reports it, a machine/daemon status split and a top-process drawer limited to CPU/memory attribution.
+- Theme switching and managed wallpaper-copy logic are implemented. Network and Flight Recorder behavior were left intact. Flight Recorder remains a bounded recent event/audit view, not durable evidence.
 
-The earlier mixed launch used a custom Vite output directory, which let Electron load a stale main/preload build while serving the new renderer; the resulting `Unknown op` errors were an IPC version mismatch. The dev scripts now use Electron Vite's standard output and set a separate dev profile before app readiness. That earlier process also rewrote the existing `desktop-electron/prefs.json` layout preferences; see the handoff for the exact path and limits of what could be verified. The mixed process was stopped, and the current app is running from the isolated dev profile.
+## Verification
 
-The original checkout still contains pre-existing dirty stale-node/WAL maintenance files and untracked docs/assets/editor/build outputs. They remain in place and are not part of the app integration. Next: continue from either branch; do not treat the absent daemon, unavailable registered projects, blocked SwiftPM manifest, or lack of signing identity as fixed.
+- Electron suite: **918/918 tests across 75 files**.
+- `npm run typecheck`, `npm run build`, `npm run build:unpack`, `go test ./core/api ./core/runtime`, and `git diff --check` passed.
+- Changed-file ESLint had **0 errors and 75 formatting warnings**.
+- Playwright drove the running Electron UI through CDP on port 9222. A user-authorized Codex turn was accepted, ran two read-only checks and returned a response. A synthetic credential-shaped prompt triggered the real Airlock hold and was cancelled before provider dispatch.
+- Playwright verified dark/light theme selection and restored dark; Runtime showed 60 recent measured points, five chart families and ten CPU/memory rows. OpenCode saved transcript and usage reads were verified. See the implementation plans for limits.
+- Safe review images: `apps/desktop/output/playwright/zero-bot-draft-dark.png`, `zero-runtime-dark.png`, and `zero-desk-dark.png`.
 
+## Environment limits and next step
+
+- Electron PID 54622 is running from this worktree with `--remote-debugging-port=9222`, using the isolated dev profile under `~/Library/Application Support/ProjectZero/dev-electron`. The dev Zero socket is absent; no Zero daemon was started. Registered Projects, live Spotify state and hardware-backed Desk data therefore remain unavailable.
+- OpenCode saved history is readable, but no live ACP model/session was advertised for a send test. Do not claim live OpenCode dispatch.
+- Spotify playback and playlist writes were not authorized or available: there is no registered client/account flow. A client registration and explicit account connection are required to enable the playlist action.
+- The ESP32 was not connected or physically tested. The virtual/physical display path is not accepted by a software preview.
+- Learning stayed disabled in the isolated preview. No proposal was approved/installed or existing learning data changed. The interactive synthetic-proposal demo remains unverified.
+- Wallpaper import is covered by tests; native picker, source deletion and restart were not exercised in the UI. The unpacked app was built but not used for a live provider send.
+- Context7 documentation lookup failed with an invalid/expired OAuth token. Retry after `npx ctx7@latest login` or configuring `CONTEXT7_API_KEY` before making library-specific claims. SwiftPM tests remain blocked by the previously documented Command Line Tools manifest-linker error.
+- No signed install, production profile change, production daemon, Spotify OAuth or playlist mutation was performed.
 ## September 22 follow-up fixes
 
 Three focused fix commits followed the redesign preview: `df01a38` (Skills Lab compact layout/glyphs; Network scale, click-to-focus and absent-device cables; OpenCode read-only transcript export; virtual display preview; Codex executable preflight), `f919c13` (monitor-neck geometry), and `97a96e2` (compact skill-selection reveal). The isolated worktree's preview bundle at `apps/desktop/.runtime/desktop-build/mac-arm64/Zero Desktop.app` was rebuilt and launched after the last fix; the app path formerly pinned to the Dock is unchanged. The original dirty checkout was untouched. Current source manifest remains product 0.2.0/build 0.2.0-7, wire 0.1, migration 2. No production app or database was replaced.
