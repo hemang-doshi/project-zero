@@ -261,7 +261,6 @@ function MousePadInner({
       <instancedMesh
         name="stitches"
         data-testid="mousepad-stitches"
-        data-count={STITCH_COUNT}
         ref={stitchRef}
         args={[undefined, undefined, STITCH_COUNT]}
         frustumCulled={false}
@@ -312,7 +311,6 @@ function MousePadInner({
       <instancedMesh
         name="ptfe-feet"
         data-testid="mousepad-ptfe-feet"
-        data-count={FEET_COUNT}
         ref={feetRef}
         args={[undefined, undefined, FEET_COUNT]}
         frustumCulled={false}
@@ -423,7 +421,6 @@ function MousePadInner({
       <instancedMesh
         name="wheel-ribs"
         data-testid="mousepad-wheel-ribs"
-        data-count={WHEEL_RIB_COUNT}
         ref={ribsRef}
         args={[undefined, undefined, WHEEL_RIB_COUNT]}
         frustumCulled={false}
@@ -509,7 +506,6 @@ function MousePadInner({
       <instancedMesh
         name="grip-dots"
         data-testid="mousepad-grip-dots"
-        data-count={GRIP_DOT_COUNT}
         ref={gripRef}
         args={[undefined, undefined, GRIP_DOT_COUNT]}
         frustumCulled={false}
@@ -524,7 +520,7 @@ function MousePadInner({
         />
       </instancedMesh>
 
-      {/* subtle red accent lines along both lower flanks (reference design) */}
+      {/* subtle red accent lines along both lower flanks (owner photo) */}
       <mesh name="accent-left" position={[MOUSE_X - 0.298, 0.15, MOUSE_Z]}>
         <boxGeometry args={[0.025, 0.035, 0.6]} />
         <meshStandardMaterial
@@ -567,7 +563,6 @@ function MousePadInner({
       <instancedMesh
         name="braid-rings"
         data-testid="mousepad-braid-rings"
-        data-count={BRAID_N}
         ref={braidRef}
         args={[undefined, undefined, BRAID_N]}
         frustumCulled={false}

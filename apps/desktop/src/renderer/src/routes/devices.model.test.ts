@@ -8,12 +8,12 @@ describe('parseDevices', () => {
       devices: [
         {
           id: 'usb-1',
-          name: 'Example Keyboard',
+          name: 'Gaming Keyboard',
           transport: 'usb',
           kind: 'keyboard',
-          vendor: 'Example Devices'
+          vendor: 'BY Tech'
         },
-        { id: 'bt-1', name: 'Example Audio', transport: 'bluetooth', kind: 'audio' },
+        { id: 'bt-1', name: 'Spykar Sound', transport: 'bluetooth', kind: 'audio' },
         { id: 'bad', name: '', transport: 'usb', kind: 'keyboard' },
         { id: 'bad2', name: 'X', transport: 'wifi', kind: 'keyboard' },
         { id: 'bad3', name: 'Y', transport: 'usb', kind: 'printer' },
@@ -24,12 +24,12 @@ describe('parseDevices', () => {
     expect(parsed.devices).toEqual([
       {
         id: 'usb-1',
-        name: 'Example Keyboard',
+        name: 'Gaming Keyboard',
         transport: 'usb',
         kind: 'keyboard',
-        vendor: 'Example Devices'
+        vendor: 'BY Tech'
       },
-      { id: 'bt-1', name: 'Example Audio', transport: 'bluetooth', kind: 'audio' }
+      { id: 'bt-1', name: 'Spykar Sound', transport: 'bluetooth', kind: 'audio' }
     ])
     expect(parsed.note).toBe('hi')
   })
@@ -43,13 +43,13 @@ describe('parseDevices', () => {
 
 describe('matchDeviceByKind', () => {
   const devices = [
-    { id: 'usb-kb', name: 'Example Keyboard', transport: 'usb' as const, kind: 'keyboard' as const },
-    { id: 'usb-ms', name: 'Example Receiver', transport: 'usb' as const, kind: 'mouse' as const },
-    { id: 'bt-au', name: 'Example Audio', transport: 'bluetooth' as const, kind: 'audio' as const }
+    { id: 'usb-kb', name: 'Gaming Keyboard', transport: 'usb' as const, kind: 'keyboard' as const },
+    { id: 'usb-ms', name: 'USB Receiver', transport: 'usb' as const, kind: 'mouse' as const },
+    { id: 'bt-au', name: 'Spykar Sound', transport: 'bluetooth' as const, kind: 'audio' as const }
   ]
   it('matches keyboard to keyboard and mouse to mouse', () => {
-    expect(matchDeviceByKind(devices, 'keyboard')?.name).toBe('Example Keyboard')
-    expect(matchDeviceByKind(devices, 'mouse')?.name).toBe('Example Receiver')
+    expect(matchDeviceByKind(devices, 'keyboard')?.name).toBe('Gaming Keyboard')
+    expect(matchDeviceByKind(devices, 'mouse')?.name).toBe('USB Receiver')
   })
 
   it('returns null when no device of that kind is connected', () => {
@@ -67,7 +67,7 @@ describe('matchDeviceByKind', () => {
       { id: 'bt-kb', name: 'BT Keys', transport: 'bluetooth' as const, kind: 'keyboard' as const },
       ...devices
     ]
-    expect(matchDeviceByKind(both, 'keyboard')?.name).toBe('Example Keyboard')
+    expect(matchDeviceByKind(both, 'keyboard')?.name).toBe('Gaming Keyboard')
   })
 })
 

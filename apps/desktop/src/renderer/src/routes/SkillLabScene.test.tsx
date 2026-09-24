@@ -62,7 +62,7 @@ vi.mock('@react-three/drei', () => ({
 }))
 
 // The sibling vial model is lanes A/B territory: stub it at the contract
-// boundary ({ plugin: { id, name, color, glyph }, dimmed?, scale? },
+// boundary ({ plugin: { id, name, color }, dimmed?, scale? },
 // MODEL_FOOTPRINT { w: 0.9, h: 1.6, d: 0.9 }) and capture the props this
 // scene passes through.
 vi.mock('./models/SkillVial', () => ({
@@ -87,9 +87,13 @@ const GROUPS: PluginGroup[] = [
     id: 'p-codex',
     name: 'Codex Tools',
     color: '#F54E00',
-    glyph: 'flask',
     skills: [
-      skill({ id: 's-a', name: 'Alpha Skill', pluginId: 'p-codex', description: 'Alpha description.' }),
+      skill({
+        id: 's-a',
+        name: 'Alpha Skill',
+        pluginId: 'p-codex',
+        description: 'Alpha description.'
+      }),
       skill({ id: 's-b', name: 'Beta Skill', pluginId: 'p-codex', source: 'installed' })
     ]
   },
@@ -97,22 +101,31 @@ const GROUPS: PluginGroup[] = [
     id: 'p-design',
     name: 'Design Kit',
     color: '#3B82F6',
-    glyph: 'stack',
     skills: [skill({ id: 's-c', name: 'Gamma Skill', pluginId: 'p-design' })]
   },
   {
     id: 'p-misc',
     name: 'Misc',
     color: '#10B981',
-    glyph: 'bolt',
     skills: [
-      skill({ id: 's-loose', name: 'Loose Skill', pluginId: null, description: 'No owning plugin.' })
+      skill({
+        id: 's-loose',
+        name: 'Loose Skill',
+        pluginId: null,
+        description: 'No owning plugin.'
+      })
     ]
   }
 ]
 
 const SELF_LEARNT: SkillSummary[] = [
-  { id: 'sl-1', name: 'Nightly Ritual', source: 'self-learnt', pluginId: null, description: 'Learnt overnight.' }
+  {
+    id: 'sl-1',
+    name: 'Nightly Ritual',
+    source: 'self-learnt',
+    pluginId: null,
+    description: 'Learnt overnight.'
+  }
 ]
 
 let root: Root | null = null
@@ -183,8 +196,18 @@ describe('skill lab grid layout (pure)', () => {
     expect(standaloneSkills([])).toEqual([])
     // Dedupes by id; first occurrence wins.
     const dup: PluginGroup[] = [
-      { id: 'a', name: 'A', color: '#000', glyph: 'orb', skills: [skill({ id: 'x', name: 'X', pluginId: null })] },
-      { id: 'b', name: 'B', color: '#000', glyph: 'orb', skills: [skill({ id: 'x', name: 'X2', pluginId: null })] }
+      {
+        id: 'a',
+        name: 'A',
+        color: '#000',
+        skills: [skill({ id: 'x', name: 'X', pluginId: null })]
+      },
+      {
+        id: 'b',
+        name: 'B',
+        color: '#000',
+        skills: [skill({ id: 'x', name: 'X2', pluginId: null })]
+      }
     ]
     expect(standaloneSkills(dup)).toHaveLength(1)
     expect(standaloneSkills(dup)[0].name).toBe('X')
@@ -226,17 +249,28 @@ describe('SkillLabScene', () => {
     }
     // Labels carry the plugin names; the vial gets the contract props.
     expect(el.textContent).toContain('Codex Tools')
-    const codex = vialCalls.current.find(
-      (c) => (c.plugin as { id: string }).id === 'p-codex'
-    )
+    const codex = vialCalls.current.find((c) => (c.plugin as { id: string }).id === 'p-codex')
     expect(codex?.dimmed).toBe(false)
     expect(codex?.scale).toBe(1)
     expect(codex?.plugin).toMatchObject({
       id: 'p-codex',
       name: 'Codex Tools',
-      color: '#F54E00',
-      glyph: 'flask'
+      color: '#F54E00'
     })
+  })
+
+  it('shows pinned official plugin art and neutral unknown marks for other identities', async () => {
+    const identities: PluginGroup[] = [
+      { id: 'playwright', name: 'Playwright', color: '#3B82F6', skills: [] },
+      { id: 'gstack', name: 'Gstack', color: '#10B981', skills: [] }
+    ]
+    const el = await mount(identities, [])
+    const playwrightMark = el.querySelector('[data-testid="brand-mark-playwright"]')
+    expect(playwrightMark?.querySelector('img')?.getAttribute('src')).toBeTruthy()
+    expect(playwrightMark?.getAttribute('aria-label')).toBe('Playwright official logo')
+    const gstackMark = el.querySelector('[data-testid="brand-mark-gstack"]')
+    expect(gstackMark?.textContent).toBe('?')
+    expect(gstackMark?.getAttribute('aria-label')).toBe('No verified brand icon for Gstack')
   })
 
   it('clicks a vial into focus with a detail panel listing that plugin\u2019s actual skills', async () => {
@@ -254,7 +288,7 @@ describe('SkillLabScene', () => {
     expect(detail?.textContent).toContain('Alpha description.')
     expect(detail?.textContent).toContain('Beta Skill')
     expect(detail?.textContent).toContain('INSTALLED')
-    expect(detail?.textContent).toContain('glyph flask')
+    expect(detail?.textContent).toContain('NO VERIFIED BRAND ICON')
     // Other plugins stay out of the detail panel.
     expect(detail?.textContent).not.toContain('Gamma Skill')
     expect(el.querySelector('[data-testid="vial-focus-ring-plugin:p-codex"]')).not.toBeNull()
@@ -268,9 +302,7 @@ describe('SkillLabScene', () => {
       'STANDALONE'
     )
     expect(el.querySelector('[data-testid="vial-standalone-s-loose"]')).not.toBeNull()
-    const loose = vialCalls.current.find(
-      (c) => (c.plugin as { id: string }).id === 's-loose'
-    )
+    const loose = vialCalls.current.find((c) => (c.plugin as { id: string }).id === 's-loose')
     expect(loose?.scale).toBe(STANDALONE_SCALE)
   })
 
@@ -284,7 +316,7 @@ describe('SkillLabScene', () => {
     const detail = el.querySelector('[data-testid="vial-detail"]')
     expect(detail?.textContent).toContain('Loose Skill')
     expect(detail?.textContent).toContain('No owning plugin.')
-    expect(detail?.textContent).toContain('STANDALONE SKILL')
+    expect(detail?.textContent).toContain('STANDALONE · NO BRAND IDENTITY')
   })
 
   it('shows honest-empty states for an empty grid and standalone row', async () => {
@@ -401,21 +433,13 @@ describe('SkillLabScene', () => {
   })
 })
 
-describe('SkillLabRoute (scene wiring)', () => {
-  it('mounts SELF-LEARNING and INSTALLED BY PLUGIN sections honestly empty with no bridge', () => {
+describe('SkillLabRoute (wall wiring)', () => {
+  it('mounts an honest empty wall with no bridge', () => {
     delete (window as unknown as { zero?: unknown }).zero
     const html = renderToString(createElement(SkillLabRoute))
-    expect(html).toContain('SELF-LEARNING')
-    expect(html).toContain('INSTALLED BY PLUGIN')
-    // Wired: no fixture-derived self-learnt rows, no route-level notice. (The
-    // scene's own "discovery not wired" empty-grid copy is lane C's honest
-    // empty state and stays.)
-    expect(html).toContain('No self-learnt skills yet.')
-    expect(html).toContain('0 PLUGINS')
-    expect(html).not.toContain('self-learnt rows are fixture-derived')
-    // The shared-fixture list below stays fixture data.
-    expect(html).toContain('Zero Debug Ritual')
-    expect(html).toContain('Desk Display Notes')
+    expect(html).toContain('No local skills found.')
+    expect(html).toContain('Skill wall')
+    expect(html).not.toContain('Zero Debug Ritual')
     expect(html).toContain('REFRESH')
   })
 })
@@ -438,7 +462,6 @@ const LIVE_GROUPS: PluginGroup[] = [
     id: 'gstack',
     name: 'Gstack',
     color: '#10B981',
-    glyph: 'flask',
     skills: [
       liveSkill({ id: 'claude', name: 'Claude', pluginId: 'gstack', description: 'Vendor copy.' }),
       liveSkill({ id: 'browse', name: 'Browse', pluginId: 'gstack' })
@@ -448,7 +471,6 @@ const LIVE_GROUPS: PluginGroup[] = [
     id: 'standalone',
     name: 'Standalone',
     color: '#A83300',
-    glyph: 'bolt',
     skills: [liveSkill({ id: 'claude', name: 'Claude', pluginId: null, description: 'Flat copy.' })]
   }
 ]
@@ -486,12 +508,11 @@ describe('SkillLabRoute (live discovery)', () => {
     const { host, invoke } = await mountRoute(() =>
       Promise.resolve({ ok: true, groups: LIVE_GROUPS, selfLearnt: LIVE_SELF, note: null })
     )
-    expect(invoke).toHaveBeenCalledTimes(1)
     expect(invoke).toHaveBeenCalledWith('skills.discover', { refresh: false })
-    expect(host.querySelector('[data-testid="vial-gstack"]')).not.toBeNull()
-    expect(host.querySelector('[data-testid="vial-standalone"]')).not.toBeNull()
+    expect(invoke).toHaveBeenCalledWith('skills.learning.get')
+    expect(host.querySelector('[role="listbox"]')).not.toBeNull()
     expect(host.textContent).toContain('Gstack')
-    expect(host.textContent).toContain('2 PLUGINS')
+    expect(host.textContent).toContain('3 LOCAL SKILLS')
     expect(host.textContent).not.toContain('self-learnt rows are fixture-derived')
   })
 
@@ -499,8 +520,7 @@ describe('SkillLabRoute (live discovery)', () => {
     const { host } = await mountRoute(() =>
       Promise.resolve({ ok: true, groups: LIVE_GROUPS, selfLearnt: LIVE_SELF, note: null })
     )
-    expect(host.querySelector('[data-testid="vial-gstack"]')).not.toBeNull()
-    expect(host.querySelector('[data-testid="vial-standalone"]')).not.toBeNull()
+    expect(host.querySelectorAll('[role="option"]')).toHaveLength(3)
     const keyWarnings = vi
       .mocked(console.error)
       .mock.calls.flat()
@@ -510,16 +530,14 @@ describe('SkillLabRoute (live discovery)', () => {
 
   it('keeps honest-empty states when discovery rejects', async () => {
     const { host, invoke } = await mountRoute(() => Promise.reject(new Error('Unknown op')))
-    expect(invoke).toHaveBeenCalledTimes(1)
-    expect(host.querySelector('[data-testid="vial-grid-empty"]')).not.toBeNull()
-    expect(host.querySelector('[data-testid="scene-selflearn-empty"]')).not.toBeNull()
-    expect(host.textContent).toContain('No self-learnt skills yet.')
+    expect(invoke).toHaveBeenCalledTimes(2)
+    expect(host.textContent).toContain('No local skills found.')
   })
 
   it('rescans explicitly through the refresh control', async () => {
     const extended: PluginGroup[] = [
       ...LIVE_GROUPS,
-      { id: 'fresh', name: 'Fresh', color: '#3B82F6', glyph: 'stack', skills: [] }
+      { id: 'fresh', name: 'Fresh', color: '#3B82F6', skills: [] }
     ]
     let calls = 0
     const { host, invoke } = await mountRoute(() => {
@@ -531,7 +549,7 @@ describe('SkillLabRoute (live discovery)', () => {
         note: null
       })
     })
-    expect(host.querySelector('[data-testid="vial-fresh"]')).toBeNull()
+    expect(host.textContent).not.toContain('Fresh')
     await act(async () => {
       host
         .querySelector('[data-testid="skills-refresh"]')
@@ -539,9 +557,9 @@ describe('SkillLabRoute (live discovery)', () => {
       await new Promise<void>((r) => setImmediate(r))
       await new Promise<void>((r) => setImmediate(r))
     })
-    expect(invoke).toHaveBeenCalledTimes(2)
-    expect(invoke).toHaveBeenNthCalledWith(2, 'skills.discover', { refresh: true })
-    expect(host.querySelector('[data-testid="vial-fresh"]')).not.toBeNull()
+    expect(invoke).toHaveBeenCalledTimes(3)
+    expect(invoke).toHaveBeenCalledWith('skills.discover', { refresh: true })
+    expect(host.textContent).toContain('3 LOCAL SKILLS')
   })
 
   it('surfaces the discoverer note on fail-soft with the grid empty', async () => {
@@ -553,7 +571,7 @@ describe('SkillLabRoute (live discovery)', () => {
         note: 'No readable skill roots — the vial grid is honestly empty.'
       })
     )
-    expect(host.querySelector('[data-testid="vial-grid-empty"]')).not.toBeNull()
+    expect(host.textContent).toContain('No local skills found.')
     expect(host.textContent).toContain('No readable skill roots')
   })
 })

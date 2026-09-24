@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import {
+  groupThreadsByRegisteredProject,
+  groupThreadsByFolder,
+  groupVisibleItems,
   MAX_CHAT_ITEMS,
   MAX_BRIDGE_EVENTS,
   applyBridgeEvent,
@@ -51,6 +54,31 @@ const THREAD_ROWS = {
   ]
 }
 
+describe('groupVisibleItems', () => {
+  it('groups only consecutive reasoning and hides an empty interior group', () => {
+    const items: ChatItem[] = [
+      { kind: 'thinking', id: 'r1', text: '', summary: '' },
+      { kind: 'thinking', id: 'r2', text: 'available detail', summary: 'Checked history' },
+      {
+        kind: 'exec',
+        id: 'e1',
+        command: 'pwd',
+        cwd: '/repo',
+        output: '',
+        exitCode: 0,
+        status: 'completed'
+      },
+      { kind: 'thinking', id: 'r3', text: '', summary: '' },
+      { kind: 'message', id: 'a1', role: 'assistant', text: 'Done' }
+    ]
+    const display = groupVisibleItems(items)
+    expect(display.map((item) => item.kind)).toEqual(['thinking-group', 'exec', 'message'])
+    expect(display[0]).toMatchObject({ items: [{ id: 'r1' }, { id: 'r2' }] })
+    expect(display[1]).toBe(items[2])
+    expect(display[2]).toBe(items[4])
+  })
+})
+
 describe('parseThreadRows', () => {
   it('parses codex thread rows leniently and orders newest first', () => {
     const rows = parseThreadRows(THREAD_ROWS)
@@ -82,6 +110,55 @@ describe('parseThreadRows', () => {
     expect(threadTimestamp(rows[0])).toBe(900)
     expect(threadTimestamp(rows[1])).toBe(300)
     expect(threadTimestamp(rows[2])).toBe(200)
+  })
+})
+
+describe('groupThreadsByRegisteredProject', () => {
+  it('groups Codex threads by verified cwd when daemon project ids are absent', () => {
+    const projects = [
+      { id: 'p1', name: 'App', path: '/one' },
+      { id: 'p2', name: 'App', path: '/two' }
+    ]
+    const rows = parseThreadRows({
+      threads: [
+        { id: 'a', projectId: 'p1', recencyAt: 2 },
+        { id: 'b', projectId: 'p2', recencyAt: 4 },
+        { id: 'c', projectId: 'unknown', recencyAt: 5 },
+        { id: 'd', cwd: '/one/subdir', recencyAt: 3 },
+        { id: 'e', projectId: 'p1', recencyAt: 6 }
+      ]
+    })
+    const result = groupThreadsByRegisteredProject(projects, rows)
+    expect(result.groups.map((g) => [g.project.id, g.rows.map((r) => r.id)])).toEqual([
+      ['p1', ['e', 'd', 'a']],
+      ['p2', ['b']]
+    ])
+    expect(result.unprojected.map((r) => r.id)).toEqual(['c'])
+  })
+})
+
+describe('groupThreadsByFolder', () => {
+  it('keeps nested worktrees distinct under one verified project path', () => {
+    const rows = parseThreadRows({
+      threads: [
+        { id: 'root', cwd: '/repo/app', recencyAt: 4 },
+        { id: 'work', cwd: '/repo/app/.worktrees/feature', recencyAt: 3 },
+        { id: 'other', cwd: '/repo/app/sub', recencyAt: 2 },
+        { id: 'unknown', recencyAt: 1 }
+      ]
+    })
+    expect(
+      groupThreadsByFolder('/repo/app', rows).map((group) => [
+        group.path,
+        group.label,
+        group.rows.map((row) => row.id)
+      ])
+    ).toEqual([
+      ['/repo/app', 'Project root', ['root']],
+      ['/repo/app/.worktrees/feature', '.worktrees/feature', ['work']],
+      ['/repo/app/sub', 'sub', ['other']],
+      [null, 'Unknown folder', ['unknown']]
+    ])
   })
 })
 

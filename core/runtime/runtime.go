@@ -7,18 +7,14 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"github.com/hemang-doshi/project-zero/core/protocol"
-	"github.com/hemang-doshi/project-zero/core/storage"
+	"projectzero.local/zero/core/protocol"
+	"projectzero.local/zero/core/storage"
 	"strings"
 	"sync"
 	"time"
 )
 
-// nodeLease is how recently a node must have been seen to receive queued display
-// work. Nodes silent past the lease are treated as offline so queueSession does
-// not accumulate render invocations, outbox rows and audit entries for absent
-// hardware. A node refreshes its lease on connect and on every heartbeat.
-const nodeLease = 90 * time.Second
+const nodeOfflineAfter = 90 * time.Second
 
 type Runtime struct {
 	Updates     *Updates
@@ -306,7 +302,7 @@ func (r *Runtime) queryList(ctx context.Context, kind, query string) ([]map[stri
 				if err == nil {
 					age := r.Now().Sub(at)
 					status = "ONLINE"
-					if age >= 90*time.Second {
+					if age >= nodeOfflineAfter {
 						status = "OFFLINE"
 					} else if age >= 60*time.Second {
 						status = "SUSPECT"

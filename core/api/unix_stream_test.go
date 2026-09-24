@@ -11,7 +11,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"github.com/hemang-doshi/project-zero/core/runtime"
+	"projectzero.local/zero/core/runtime"
 	"reflect"
 	"slices"
 	"strings"

@@ -131,14 +131,14 @@ describe('NetworkRoute local devices', () => {
     devices: [
       {
         id: 'usb-kb',
-        name: 'Example Keyboard',
+        name: 'Gaming Keyboard',
         transport: 'usb',
         kind: 'keyboard',
-        vendor: 'Example Devices'
+        vendor: 'BY Tech'
       },
-      { id: 'usb-ms', name: 'Example Receiver', transport: 'usb', kind: 'mouse', vendor: 'Example Devices' },
-      { id: 'usb-ser', name: 'Example Serial Adapter', transport: 'usb', kind: 'serial' },
-      { id: 'bt-au', name: 'Example Audio', transport: 'bluetooth', kind: 'audio' }
+      { id: 'usb-ms', name: 'USB Receiver', transport: 'usb', kind: 'mouse', vendor: 'YJX-CHIP' },
+      { id: 'usb-ser', name: 'USB Serial', transport: 'usb', kind: 'serial' },
+      { id: 'bt-au', name: 'Spykar Sound', transport: 'bluetooth', kind: 'audio' }
     ],
     note: null
   }
@@ -174,7 +174,7 @@ describe('NetworkRoute local devices', () => {
     ]) {
       expect(el.querySelector(`[data-testid="${id}"]`)).not.toBeNull()
     }
-    expect(el.textContent).toContain('Example Keyboard')
+    expect(el.textContent).toContain('Gaming Keyboard')
     expect(el.textContent).toContain('USB')
     expect(el.textContent).toContain('BT')
     expect(el.textContent).toContain('⌨')
@@ -198,8 +198,8 @@ describe('NetworkRoute local devices', () => {
     await mount()
     await act(async () => {})
     const graph = sceneProps.current?.graph
-    expect(graph?.nodes.find((n) => n.id === 'desk-keyboard')?.label).toBe('Example Keyboard')
-    expect(graph?.nodes.find((n) => n.id === 'desk-mousepad')?.label).toBe('Example Receiver')
+    expect(graph?.nodes.find((n) => n.id === 'desk-keyboard')?.label).toBe('Gaming Keyboard')
+    expect(graph?.nodes.find((n) => n.id === 'desk-mousepad')?.label).toBe('USB Receiver')
     expect(graph?.nodes.some((n) => n.id === 'peripheral-usb-ser')).toBe(true)
     expect(graph?.nodes.some((n) => n.id === 'peripheral-bt-au')).toBe(true)
   })

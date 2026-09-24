@@ -25,6 +25,18 @@ export type OpenCodeStoreResult = {
 }
 
 export const MAX_OPENCODE_SESSIONS = 500
+export const MAX_OPENCODE_MESSAGES = 500
+export const MAX_OPENCODE_PARTS = 2_000
+
+export type OpenCodeStoredMessage = {
+  info: Record<string, unknown> & { id: string }
+  parts: Array<Record<string, unknown> & { id: string }>
+}
+
+export type OpenCodeStoredSession = {
+  info: Record<string, unknown> & { id: string; directory: string }
+  messages: OpenCodeStoredMessage[]
+}
 
 export function defaultOpenCodeDbPath(home: string = process.env.HOME ?? ''): string {
   return join(home, '.local', 'share', 'opencode', 'opencode.db')
@@ -84,6 +96,33 @@ function parseRow(row: unknown): OpenCodeSessionRow | null {
   }
 }
 
+const genericTitle = (title: string): boolean =>
+  title.trim() === '' || /^New session(?:\s*[-—:]\s*.*)?$/i.test(title.trim())
+
+function firstUserMessage(db: DatabaseSync, sessionId: string): string | null {
+  try {
+    const rows = db
+      .prepare(
+        `SELECT m.data AS message_data, p.data AS part_data
+         FROM message m JOIN part p ON p.message_id = m.id
+         WHERE m.session_id = ?
+         ORDER BY m.time_created, p.time_created LIMIT 40`
+      )
+      .all(sessionId) as Array<Record<string, unknown>>
+    for (const row of rows) {
+      const message = jsonRecord(row['message_data'])
+      const part = jsonRecord(row['part_data'])
+      if (message['role'] !== 'user' || part['type'] !== 'text') continue
+      if (typeof part['text'] !== 'string') continue
+      const line = part['text'].replace(/\s+/g, ' ').trim()
+      if (line !== '') return line.length > 80 ? `${line.slice(0, 79)}…` : line
+    }
+  } catch {
+    // Older stores may not have message/part tables; keep the provider title.
+  }
+  return null
+}
+
 // Read-only scan of OpenCode's on-disk session store (SQLite). Never writes,
 // never spawns, never touches the network: a missing or unreadable store
 // returns honest empty with a note instead of throwing.
@@ -103,7 +142,11 @@ export function readOpenCodeSessionStore(
     const sessions: OpenCodeSessionRow[] = []
     for (const row of rows) {
       const parsed = parseRow(row)
-      if (parsed !== null) sessions.push(parsed)
+      if (parsed !== null) {
+        if (genericTitle(parsed.title))
+          parsed.title = firstUserMessage(db, parsed.id) ?? 'Untitled conversation'
+        sessions.push(parsed)
+      }
     }
     return { ok: true, groups: groupSessionsByFolder(sessions), note: null }
   } catch {
@@ -117,6 +160,69 @@ export function readOpenCodeSessionStore(
       db?.close()
     } catch {
       /* closing a read-only handle must never wedge discovery */
+    }
+  }
+}
+
+function jsonRecord(value: unknown): Record<string, unknown> {
+  if (typeof value !== 'string') return {}
+  try {
+    const parsed: unknown = JSON.parse(value)
+    return typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : {}
+  } catch {
+    return {}
+  }
+}
+
+export function readOpenCodeSession(dbPath: string, sessionId: string): OpenCodeStoredSession {
+  let db: DatabaseSync | null = null
+  try {
+    db = new DatabaseSync(dbPath, { readOnly: true })
+    const session = db.prepare('SELECT * FROM session WHERE id = ? LIMIT 1').get(sessionId) as
+      Record<string, unknown> | undefined
+    if (!session || typeof session['directory'] !== 'string')
+      throw new Error('OpenCode session not found')
+    const rawMessages = db
+      .prepare(
+        `SELECT id, data FROM (
+        SELECT id, data, time_created FROM message WHERE session_id = ? ORDER BY time_created DESC LIMIT ?
+      ) ORDER BY time_created ASC`
+      )
+      .all(sessionId, MAX_OPENCODE_MESSAGES) as Array<Record<string, unknown>>
+    const messages: OpenCodeStoredMessage[] = rawMessages.map((row) => ({
+      info: { ...jsonRecord(row['data']), id: String(row['id'] ?? '') },
+      parts: []
+    }))
+    const byId = new Map(messages.map((message) => [message.info.id, message]))
+    const rawParts = db
+      .prepare(
+        `SELECT id, message_id, data FROM (
+        SELECT id, message_id, data, time_created FROM part WHERE session_id = ? ORDER BY time_created DESC LIMIT ?
+      ) ORDER BY time_created ASC`
+      )
+      .all(sessionId, MAX_OPENCODE_PARTS) as Array<Record<string, unknown>>
+    for (const row of rawParts) {
+      const message = byId.get(String(row['message_id'] ?? ''))
+      if (message) message.parts.push({ ...jsonRecord(row['data']), id: String(row['id'] ?? '') })
+    }
+    return {
+      info: {
+        ...session,
+        id: String(session['id']),
+        directory: session['directory']
+      },
+      messages
+    }
+  } catch (error) {
+    if (error instanceof Error && error.message === 'OpenCode session not found') throw error
+    throw new Error('OpenCode session store unreadable')
+  } finally {
+    try {
+      db?.close()
+    } catch {
+      /* closing a read-only handle must never wedge transcript reads */
     }
   }
 }

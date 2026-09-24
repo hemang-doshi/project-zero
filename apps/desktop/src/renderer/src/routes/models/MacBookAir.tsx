@@ -150,11 +150,10 @@ function MacBookAirInner({
     fill(keycapsRef.current, keys)
     fill(
       fnKeysRef.current,
-      Array.from({ length: FN_KEYS }, (_, c) => [FN_X0 + c * FN_PITCH, 0.02, FN_Z] as [
-        number,
-        number,
-        number
-      ])
+      Array.from(
+        { length: FN_KEYS },
+        (_, c) => [FN_X0 + c * FN_PITCH, 0.02, FN_Z] as [number, number, number]
+      )
     )
     const grilleDots = (sx: number): Array<[number, number, number]> => {
       const dots: Array<[number, number, number]> = []
@@ -172,19 +171,17 @@ function MacBookAirInner({
     )
     fill(
       dockIconsRef.current,
-      Array.from({ length: DOCK_ICONS }, (_, i) => [-0.35 + i * 0.14, 0.24, 0.032] as [
-        number,
-        number,
-        number
-      ])
+      Array.from(
+        { length: DOCK_ICONS },
+        (_, i) => [-0.35 + i * 0.14, 0.24, 0.032] as [number, number, number]
+      )
     )
     fill(
       menubarDotsRef.current,
-      Array.from({ length: MENUBAR_DOTS }, (_, i) => [1.08 + i * 0.11, 1.8, 0.032] as [
-        number,
-        number,
-        number
-      ])
+      Array.from(
+        { length: MENUBAR_DOTS },
+        (_, i) => [1.08 + i * 0.11, 1.8, 0.032] as [number, number, number]
+      )
     )
   }, [])
 
@@ -243,7 +240,6 @@ function MacBookAirInner({
       <instancedMesh
         name="case-screws"
         data-testid="macbook-screws"
-        data-count={SCREW_SPOTS.length}
         ref={screwsRef}
         args={[undefined, undefined, SCREW_SPOTS.length]}
         frustumCulled={false}
@@ -270,7 +266,6 @@ function MacBookAirInner({
           <instancedMesh
             name="keycaps-main"
             data-testid="macbook-keycaps"
-            data-count={KEY_COUNT}
             ref={keycapsRef}
             args={[undefined, undefined, KEY_COUNT]}
             frustumCulled={false}
@@ -288,7 +283,6 @@ function MacBookAirInner({
           <instancedMesh
             name="keycaps-fn"
             data-testid="macbook-fn-keys"
-            data-count={FN_KEYS}
             ref={fnKeysRef}
             args={[undefined, undefined, FN_KEYS]}
             frustumCulled={false}
@@ -346,7 +340,6 @@ function MacBookAirInner({
         <instancedMesh
           name="speaker-dots-left"
           data-testid="macbook-grille-left"
-          data-count={GRILLE_DOTS}
           ref={grilleLeftRef}
           args={[undefined, undefined, GRILLE_DOTS]}
           frustumCulled={false}
@@ -357,7 +350,6 @@ function MacBookAirInner({
         <instancedMesh
           name="speaker-dots-right"
           data-testid="macbook-grille-right"
-          data-count={GRILLE_DOTS}
           ref={grilleRightRef}
           args={[undefined, undefined, GRILLE_DOTS]}
           frustumCulled={false}
@@ -367,11 +359,7 @@ function MacBookAirInner({
         </instancedMesh>
 
         {/* trackpad border seam peeking around the pad */}
-        <mesh
-          name="trackpad-seam"
-          rotation-x={-Math.PI / 2}
-          position={[0, 0.001, 0.62]}
-        >
+        <mesh name="trackpad-seam" rotation-x={-Math.PI / 2} position={[0, 0.001, 0.62]}>
           <planeGeometry args={[1.09, 0.72]} />
           <meshStandardMaterial
             color={NEAR_BLACK}
@@ -497,7 +485,6 @@ function MacBookAirInner({
         <instancedMesh
           name="menubar-dots"
           data-testid="macbook-menubar-dots"
-          data-count={MENUBAR_DOTS}
           ref={menubarDotsRef}
           args={[undefined, undefined, MENUBAR_DOTS]}
           frustumCulled={false}
@@ -537,7 +524,6 @@ function MacBookAirInner({
         <instancedMesh
           name="dock-icons"
           data-testid="macbook-dock-icons"
-          data-count={DOCK_ICONS}
           ref={dockIconsRef}
           args={[undefined, undefined, DOCK_ICONS]}
           frustumCulled={false}

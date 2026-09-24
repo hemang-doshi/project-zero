@@ -1,6 +1,6 @@
 // Skill plugin discovery layer (Task 37 lane B).
 //
-// DIAGNOSIS (read-only, this machine, 2026-01-01) — the scene lane (C) and
+// DIAGNOSIS (read-only, this machine, 2026-09-11) — the scene lane (C) and
 // the vial-model lane (A) consume this contract; the rules below are binding:
 //
 // Where installed skills live (exact paths, live counts of dirs containing
@@ -30,7 +30,7 @@
 // PLUGIN-GROUPING RULE, fix round 1 (binding for discoverPlugins). The
 // round-0 "parent folder only" rule yielded a single plugin group (.system)
 // because the real shapes hide families in three more places — verified
-// against the actual dirs on 2026-01-01 (see counts in the header):
+// against the actual dirs on 2026-09-11 (see counts in the header):
 //   - superpowers (14 skills) lives ONLY in the opencode plugin cache
 //     <cache>/…/node_modules/superpowers/skills/<skill>/SKILL.md, with
 //     package.json `name: superpowers` next door. Fix: the main process
@@ -69,19 +69,11 @@
 // Deterministic throughout: roots in order, entries sorted, groups A–Z with
 // `standalone` last, skills by (lowercased name, id).
 //
-// SELF-LEARNT VERDICT (binding for discoverSelfLearnt): there is NO
-// self-learnt skill store on this machine. Searched and found empty:
-//   - every skill dir above for learned markers
-//     (rg for self-learn|self_learn|learned-in|learnt: no hits),
-//   - the daemon: core/ contains no skill code at all,
-//   - daemon state DBs (.runtime/live/zero.db, .runtime/v02-dev/zero.db):
-//     `strings | rg -i skill` returns nothing,
-//   - repo-local: no .opencode/, no .claude/skills, .codex/ holds only
-//     hooks.json.
-// (runtime.types.ts SKILL_FIXTURES use sources like `learned-in-codex` only
-// as fixture labels, not as a store.) discoverSelfLearnt therefore returns
-// [] unless the caller injects explicit roots via deps — the [] is the
-// honest answer, never fabricated entries.
+// SELF-LEARNT VERDICT: no historic learned-skill store or real `Debug Zero`
+// skill was found in the configured provider roots. Zero now writes reviewed
+// skills to its own profile-local `skills-learned` directory. This module
+// reads that directory only when the main process injects it explicitly;
+// direct calls without roots still return [] honestly.
 //
 // This module is renderer-safe AND main-process-safe: it imports nothing
 // (no node:fs, no node:path). All filesystem access arrives through the
@@ -90,8 +82,6 @@
 //     readFile: p => tryOrNull(() => fs.readFileSync(p, 'utf8')),
 //     isDirectory: p => tryFalse(() => fs.statSync(p).isDirectory()) }
 // Tests inject tmpdir fixtures the same way.
-
-export type SkillGlyph = 'flask' | 'masks' | 'stack' | 'bolt' | 'orb'
 
 export type SkillSummary = {
   id: string
@@ -106,7 +96,6 @@ export type PluginGroup = {
   id: string
   name: string
   color: string
-  glyph: SkillGlyph
   skills: SkillSummary[]
 }
 
@@ -140,10 +129,6 @@ export const STANDALONE_GROUP_NAME = 'Standalone'
 // owner direction; everything else stays `standalone`.
 export const SINGLETON_FAMILIES: readonly string[] = ['playwright']
 
-// Glyph vocabulary, fixed order — glyphForPlugin indexes into this exact
-// array, so the order is part of the contract with the scene lane.
-export const PLUGIN_GLYPHS: readonly SkillGlyph[] = ['flask', 'masks', 'stack', 'bolt', 'orb']
-
 // Vial palette. Hardcoded ZERO_TOKENS hexes (token names in comments) — no
 // new hues introduced. colorForPlugin indexes into this exact array.
 export const PLUGIN_COLORS: readonly string[] = [
@@ -168,11 +153,9 @@ export function defaultSkillRoots(homeDir: string): string[] {
   ]
 }
 
-// Candidate self-learnt locations, checked on this machine and ABSENT (see
-// verdict above). Exported so a future store can be wired without changing
-// this module's shape; discoverSelfLearnt does NOT consult these by itself
-// because silently scanning a hardcoded home from the renderer would be a
-// lie about where data comes from — the caller passes explicit roots.
+// Legacy candidate locations are included for diagnosis only. The app never
+// scans these; newly approved learned skills live in the explicit app-profile
+// path injected by main so they cannot pollute provider skill folders.
 export function candidateSelfLearntRoots(homeDir: string): string[] {
   const home = homeDir.replace(/\/+$/, '')
   return [`${home}/.config/project-zero/skills-learned`, `${home}/.claude/skills-learned`]
@@ -219,7 +202,7 @@ const joinPath = (dir: string, entry: string): string => `${dir.replace(/\/+$/, 
 
 // FNV-1a (32-bit) over UTF-16 code units. Chosen because it is tiny,
 // dependency-free, and stable across engines (unlike localeCompare-based
-// tricks) — glyph/color assignment must not move between runs.
+// tricks) — decorative vial colors must not move between runs.
 const fnv1a = (s: string): number => {
   let h = 0x811c9dc5
   for (let i = 0; i < s.length; i += 1) {
@@ -227,10 +210,6 @@ const fnv1a = (s: string): number => {
     h = Math.imul(h, 0x01000193)
   }
   return h >>> 0
-}
-
-export function glyphForPlugin(pluginId: string): SkillGlyph {
-  return PLUGIN_GLYPHS[fnv1a(pluginId) % PLUGIN_GLYPHS.length] as SkillGlyph
 }
 
 export function colorForPlugin(pluginId: string): string {
@@ -371,8 +350,8 @@ const toSummary = (
     pluginId: groupId === STANDALONE_GROUP_ID ? null : groupId
   }
   if (found.frontmatter.description !== undefined) summary.description = found.frontmatter.description
-  // icon is unset: no icon source was diagnosed anywhere (no icon field in
-  // any SKILL.md frontmatter observed) — the scene lane owns vial glyphs.
+  // Icon remains unset when the skill has no icon metadata. The renderer
+  // shows a neutral unknown marker instead of borrowing a made-up logo.
   return summary
 }
 
@@ -508,7 +487,6 @@ export function discoverPlugins(dirs: string[], deps: FsDeps = NULL_DEPS): Plugi
       id,
       name: humanize(id),
       color: colorForPlugin(id),
-      glyph: glyphForPlugin(id),
       skills: (buckets.get(id) as SkillSummary[]).sort(byName)
     })
   }
@@ -518,7 +496,6 @@ export function discoverPlugins(dirs: string[], deps: FsDeps = NULL_DEPS): Plugi
       id: STANDALONE_GROUP_ID,
       name: STANDALONE_GROUP_NAME,
       color: colorForPlugin(STANDALONE_GROUP_ID),
-      glyph: glyphForPlugin(STANDALONE_GROUP_ID),
       skills: alone.sort(byName)
     })
   }

@@ -4,11 +4,17 @@ import type { DeviceInfo, DeviceKind } from '../shared/ipc'
 // Local USB + Bluetooth device enumeration (Task 36). Cheap, cached, never
 // sudo, fail-soft to empty with an honest note.
 //
-// Sources: ioreg provides the USB tree; system_profiler supplies Bluetooth
-// product names and connection state. Bluetooth enumeration is cached because
-// the system_profiler path is slower than the USB refresh path.
-// USB is refreshed more frequently; Bluetooth is loaded at launch and on
-// explicit refresh, then cached in the lister.
+// Sources (measured on the owner's Mac, 2026-09-12):
+//   ioreg -r -c IOUSBDevice .................... ~15 ms, real USB names
+//   ioreg -r -c IOBluetoothDevice .............. ~15 ms, NO product names
+//                                                (serial-port stubs only)
+//   system_profiler SPBluetoothDataType -json .. ~60-120 ms, real BT names +
+//                                                connected state
+//   system_profiler SPUSBDataType -json ........ EMPTY on this machine
+//                                                (Apple-silicon gap), unusable
+// So: USB comes from the fast ioreg path (may run on the 2 s cadence); BT
+// names come from the slow system_profiler path (once per launch + explicit
+// refresh only, cached in the lister).
 
 type UsbFlags = { hid: boolean; serial: boolean; net: boolean }
 
@@ -29,7 +35,7 @@ const numField = (block: string, key: string): number | null => {
 export function classifyUsb(name: string, flags: UsbFlags): DeviceKind {
   if (/keyboard/i.test(name)) return 'keyboard'
   if (/mouse|trackpad|trackball/i.test(name)) return 'mouse'
-  // 2.4 GHz HID dongles report generic names ("Example Receiver"); with HID
+  // 2.4 GHz HID dongles report generic names ("USB Receiver"); with HID
   // children they drive the pointer, so they label the mouse model.
   if (/receiver/i.test(name) && flags.hid) return 'mouse'
   if (/serial|uart|cp210|ch340|ch9102|ftdi|ft232|pl2303|modem/i.test(name) || flags.serial)

@@ -9,8 +9,10 @@ describe('badgeFor', () => {
   it('stale when snapshot ages past max age while live', () => {
     expect(badgeFor('live', now, now - 6_000, 5_000)).toBe('STALE')
   })
-  it('reconnecting/offline reflect state', () => {
+  it('distinguishes a first connection, an established reconnect and no runtime history', () => {
+    expect(badgeFor('connecting', now, null, 5_000)).toBe('CONNECTING')
     expect(badgeFor('reconnecting', now, now, 5_000)).toBe('RECONNECTING')
+    expect(badgeFor('reconnecting', now, null, 5_000)).toBe('OFFLINE')
     expect(badgeFor('offline', now, null, 5_000)).toBe('OFFLINE')
   })
 })

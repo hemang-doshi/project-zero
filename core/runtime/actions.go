@@ -413,17 +413,22 @@ func (r *Runtime) invoke(ctx context.Context, tx *sql.Tx, p, id string, f effect
 }
 
 func (r *Runtime) queueSession(ctx context.Context, tx *sql.Tx, id string, s Session) error {
-	lease := r.Now().Add(-nodeLease).UTC().Format(time.RFC3339Nano)
-	rows, e := tx.QueryContext(ctx, "SELECT id FROM nodes WHERE revoked=0 AND (last_seen IS NULL OR last_seen>=?)", lease)
+	rows, e := tx.QueryContext(ctx, "SELECT id,last_seen FROM nodes WHERE revoked=0")
 	if e != nil {
 		return e
 	}
 	var nodes []string
 	for rows.Next() {
 		var n string
-		if e = rows.Scan(&n); e != nil {
+		var lastSeen sql.NullString
+		if e = rows.Scan(&n, &lastSeen); e != nil {
 			rows.Close()
 			return e
+		}
+		if lastSeen.Valid {
+			if at, err := time.Parse(time.RFC3339Nano, lastSeen.String); err == nil && r.Now().Sub(at) >= nodeOfflineAfter {
+				continue
+			}
 		}
 		nodes = append(nodes, n)
 	}

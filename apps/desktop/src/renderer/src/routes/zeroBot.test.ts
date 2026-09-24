@@ -17,26 +17,18 @@ import {
 } from './runtime.types'
 
 describe('harness lock', () => {
-  it('maps each harness to its pinned model roster', () => {
-    expect(HARNESS_MODELS.codex).toEqual([
-      'gpt-5.6-luna',
-      'gpt-5.6-sol',
-      'gpt-5.6-terra',
-      'gpt-6-astra'
-    ])
-    expect(HARNESS_MODELS.opencode).toEqual(['muse-spark-1.3'])
+  it('does not claim a static provider model roster before live discovery', () => {
+    expect(HARNESS_MODELS.codex).toEqual([])
+    expect(HARNESS_MODELS.opencode).toEqual([])
     expect(HARNESS_DEFAULT_MODEL.codex).toBe('gpt-5.6-luna')
-    expect(HARNESS_DEFAULT_MODEL.opencode).toBe('muse-spark-1.3')
+    expect(HARNESS_DEFAULT_MODEL.opencode).toBe('')
   })
 
-  it('warns on a foreign model and names the mirror path of the selected harness', () => {
+  it('warns when a model has not been advertised by the active harness', () => {
     const warning = harnessLockWarning('muse-spark-1.3', 'codex')
     expect(warning).toContain('muse-spark-1.3')
-    expect(warning).toContain('not allowed in the codex harness')
-    expect(warning).toContain('mirrored, not sent')
-    expect(harnessLockWarning('gpt-5.6-luna', 'codex')).toBeNull()
-    expect(harnessLockWarning('muse-spark-1.3', 'opencode')).toBeNull()
-    expect(harnessLockWarning('gpt-5.6-sol', 'opencode')).toContain('gpt-5.6-sol')
+    expect(warning).toContain('not been advertised by the active codex session')
+    expect(harnessLockWarning('', 'opencode')).toBeNull()
   })
 
   it('labels the jsonl mirror from the bridge identity', () => {
@@ -236,8 +228,8 @@ describe('ZeroBotRoute', () => {
 
   it('renders the read-only discovery and conversation surfaces', () => {
     const html = renderToString(createElement(ZeroBotRoute))
-    expect(html).toContain('DISCOVERY')
+    expect(html).toContain('REGISTERED PROJECTS')
     expect(html).toContain('CONVERSATION')
-    expect(html).toContain('No bridge events in this window yet')
+    expect(html).toContain('Bridge events')
   })
 })

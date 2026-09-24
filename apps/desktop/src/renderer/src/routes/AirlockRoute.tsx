@@ -372,12 +372,22 @@ export function AirlockSlate({
         </div>
       </div>
       <div>
-        <span style={headingStyle}>Airlock: Local Boundary & Outbound Egress Gate</span>
+        <span style={headingStyle}>Airlock: Sensitive Prompt Gate</span>
         <p style={summaryStyle}>
-          Every visible live or retained request stays attached to its original authority ID.
-          Display-only summaries never become action payloads.
+          Zero checks prompts for credentials and payment details before a cloud-provider turn. A
+          detected prompt must be reviewed and explicitly sent once or cancelled.
         </p>
       </div>
+      <div style={cardStyle}>
+        <span style={datumLabel}>OUTBOUND PROMPT HOLDS</span>
+        <span style={noticeStyle}>
+          Codex prompt screening runs in the Zero Bot composer for an open, registered-project
+          thread. Sensitive prompts pause there for Cancel or Send once; this page does not retain
+          prompt text or display another window&apos;s ephemeral hold. OpenCode sending remains
+          unavailable until an active ACP session is verified.
+        </span>
+      </div>
+      <span style={microStyle}>APPROVALS · LOCAL RUNTIME</span>
       <div style={statsRow}>
         <div style={statCell}>
           <span style={statValue}>{stats.pending}</span>
@@ -398,7 +408,7 @@ export function AirlockSlate({
       </div>
       <div style={cardStyle}>
         <div style={headerRow}>
-          <span style={datumLabel}>OUTBOUND & TOOL BOUNDARY REQUESTS</span>
+          <span style={datumLabel}>RUNTIME & TOOL BOUNDARY REQUESTS</span>
           <span style={datumValue}>
             {approvals.length}
             {approvalsTruncated ? '+' : ''} VISIBLE

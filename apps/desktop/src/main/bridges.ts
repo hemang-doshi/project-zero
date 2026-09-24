@@ -1,12 +1,13 @@
 import { spawn, type ChildProcess } from 'node:child_process'
 import { EventEmitter } from 'node:events'
 import * as fs from 'node:fs'
+import { spawnSync } from 'node:child_process'
 import { join } from 'node:path'
 
 export type BridgeState = 'disconnected' | 'connecting' | 'live'
 export type HarnessId = 'codex' | 'opencode'
 
-export const MAX_RESPONSE_BYTES = 1_048_576
+export const MAX_RESPONSE_BYTES = 16_777_216
 export const ZERO_VERSION = '0.2.0'
 
 export type SpawnFn = (cmd: string, args: string[], opts: { cwd?: string }) => ChildProcess
@@ -116,8 +117,8 @@ export class JsonRpcStdio {
     child.stdout.on('data', (chunk: Buffer) => {
       this.onStdout(session, chunk)
     })
-    child.stderr.on('data', (chunk: Buffer) => {
-      this.onStderr(session, chunk)
+    child.stderr.on('data', () => {
+      this.onStderr(session)
     })
     child.on('exit', (code: number) => {
       this.onExit(session, code)
@@ -174,6 +175,13 @@ export class JsonRpcStdio {
     }
   }
 
+  respond(id: string | number, result: unknown): void {
+    if (this._state !== 'connecting' && this._state !== 'live') throw new Error('disconnected')
+    if ((typeof id !== 'string' && typeof id !== 'number') || id === '')
+      throw new Error('invalid request id')
+    this.write({ id, result })
+  }
+
   disconnect(): BridgeState {
     this.failAll(this.session, new Error('disconnected'))
     return this._state
@@ -213,14 +221,14 @@ export class JsonRpcStdio {
       if (session !== this.session) return
     }
     if (this.buffer.length > MAX_RESPONSE_BYTES) {
-      this.failAll(session, new Error('response too large (over 1 MiB)'))
+      this.failAll(session, new Error('response too large (over 16 MiB)'))
     }
   }
 
-  private onStderr(session: number, chunk: Buffer): void {
+  private onStderr(session: number): void {
     if (session !== this.session) return
-    const combined = (this.lastDiagnostic ?? '') + chunk.toString('utf8')
-    this.lastDiagnostic = truncate(combined, 4096)
+    // stderr is untrusted and can echo prompt text or tool output.
+    this.lastDiagnostic = `${this.harness} emitted stderr; content withheld`
   }
 
   private onExit(session: number, code: number): void {
@@ -238,7 +246,7 @@ export class JsonRpcStdio {
     const trimmed = line.trim()
     if (!trimmed) return
     if (trimmed.length > MAX_RESPONSE_BYTES) {
-      this.failAll(session, new Error('response too large (over 1 MiB)'))
+      this.failAll(session, new Error('response too large (over 16 MiB)'))
       return
     }
     let msg: unknown
@@ -281,6 +289,7 @@ export class JsonRpcStdio {
         !isPlainObject(errObj) ||
         typeof (errObj as Record<string, unknown>)['message'] !== 'string'
       ) {
+        entry.reject(new Error('invalid response'))
         this.failAll(session, new Error('invalid response'))
         return
       }
@@ -288,8 +297,8 @@ export class JsonRpcStdio {
         typeof (errObj as Record<string, unknown>)['code'] === 'number'
           ? (errObj as Record<string, number>)['code']
           : 0
-      const message = (errObj as Record<string, string>)['message']
-      entry.reject(new Error(`rpc ${code}: ${message}`))
+      // Provider messages may echo the prompt. Preserve only the numeric code.
+      entry.reject(new Error(`rpc ${code}: provider rejected request`))
     } else {
       entry.resolve(fields['result'])
     }
@@ -302,11 +311,19 @@ export class JsonRpcStdio {
 
   private mirror(ev: RpcEvent): void {
     try {
+      // The wire event can include prompts, credentials and tool output. The
+      // disk mirror is metadata only and bounded; existing history is left intact.
+      if (!/^[a-zA-Z][a-zA-Z0-9/._-]{0,100}$/.test(ev.method)) return
       const file = join(this.prefsDir, 'zero-meta', this.harness, 'events.jsonl')
       fs.mkdirSync(join(this.prefsDir, 'zero-meta', this.harness), { recursive: true })
+      if (fs.existsSync(file) && fs.statSync(file).size >= 512_000) return
       fs.appendFileSync(
         file,
-        JSON.stringify({ ts: new Date().toISOString(), harness: this.harness, event: ev }) + '\n'
+        JSON.stringify({
+          ts: new Date().toISOString(),
+          harness: this.harness,
+          event: { method: ev.method }
+        }) + '\n'
       )
     } catch {
       /* fail-soft: a read-only mirror must never wedge the bridge */
@@ -345,16 +362,22 @@ export class JsonRpcStdio {
 export class CodexBridge {
   private readonly io: JsonRpcStdio
   private readonly toolchainsDir: string
+  private readonly systemCandidates: string[]
 
   constructor(opts: {
     prefsDir: string
     toolchainsDir?: string
+    systemCandidates?: string[]
     spawnFn?: SpawnFn
     clientVersion?: string
   }) {
     this.toolchainsDir =
       opts.toolchainsDir ??
       join(process.env.HOME ?? '', 'Library', 'Application Support', 'ProjectZero', 'toolchains')
+    this.systemCandidates = opts.systemCandidates ?? [
+      '/usr/local/bin/codex',
+      '/opt/homebrew/bin/codex'
+    ]
     this.io = new JsonRpcStdio({
       harness: 'codex',
       prefsDir: opts.prefsDir,
@@ -380,7 +403,7 @@ export class CodexBridge {
 
   async connect(): Promise<BridgeState> {
     if (this.io.state !== 'disconnected') throw new Error('already connected')
-    const exe = resolveCodexToolchain(this.toolchainsDir)
+    const exe = resolveCodexToolchain(this.toolchainsDir, this.systemCandidates)
     return this.io.connect(exe, ['app-server', '--stdio'])
   }
 
@@ -390,6 +413,10 @@ export class CodexBridge {
 
   send(method: string, params?: unknown): Promise<unknown> {
     return this.io.send(method, params)
+  }
+
+  respond(id: string | number, result: unknown): void {
+    this.io.respond(id, result)
   }
 
   onEvent(cb: (ev: RpcEvent) => void): () => void {
@@ -419,7 +446,7 @@ export class OpenCodeBridge {
       handshake: async (io) => {
         await io.send('initialize', {
           protocolVersion: 1,
-          clientCapabilities: {},
+          clientCapabilities: { _meta: { 'terminal-auth': true } },
           clientInfo: { name: 'project_zero', version: io.version }
         })
       }
@@ -449,6 +476,10 @@ export class OpenCodeBridge {
     return this.io.send(method, params)
   }
 
+  respond(id: string | number, result: unknown): void {
+    this.io.respond(id, result)
+  }
+
   onEvent(cb: (ev: RpcEvent) => void): () => void {
     return this.io.onEvent(cb)
   }
@@ -464,7 +495,7 @@ export function createBridgePair(opts: {
   return { codex: new CodexBridge(opts), ocp: new OpenCodeBridge(opts) }
 }
 
-export function resolveCodexToolchain(dir: string): string {
+export function resolveCodexToolchain(dir: string, systemCandidates: string[] = []): string {
   let names: string[] = []
   try {
     names = fs.readdirSync(dir)
@@ -476,13 +507,23 @@ export function resolveCodexToolchain(dir: string): string {
     const exe = join(dir, name, 'codex')
     try {
       fs.accessSync(exe, fs.constants.X_OK)
-      return exe
+      const probe = spawnSync(exe, ['--version'], { timeout: 3_000, encoding: 'utf8' })
+      if (probe.status === 0 && /^codex-cli\s+\S+/m.test(probe.stdout)) return exe
     } catch {
       /* try the next candidate */
     }
   }
+  for (const exe of systemCandidates) {
+    try {
+      fs.accessSync(exe, fs.constants.X_OK)
+      const probe = spawnSync(exe, ['--version'], { timeout: 3_000, encoding: 'utf8' })
+      if (probe.status === 0 && /^codex-cli\s+\S+/m.test(probe.stdout)) return exe
+    } catch {
+      /* try the next installed CLI */
+    }
+  }
   throw new Error(
-    `Codex toolchain not found under ${dir} (expected codex-*/codex). Install it, then reconnect.`
+    `Codex CLI not found or not runnable under ${dir} or the supported system paths. Install or repair it, then reconnect.`
   )
 }
 
@@ -496,10 +537,6 @@ function compareVersionsDescending(a: string, b: string): number {
     if (na !== nb) return nb - na
   }
   return vb.join('.').localeCompare(va.join('.'))
-}
-
-function truncate(text: string, limit: number): string {
-  return text.length > limit ? text.slice(-limit) : text
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {

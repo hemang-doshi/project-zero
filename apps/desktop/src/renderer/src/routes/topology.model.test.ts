@@ -1,5 +1,6 @@
 // @vitest-environment node
 import { describe, expect, it } from 'vitest'
+import { PerspectiveCamera, Vector3 } from 'three'
 import type { RuntimeConnState } from '../../../shared/protocol'
 import { ZERO_TOKENS } from '../../../shared/tokens'
 import { nodeTone } from './runtime.types'
@@ -10,6 +11,7 @@ import {
   BREADBOARD_TOP_Y,
   DESK_CENTER,
   DESK_LAYOUT,
+  DESK_OVERVIEW_BOUNDS,
   DESK_SIZE,
   ESP32_USB_WORLD,
   HOST_LABEL,
@@ -28,6 +30,7 @@ import {
   FOCUS_TWEEN_MS,
   breadboardDots,
   buildDeskCables,
+  visibleDeskCables,
   buildJumperWires,
   buildSceneGraph,
   easeInOutCubic,
@@ -40,12 +43,13 @@ import { MODEL_FOOTPRINT as KEYBOARD_FOOTPRINT } from './models/Keyboard'
 import { MODEL_FOOTPRINT as LAPTOP_FOOTPRINT } from './models/MacBookAir'
 import { MODEL_FOOTPRINT as MONITOR_FOOTPRINT } from './models/Monitor'
 import { MODEL_FOOTPRINT as MOUSEPAD_FOOTPRINT } from './models/MousePad'
+import * as topology from './topology.model'
 const LIVE: RuntimeConnState = 'live'
 
 const node = (over: Partial<CockpitNode> & { id: string }): CockpitNode => ({
   revoked: false,
   capabilities: [],
-  last_seen: '2026-01-01T05:59:49.000Z',
+  last_seen: '2026-09-11T05:59:49.000Z',
   status: 'ONLINE',
   ...over
 })
@@ -53,7 +57,55 @@ const node = (over: Partial<CockpitNode> & { id: string }): CockpitNode => ({
 const dist = (a: [number, number, number], b: [number, number, number]): number =>
   Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2])
 
+describe('responsive desk camera', () => {
+  it.each([0.75, 2.1])('keeps all desk bounds inside the overview at aspect %s', (aspect) => {
+    const fit = (
+      topology as typeof topology & {
+        fitDeskCamera?: (
+          bounds: { min: [number, number, number]; max: [number, number, number] },
+          aspect: number
+        ) => typeof OVERVIEW_CAMERA
+      }
+    ).fitDeskCamera
+    expect(fit).toBeTypeOf('function')
+    if (!fit) return
+    const bounds = {
+      min: [-7.4, -0.5, -4.0] as [number, number, number],
+      max: [7.4, 3.4, 3.8] as [number, number, number]
+    }
+    const view = fit(bounds, aspect)
+    const camera = new PerspectiveCamera(42, aspect, 0.1, 100)
+    camera.position.set(...view.position)
+    camera.lookAt(...view.target)
+    camera.updateMatrixWorld()
+    for (const x of [bounds.min[0], bounds.max[0]]) {
+      for (const y of [bounds.min[1], bounds.max[1]]) {
+        for (const z of [bounds.min[2], bounds.max[2]]) {
+          const point = new Vector3(x, y, z).project(camera)
+          expect(Math.abs(point.x)).toBeLessThan(0.94)
+          expect(Math.abs(point.y)).toBeLessThan(0.94)
+        }
+      }
+    }
+  })
+})
+
 describe('desk scene graph', () => {
+  it('does not draw device cables for unregistered desk hardware', () => {
+    const graph = buildSceneGraph([], 'reconnecting')
+    const ids = visibleDeskCables(graph).map((c) => c.id)
+    expect(ids).not.toContain('usb-c-macbook-monitor')
+    expect(ids).not.toContain('esp32-usb')
+    expect(ids).toContain('keyboard-cable')
+  })
+  it('keeps the physical monitor and ESP32 visible without pretending they are enrolled', () => {
+    const graph = buildSceneGraph([], 'reconnecting')
+    for (const kind of ['monitor', 'esp32']) {
+      const node = graph.nodes.find((entry) => entry.kind === kind)
+      expect(node?.status).toBe('UNREGISTERED')
+      expect(node?.selectable).toBe(true)
+    }
+  })
   it('carries no hub node and no edges: the desk has cables, not data beams', () => {
     const graph = buildSceneGraph(
       [
@@ -84,13 +136,15 @@ describe('desk scene graph', () => {
   })
 
   it('respects MODEL_FOOTPRINT relative sizes', () => {
-    expect(MONITOR_FOOTPRINT).toEqual({ w: 3.2, h: 2.6, d: 0.75 })
+    expect(MONITOR_FOOTPRINT).toEqual({ w: 5.12, h: 4.16, d: 1.2 })
     expect(LAPTOP_FOOTPRINT).toEqual({ w: 3.0, h: 2.13, d: 2.5 })
     expect(ESP32_FOOTPRINT).toEqual({ w: 0.9, h: 1.1, d: 0.5 })
     expect(PHONE_FOOTPRINT).toEqual({ w: 0.78, h: 1.6, d: 0.13 })
     expect(KEYBOARD_FOOTPRINT).toEqual({ w: 2.8, h: 0.38, d: 1.16 })
     expect(MOUSEPAD_FOOTPRINT).toEqual({ w: 2.6, h: 0.5, d: 1.35 })
     expect(MONITOR_FOOTPRINT.h).toBeGreaterThan(LAPTOP_FOOTPRINT.h)
+    expect(MONITOR_FOOTPRINT.w / LAPTOP_FOOTPRINT.w).toBeGreaterThan(1.7)
+    expect(DESK_OVERVIEW_BOUNDS.max[1]).toBeGreaterThan(MONITOR_FOOTPRINT.h)
     expect(LAPTOP_FOOTPRINT.h).toBeGreaterThan(PHONE_FOOTPRINT.h)
     expect(PHONE_FOOTPRINT.h).toBeGreaterThan(ESP32_FOOTPRINT.h)
   })
@@ -111,12 +165,12 @@ describe('desk scene graph', () => {
     expect(phone?.dimmed).toBe(true)
   })
 
-  it('gates a sample phone node with no selection', () => {
+  it('gates a real snapshot iPhone node with no selection', () => {
     const graph = buildSceneGraph(
-      [node({ id: 'demo-phone', status: 'ONLINE' }), node({ id: 'desk-display-01' })],
+      [node({ id: 'owner-iphone', status: 'ONLINE' }), node({ id: 'desk-display-01' })],
       LIVE
     )
-    const phone = graph.nodes.find((n) => n.id === 'demo-phone')
+    const phone = graph.nodes.find((n) => n.id === 'owner-iphone')
     expect(phone?.gated).toBe(true)
     expect(phone?.status).toBe('GATED')
     expect(phone?.selectable).toBe(false)
@@ -188,7 +242,7 @@ describe('desk scene graph', () => {
 
   it('always renders the local host as the MacBook Air even with no Mac node', () => {
     // Evidence-first root cause: the daemon nodes table never enrolls the
-    // local host (sample fixture: desk-display-01 + desk-simulator only), so a
+    // local host (real fixture: desk-display-01 + desk-simulator only), so a
     // snapshot-only mapping can never yield kind macbook on real data.
     const graph = buildSceneGraph([], LIVE)
     const host = graph.nodes.find((n) => n.id === HOST_NODE_ID)
@@ -207,7 +261,7 @@ describe('desk scene graph', () => {
     expect(graph.nodes.find((n) => n.id === HOST_NODE_ID)?.label).toBe(HOST_LABEL)
   })
 
-  it('maps the sample fixture shape: host MacBook, monitor display, ESP32 display', () => {
+  it('maps the real fixture shape: host MacBook, monitor display, ESP32 display', () => {
     const graph = buildSceneGraph(
       [
         node({ id: 'desk-display-01', capabilities: ['display.render', 'display.clear'] }),
@@ -306,14 +360,14 @@ describe('desk scene graph', () => {
         node({
           id: 'desk-display-01',
           capabilities: ['display.render'],
-          last_seen: '2026-01-01T05:59:49.000Z'
+          last_seen: '2026-09-11T05:59:49.000Z'
         })
       ],
       LIVE
     )
     const esp = graph.nodes.find((n) => n.id === 'desk-display-01')
     expect(esp?.caps).toEqual(['display.render'])
-    expect(esp?.lastSeen).toBe('2026-01-01T05:59:49.000Z')
+    expect(esp?.lastSeen).toBe('2026-09-11T05:59:49.000Z')
     expect(graph.nodes.find((n) => n.id === HOST_NODE_ID)?.caps).toEqual([])
   })
 })
@@ -467,28 +521,28 @@ describe('topology focus camera', () => {
 describe('local device names and peripheral markers', () => {
   const devices = [
     {
-      id: 'usb-102-12-4096',
-      name: 'Example Keyboard',
+      id: 'usb-9610-268-1314816',
+      name: 'Gaming Keyboard',
       transport: 'usb' as const,
       kind: 'keyboard' as const,
-      vendor: 'Example Devices'
+      vendor: 'BY Tech'
     },
     {
-      id: 'usb-102-14-4104',
-      name: 'Example Receiver',
+      id: 'usb-43173-8789-1327104',
+      name: 'USB Receiver',
       transport: 'usb' as const,
       kind: 'mouse' as const,
-      vendor: 'Example Devices'
+      vendor: 'YJX-CHIP'
     },
     {
-      id: 'usb-102-13-4100',
-      name: 'Example Serial Adapter',
+      id: 'usb-6790-29987-1318912',
+      name: 'USB Serial',
       transport: 'usb' as const,
       kind: 'serial' as const
     },
     {
       id: 'bt-REDACTED-1',
-      name: 'Example Audio',
+      name: 'Spykar Sound',
       transport: 'bluetooth' as const,
       kind: 'audio' as const
     }
@@ -497,11 +551,11 @@ describe('local device names and peripheral markers', () => {
   it('labels the keyboard and mouse models with the real connected names', () => {
     const graph = buildSceneGraph([], LIVE, devices)
     const kb = graph.nodes.find((n) => n.id === KEYBOARD_NODE_ID)
-    expect(kb?.label).toBe('Example Keyboard')
+    expect(kb?.label).toBe('Gaming Keyboard')
     expect(kb?.sublabel).toContain('usb')
-    expect(kb?.sublabel).toContain('Example Devices')
+    expect(kb?.sublabel).toContain('BY Tech')
     const pad = graph.nodes.find((n) => n.id === MOUSEPAD_NODE_ID)
-    expect(pad?.label).toBe('Example Receiver')
+    expect(pad?.label).toBe('USB Receiver')
     expect(pad?.sublabel).toContain('usb')
   })
 
@@ -517,9 +571,9 @@ describe('local device names and peripheral markers', () => {
     expect(graphBtOnly.nodes.find((n) => n.id === KEYBOARD_NODE_ID)?.label).toBe('BT Keys')
     const graphBoth = buildSceneGraph([], LIVE, [
       { id: 'bt-1', name: 'BT Keys', transport: 'bluetooth', kind: 'keyboard' },
-      { id: 'usb-1', name: 'Example Keyboard', transport: 'usb', kind: 'keyboard' }
+      { id: 'usb-1', name: 'Gaming Keyboard', transport: 'usb', kind: 'keyboard' }
     ])
-    expect(graphBoth.nodes.find((n) => n.id === KEYBOARD_NODE_ID)?.label).toBe('Example Keyboard')
+    expect(graphBoth.nodes.find((n) => n.id === KEYBOARD_NODE_ID)?.label).toBe('Gaming Keyboard')
   })
 
   it('renders one small puck per extra device, never for keyboard/mouse matches', () => {
@@ -527,10 +581,10 @@ describe('local device names and peripheral markers', () => {
     const pucks = graph.nodes.filter((n) => n.kind === 'peripheral')
     expect(pucks.map((p) => p.id).sort()).toEqual([
       'peripheral-bt-REDACTED-1',
-      'peripheral-usb-102-13-4100'
+      'peripheral-usb-6790-29987-1318912'
     ])
-    const serial = pucks.find((p) => p.id === 'peripheral-usb-102-13-4100')
-    expect(serial?.label).toBe('Example Serial Adapter')
+    const serial = pucks.find((p) => p.id === 'peripheral-usb-6790-29987-1318912')
+    expect(serial?.label).toBe('USB Serial')
     expect(serial?.selectable).toBe(false)
     expect(serial?.gated).toBe(false)
     // Deterministic back-edge row inside the desk bounds.
@@ -553,9 +607,9 @@ describe('local device names and peripheral markers', () => {
       transport: 'usb' as const,
       kind: 'other' as const
     }))
-    const graph = buildSceneGraph([node({ id: 'demo-phone', status: 'ONLINE' })], LIVE, many)
+    const graph = buildSceneGraph([node({ id: 'owner-iphone', status: 'ONLINE' })], LIVE, many)
     expect(graph.nodes.filter((n) => n.kind === 'peripheral')).toHaveLength(PERIPHERAL_MAX)
-    const phone = graph.nodes.find((n) => n.id === 'demo-phone')
+    const phone = graph.nodes.find((n) => n.id === 'owner-iphone')
     expect(phone?.gated).toBe(true)
     expect(phone?.status).toBe('GATED')
     expect(graph.nodes.some((n) => n.id.startsWith('peripheral-') && n.gated)).toBe(false)

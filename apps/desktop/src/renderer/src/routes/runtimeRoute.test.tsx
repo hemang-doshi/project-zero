@@ -10,40 +10,41 @@ const GIB = 1024 ** 3
 const MIB = 1024 ** 2
 
 const SAMPLE = {
-  cpu: { system: 8, user: 22, idle: 70, threads: 2345, processes: 42 },
+  cpu: { system: 4.25, user: 30, idle: 65.75, threads: 3185, processes: 780 },
   memory: {
     total: 16 * GIB,
-    used: 8 * GIB,
-    percent: 50,
-    pressure: 50,
+    used: 12.5 * GIB,
+    percent: 78.125,
+    pressure: 78.125,
     level: 'medium',
-    app: 4 * GIB,
-    wired: 2 * GIB,
-    compressed: 2 * GIB,
-    cachedFiles: 1.5 * GIB,
+    app: 5 * GIB,
+    wired: 3 * GIB,
+    compressed: 4.5 * GIB,
+    cachedFiles: 2.5 * GIB,
     swapUsed: 0
   },
   io: {
-    reads: 1_234_567,
-    writes: 2_345_678,
+    reads: 8_348_407,
+    writes: 2_515_963,
     readsPerSec: 12.5,
     writesPerSec: 3.5,
-    dataRead: 1_073_741_824,
-    dataWritten: 268_435_456,
+    dataRead: 156_378_263_552,
+    dataWritten: 47_597_654_016,
     dataReadPerSec: 6 * MIB,
     dataWrittenPerSec: 1.5 * MIB
   },
   net: {
-    packetsIn: 12_345,
-    packetsOut: 6_789,
-    packetsInPerSec: 4.5,
-    packetsOutPerSec: 3.5,
-    dataReceived: 2_000_000,
-    dataSent: 1_500_000,
-    dataReceivedPerSec: 1_024,
-    dataSentPerSec: 512
+    packetsIn: 883_011,
+    packetsOut: 883_011,
+    packetsInPerSec: 25.5,
+    packetsOutPerSec: 21.5,
+    dataReceived: 951_953_745,
+    dataSent: 951_953_745,
+    dataReceivedPerSec: 40_960,
+    dataSentPerSec: 20_480
   },
-  gpu: 42
+  gpu: 29,
+  processes: [{ pid: 12, name: 'Editor', cpuPercent: 8.5, residentBytes: 2 * 1024 }]
 }
 
 const SAMPLE_B = {
@@ -99,7 +100,7 @@ afterEach(async () => {
 })
 
 describe('RuntimeRoute activity monitor panels', () => {
-  it('renders the four panel titles', async () => {
+  it('renders four system panels and the GPU panel', async () => {
     fakeZero(() => Promise.resolve(SAMPLE))
     const el = await mountRoute()
     const text = el.textContent ?? ''
@@ -107,6 +108,7 @@ describe('RuntimeRoute activity monitor panels', () => {
     expect(text).toContain('MEMORY PRESSURE')
     expect(text).toContain('DISK I/O')
     expect(text).toContain('NETWORK')
+    expect(text).toContain('GPU UTILIZATION')
   })
 
   it('renders real color-coded cpu rows and counts', async () => {
@@ -120,7 +122,7 @@ describe('RuntimeRoute activity monitor panels', () => {
     expect(text).toContain('IDLE')
     expect(text).toContain('65.8%')
     expect(text).toContain('THREADS')
-    expect(text).toContain('2.3K')
+    expect(text).toContain('3.2K')
     expect(text).toContain('PROCESSES')
     expect(text).toContain('780')
     expect(text).toContain('29.0%')
@@ -150,9 +152,9 @@ describe('RuntimeRoute activity monitor panels', () => {
     const el = await mountRoute()
     const text = el.textContent ?? ''
     expect(text).toContain('READS')
-    expect(text).toContain('1.2M')
+    expect(text).toContain('8.3M')
     expect(text).toContain('WRITES')
-    expect(text).toContain('2.3M')
+    expect(text).toContain('2.5M')
     expect(text).toContain('DATA READ')
     expect(text).toContain('145.64 GB')
     expect(text).toContain('DATA WRITTEN')
@@ -162,7 +164,7 @@ describe('RuntimeRoute activity monitor panels', () => {
     expect(text).toContain('DATA WRITTEN/S')
     expect(text).toContain('1.5 MB')
     expect(text).toContain('PKTS IN')
-    expect(text).toContain('12.3K')
+    expect(text).toContain('883K')
     expect(text).toContain('RX DATA')
     expect(text).toContain('907.9 MB')
     expect(text).toContain('TX DATA/S')
@@ -174,22 +176,22 @@ describe('RuntimeRoute activity monitor panels', () => {
     const el = await mountRoute()
     const text = el.textContent ?? ''
     // Abbreviated defaults on screen…
-    expect(text).toContain('2.3K')
-    expect(text).toContain('1.2M')
-    expect(text).toContain('2.3M')
-    expect(text).toContain('12.3K')
+    expect(text).toContain('3.2K')
+    expect(text).toContain('8.3M')
+    expect(text).toContain('2.5M')
+    expect(text).toContain('883K')
     // …exact values only in tooltips, never as visible text.
-    expect(text).not.toContain('1,234,567')
-    expect(text).not.toContain('2,345,678')
-    expect(text).not.toContain('12,345')
-    expect(text).not.toContain('2,345')
+    expect(text).not.toContain('8,348,407')
+    expect(text).not.toContain('2,515,963')
+    expect(text).not.toContain('883,011')
+    expect(text).not.toContain('3,185')
     const byText = (s: string): HTMLSpanElement | undefined =>
       [...el.querySelectorAll('span')].find((x) => x.textContent === s) as
         HTMLSpanElement | undefined
-    expect(byText('1.2M')?.title).toBe('1,234,567')
-    expect(byText('2.3M')?.title).toBe('2,345,678')
-    expect(byText('12.3K')?.title).toBe('12,345')
-    expect(byText('2.3K')?.title).toBe('2,345')
+    expect(byText('8.3M')?.title).toBe('8,348,407')
+    expect(byText('2.5M')?.title).toBe('2,515,963')
+    expect(byText('883K')?.title).toBe('883,011')
+    expect(byText('3.2K')?.title).toBe('3,185')
   })
 
   it('shortens long row labels and keeps the full form in the title tooltip', async () => {
@@ -223,16 +225,16 @@ describe('RuntimeRoute activity monitor panels', () => {
   it('renders no ellipsis-truncated spans at normal widths (overflow regression)', async () => {
     const big = {
       ...SAMPLE,
-      cpu: { ...SAMPLE.cpu, threads: 12_345_678, processes: 1_500_000 },
-      io: { ...SAMPLE.io, reads: 12_345_678, writes: 9_999_999 },
-      net: { ...SAMPLE.net, packetsIn: 12_345_678, packetsOut: 12_345_678 }
+      cpu: { ...SAMPLE.cpu, threads: 13_303_724, processes: 1_500_000 },
+      io: { ...SAMPLE.io, reads: 13_303_724, writes: 9_999_999 },
+      net: { ...SAMPLE.net, packetsIn: 13_303_724, packetsOut: 13_303_724 }
     }
     fakeZero(() => Promise.resolve(big))
     const el = await mountRoute()
     const text = el.textContent ?? ''
-    expect(text).toContain('12.3M')
+    expect(text).toContain('13.3M')
     expect(text).toContain('1.5M')
-    expect(text).not.toContain('12,345,678')
+    expect(text).not.toContain('13,303,724')
     expect(text).not.toContain('1,500,000')
     // No span in any panel asks for ellipsis truncation: abbreviated numbers
     // and shortened labels always fit their content-sized columns, so the
@@ -244,7 +246,7 @@ describe('RuntimeRoute activity monitor panels', () => {
   })
 
   it('keeps abbreviated values and live graphs at narrow widths (no spill)', async () => {
-    const big = { ...SAMPLE, io: { ...SAMPLE.io, reads: 12_345_678 } }
+    const big = { ...SAMPLE, io: { ...SAMPLE.io, reads: 13_303_724 } }
     fakeZero(() => Promise.resolve(big))
     const narrow = document.createElement('div')
     narrow.style.width = '320px'
@@ -255,8 +257,8 @@ describe('RuntimeRoute activity monitor panels', () => {
         narrowRoot.render(createElement(RuntimeRoute))
       })
       await flush()
-      expect(narrow.textContent ?? '').toContain('12.3M')
-      expect(narrow.textContent ?? '').not.toContain('12,345,678')
+      expect(narrow.textContent ?? '').toContain('13.3M')
+      expect(narrow.textContent ?? '').not.toContain('13,303,724')
       // Graphs keep their significance: dots render from the first sample.
       expect(narrow.querySelectorAll('circle').length).toBeGreaterThanOrEqual(7)
       // The route scrolls horizontally before anything spills.
@@ -296,7 +298,18 @@ describe('RuntimeRoute activity monitor panels', () => {
 
   it('draws graph lines only from the second sample onward', async () => {
     let calls = 0
-    fakeZero(() => Promise.resolve(calls++ === 0 ? SAMPLE : SAMPLE_B))
+    const now = Date.now()
+    const latestAt = now + 1_000
+    fakeZero(() =>
+      Promise.resolve(
+        calls++ === 0
+          ? [{ at: latestAt, sample: SAMPLE, failures: [] }]
+          : [
+              { at: latestAt - 2_000, sample: SAMPLE, failures: [] },
+              { at: latestAt, sample: SAMPLE_B, failures: [] }
+            ]
+      )
+    )
     const el = await mountRoute()
     expect(el.querySelectorAll('polyline')).toHaveLength(0)
     window.dispatchEvent(new Event('focus'))
@@ -305,7 +318,7 @@ describe('RuntimeRoute activity monitor panels', () => {
     expect(polylines.length).toBeGreaterThanOrEqual(6)
     // The cpu history reflects BOTH samples: the system series spans 4.25 → 8.5
     // (y = 54 − v·0.52 in the fixed 240×56 box).
-    expect(polylines[0].getAttribute('points')).toBe('2,51.8 238,49.6')
+    expect(polylines[0].getAttribute('points')).toBe('222.3,51.8 238,49.6')
   })
 
   it('colors the pressure graph and level word by the kernel pressure level', async () => {
@@ -314,11 +327,19 @@ describe('RuntimeRoute activity monitor panels', () => {
       ['medium', 'var(--z-marker-yellow)'],
       ['high', 'var(--z-error-red)']
     ] as const
+    const now = Date.now()
+    const latestAt = now + 1_000
     for (const [level, toneColor] of cases) {
       const levelContainer = document.createElement('div')
       document.body.appendChild(levelContainer)
       const levelRoot = createRoot(levelContainer)
-      fakeZero(() => Promise.resolve({ ...SAMPLE, memory: { ...SAMPLE.memory, level } }))
+      const pressureSample = { ...SAMPLE, memory: { ...SAMPLE.memory, level } }
+      fakeZero(() =>
+        Promise.resolve([
+          { at: latestAt - 1_000, sample: pressureSample, failures: [] },
+          { at: latestAt, sample: pressureSample, failures: [] }
+        ])
+      )
       await act(async () => {
         levelRoot.render(createElement(RuntimeRoute))
       })
@@ -464,18 +485,43 @@ describe('RuntimeRoute activity monitor panels', () => {
       ...SAMPLE,
       cpu: { system: 10, user: 10, idle: 80, threads: 100, processes: 50 }
     }
-    fakeZero(() => Promise.resolve(flat))
+    const now = Date.now()
+    const latestAt = now + 1_000
+    fakeZero(() =>
+      Promise.resolve([
+        { at: latestAt - 1_000, sample: flat, failures: [] },
+        { at: latestAt, sample: flat, failures: [] }
+      ])
+    )
     const el = await mountRoute()
     window.dispatchEvent(new Event('focus'))
     await flush()
     const lines = [...el.querySelectorAll('polyline')]
     expect(lines.length).toBeGreaterThanOrEqual(6)
     // cpuSystem [10, 10] → y = 54 − 10·0.52 = 48.8 twice.
-    expect(lines[0].getAttribute('points')).toBe('2,48.8 238,48.8')
+    expect(lines[0].getAttribute('points')).toBe('230.1,48.8 238,48.8')
   })
 
   it('preserves the last-known path across null ticks (no vanishing)', async () => {
-    const calls = [SAMPLE, SAMPLE_B, { cpu: null, memory: null, io: null, net: null, gpu: null }]
+    vi.useFakeTimers()
+    const now = Date.now()
+    const latestAt = now + 1_000
+    const calls = [
+      [{ at: latestAt - 4_000, sample: SAMPLE, failures: [] }],
+      [
+        { at: latestAt - 4_000, sample: SAMPLE, failures: [] },
+        { at: latestAt - 2_000, sample: SAMPLE_B, failures: [] }
+      ],
+      [
+        { at: latestAt - 4_000, sample: SAMPLE, failures: [] },
+        { at: latestAt - 2_000, sample: SAMPLE_B, failures: [] },
+        {
+          at: latestAt,
+          sample: { cpu: null, memory: null, io: null, net: null, gpu: null },
+          failures: ['cpu', 'gpu']
+        }
+      ]
+    ]
     let n = 0
     fakeZero(() => Promise.resolve(calls[Math.min(n++, calls.length - 1)]))
     const el = await mountRoute()
@@ -487,12 +533,26 @@ describe('RuntimeRoute activity monitor panels', () => {
     window.dispatchEvent(new Event('focus'))
     await flush()
     const after = [...el.querySelectorAll('polyline')].map((p) => p.getAttribute('points'))
-    expect(after).toEqual(before)
+    expect(after).toHaveLength(before.length)
+    expect(after.map((points) => points?.split(' ').map((point) => point.split(',')[1]))).toEqual(
+      before.map((points) => points?.split(' ').map((point) => point.split(',')[1]))
+    )
   })
 
   it('keeps graph geometry with no measured container size (viewBox, not pixels)', async () => {
     let calls = 0
-    fakeZero(() => Promise.resolve(calls++ === 0 ? SAMPLE : SAMPLE_B))
+    const now = Date.now()
+    const latestAt = now + 1_000
+    fakeZero(() =>
+      Promise.resolve(
+        calls++ === 0
+          ? [{ at: latestAt, sample: SAMPLE, failures: [] }]
+          : [
+              { at: latestAt - 2_000, sample: SAMPLE, failures: [] },
+              { at: latestAt, sample: SAMPLE_B, failures: [] }
+            ]
+      )
+    )
     const narrow = document.createElement('div')
     narrow.style.width = '0px'
     document.body.appendChild(narrow)
@@ -505,7 +565,7 @@ describe('RuntimeRoute activity monitor panels', () => {
     await flush()
     const lines = [...narrow.querySelectorAll('polyline')]
     expect(lines.length).toBeGreaterThanOrEqual(6)
-    expect(lines[0].getAttribute('points')).toBe('2,51.8 238,49.6')
+    expect(lines[0].getAttribute('points')).toBe('222.3,51.8 238,49.6')
     for (const svg of narrow.querySelectorAll('svg')) {
       expect(svg.getAttribute('viewBox')).toBe('0 0 240 56')
     }

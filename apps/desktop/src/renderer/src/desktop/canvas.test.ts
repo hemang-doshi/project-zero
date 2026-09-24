@@ -1,5 +1,18 @@
 import { describe, expect, it } from 'vitest'
-import { previewTransform, resizeAnchor } from './canvas'
+import { networkInitialRect, workspaceInitialRect, previewTransform, resizeAnchor } from './canvas'
+
+describe('network window launch', () => {
+  it('opens large enough for the desk scene without leaving the viewport', () => {
+    expect(networkInitialRect({ w: 1024, h: 736 })).toEqual({ x: 32, y: 16, w: 960, h: 704 })
+    expect(networkInitialRect({ w: 1920, h: 1050 })).toEqual({ x: 480, y: 145, w: 960, h: 760 })
+  })
+})
+
+describe('workspace window launch', () => {
+  it('leaves enough room for sidebar, canvas and inspector at desktop width', () => {
+    expect(workspaceInitialRect({ w: 1440, h: 900 })).toEqual({ x: 170, y: 50, w: 1100, h: 800 })
+  })
+})
 
 describe('resize anchors', () => {
   it('left edges anchor right', () => {

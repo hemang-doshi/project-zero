@@ -82,7 +82,7 @@ func TestSyncIntegrationSkipsUnchangedObservation(t *testing.T) {
 	r.Now = func() time.Time { return now }
 	ctx := context.Background()
 	command(t, r, "connect", "integrations.connect", map[string]string{"id": "spotify"})
-	r.MacObserver = spotifyStub(t, `{"state":"paused","track":"Example Track","artist":"Example Artist"}`)
+	r.MacObserver = spotifyStub(t, `{"state":"paused","track":"Parking Lot","artist":"Mustard"}`)
 	if e := r.SyncIntegration(ctx, "spotify"); e != nil {
 		t.Fatal(e)
 	}
@@ -124,14 +124,14 @@ func TestSyncIntegrationCommitsChangedObservation(t *testing.T) {
 			t.Fatal(e)
 		}
 	}
-	write(`{"state":"paused","track":"Example Track","artist":"Example Artist"}`)
+	write(`{"state":"paused","track":"Parking Lot","artist":"Mustard"}`)
 	r.MacObserver = path
 	if e := r.SyncIntegration(ctx, "spotify"); e != nil {
 		t.Fatal(e)
 	}
 	rev1 := r.Updates.Revision()
 	now = now.Add(2 * time.Second)
-	write(`{"state":"playing","track":"New Track","artist":"Example Artist"}`)
+	write(`{"state":"playing","track":"New Track","artist":"Mustard"}`)
 	if e := r.SyncIntegration(ctx, "spotify"); e != nil {
 		t.Fatal(e)
 	}
@@ -140,6 +140,66 @@ func TestSyncIntegrationCommitsChangedObservation(t *testing.T) {
 	}
 	if got := storedSpotify(t, r); got.Data["track"] != "New Track" || got.Data["state"] != "playing" {
 		t.Fatalf("changed observation not stored: %+v", got.Data)
+	}
+}
+
+func TestSpotifyListeningSessionPersistsOnlyLocalObservations(t *testing.T) {
+	r := openTest(t, filepath.Join(t.TempDir(), "zero.db"))
+	now := time.Date(2026, 9, 23, 12, 0, 0, 0, time.UTC)
+	r.Now = func() time.Time { return now }
+	ctx := context.Background()
+	command(t, r, "connect", "integrations.connect", map[string]string{"id": "spotify"})
+	r.MacObserver = spotifyStub(t, `{"state":"playing","track":"Observed","artist":"Artist"}`)
+	if err := r.SyncIntegration(ctx, "spotify"); err != nil {
+		t.Fatal(err)
+	}
+	now = now.Add(10 * time.Second)
+	if err := r.SyncIntegration(ctx, "spotify"); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := r.Cockpit(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := json.Marshal(snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var projection struct {
+		Listening ListeningSession `json:"listening_session"`
+	}
+	if err := json.Unmarshal(encoded, &projection); err != nil {
+		t.Fatal(err)
+	}
+	listening := projection.Listening
+	if listening.Source != "local-spotify-observer" || listening.ActiveDurationMS != 10000 || len(listening.Tracks) != 1 {
+		t.Fatalf("unexpected listening projection: %+v", listening)
+	}
+	if listening.Tracks[0].Track != "Observed" || listening.Tracks[0].URI != "" {
+		t.Fatalf("unobserved metadata was fabricated: %+v", listening.Tracks[0])
+	}
+	now = now.Add(5 * time.Second)
+	r.MacObserver = spotifyStub(t, `{"state":"paused","track":"Observed","artist":"Artist"}`)
+	if err := r.SyncIntegration(ctx, "spotify"); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err = r.Cockpit(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err = json.Marshal(snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	projection = struct {
+		Listening ListeningSession `json:"listening_session"`
+	}{}
+	if err := json.Unmarshal(encoded, &projection); err != nil {
+		t.Fatal(err)
+	}
+	listening = projection.Listening
+	if listening.ActiveDurationMS != 15000 || listening.ActiveFrom != nil || listening.PlaybackState != "paused" {
+		t.Fatalf("paused session accounting: %+v", listening)
 	}
 }
 

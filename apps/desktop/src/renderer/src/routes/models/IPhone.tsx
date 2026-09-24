@@ -309,7 +309,6 @@ function IPhoneInner({
       <instancedMesh
         name="app-icons"
         data-testid="iphone-app-icons"
-        data-count={ICON_COUNT}
         ref={iconsRef}
         args={[undefined, undefined, ICON_COUNT]}
         frustumCulled={false}
@@ -447,7 +446,6 @@ function IPhoneInner({
         <instancedMesh
           name="lens-rings"
           data-testid="iphone-lens-rings"
-          data-count={LENS_POS.length}
           ref={ringRef}
           args={[undefined, undefined, LENS_POS.length]}
           frustumCulled={false}
@@ -464,7 +462,6 @@ function IPhoneInner({
         <instancedMesh
           name="lens-inners"
           data-testid="iphone-lens-inners"
-          data-count={LENS_POS.length}
           ref={innerRef}
           args={[undefined, undefined, LENS_POS.length]}
           frustumCulled={false}
@@ -553,7 +550,6 @@ function IPhoneInner({
       {/* action-button knurling: three grooves on the outer face (1 draw) */}
       <instancedMesh
         name="action-knurls"
-        data-count={KNURL_N}
         ref={knurlRef}
         args={[undefined, undefined, KNURL_N]}
         frustumCulled={false}
@@ -589,7 +585,6 @@ function IPhoneInner({
       <instancedMesh
         name="bottom-speaker-holes"
         data-testid="iphone-speaker-holes"
-        data-count={SPEAKER_N}
         ref={speakerRef}
         args={[undefined, undefined, SPEAKER_N]}
         frustumCulled={false}
@@ -600,7 +595,6 @@ function IPhoneInner({
       <instancedMesh
         name="bottom-mic-holes"
         data-testid="iphone-mic-holes"
-        data-count={MIC_N}
         ref={micRef}
         args={[undefined, undefined, MIC_N]}
         frustumCulled={false}

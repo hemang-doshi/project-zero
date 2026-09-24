@@ -131,7 +131,10 @@ describe('IPhone structure', () => {
       ['app-icons', '12'],
       ['action-knurls', '3']
     ] as Array<[string, string]>) {
-      expect(el.querySelector(`[name="${name}"]`)?.getAttribute('data-count'), name).toBe(count)
+      expect(
+        el.querySelector(`[name="${name}"]`)?.getAttribute('args')?.split(',').at(-1),
+        name
+      ).toBe(count)
     }
   })
 

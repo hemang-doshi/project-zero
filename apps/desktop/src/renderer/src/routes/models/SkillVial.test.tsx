@@ -8,19 +8,16 @@ import SkillVial, {
   BASE_Y,
   MODEL_BASE_BOTTOM,
   MODEL_FOOTPRINT,
-  PLUGIN_GLYPHS,
-  type SkillGlyph,
   type SkillVialPlugin
 } from './SkillVial'
 
 let root: Root | null = null
 let host: HTMLElement | null = null
 
-const pluginFor = (glyph: SkillGlyph, color = '#B45CFF'): SkillVialPlugin => ({
-  id: `test-${glyph}`,
-  name: `Test ${glyph}`,
-  color,
-  glyph
+const pluginFor = (color = '#B45CFF'): SkillVialPlugin => ({
+  id: 'test-plugin',
+  name: 'Test plugin',
+  color
 })
 
 const mount = async (props: {
@@ -65,10 +62,6 @@ describe('SkillVial footprint', () => {
   it('exports the exact binding footprint', () => {
     expect(MODEL_FOOTPRINT).toEqual({ w: 0.9, h: 1.6, d: 0.9 })
   })
-
-  it('exports the binding glyph set', () => {
-    expect([...PLUGIN_GLYPHS]).toEqual(['flask', 'masks', 'stack', 'bolt', 'orb'])
-  })
 })
 
 describe('SkillVial structure', () => {
@@ -87,7 +80,7 @@ describe('SkillVial structure', () => {
       'cap',
       'rim',
       'chip',
-      'chip-glyph'
+      'chip'
     ]) {
       expect(el.querySelector(`[name="${name}"]`), name).not.toBeNull()
     }
@@ -100,48 +93,23 @@ describe('SkillVial structure', () => {
   })
 
   it('renders the base mesh at half its thickness above y=0', async () => {
-    const el = await mount({ plugin: pluginFor('orb') })
+    const el = await mount({ plugin: pluginFor() })
     expect(el.querySelector('[data-testid="skillvial-base"]')).not.toBeNull()
     expect(BASE_Y).toBeGreaterThan(0)
   })
 })
 
-describe('SkillVial glyphs', () => {
-  const glyphMeshes: Record<SkillGlyph, string[]> = {
-    flask: ['glyph-flask-body', 'glyph-flask-neck'],
-    masks: ['glyph-masks-left', 'glyph-masks-right'],
-    stack: ['glyph-stack-0', 'glyph-stack-1', 'glyph-stack-2'],
-    bolt: ['glyph-bolt-shard'],
-    orb: ['glyph-orb-core', 'glyph-orb-ring']
-  }
-
-  it.each([...PLUGIN_GLYPHS] as SkillGlyph[])('renders glyph %s with its own geometry', async (glyph) => {
-    const el = await mount({ plugin: pluginFor(glyph) })
-    for (const name of glyphMeshes[glyph]) {
-      expect(el.querySelector(`[name="${name}"]`), name).not.toBeNull()
-    }
-  })
-
-  it('renders distinct geometry per glyph value (no cross-glyph leakage)', async () => {
-    const el = await mount({ plugin: pluginFor('bolt') })
-    expect(el.querySelector('[name="glyph-bolt-shard"]')).not.toBeNull()
-    for (const other of ['glyph-flask-body', 'glyph-masks-left', 'glyph-stack-0', 'glyph-orb-core']) {
-      expect(el.querySelector(`[name="${other}"]`), other).toBeNull()
-    }
-
-    await act(async () => {
-      root?.unmount()
-    })
-    host?.remove()
-    const el2 = await mount({ plugin: pluginFor('stack') })
-    expect(el2.querySelector('[name="glyph-stack-2"]')).not.toBeNull()
-    expect(el2.querySelector('[name="glyph-bolt-shard"]')).toBeNull()
+describe('SkillVial identity mark', () => {
+  it('leaves the chip blank so the scene can show a verified mark or an unknown state', async () => {
+    const el = await mount({ plugin: pluginFor() })
+    expect(el.querySelector('[data-testid="skillvial-chip"]')).not.toBeNull()
+    expect(el.querySelector('[name^="glyph-"]')).toBeNull()
   })
 })
 
 describe('SkillVial plugin color', () => {
   it('flows the plugin color to the helix emissive', async () => {
-    const el = await mount({ plugin: pluginFor('flask', '#FF00AA') })
+    const el = await mount({ plugin: pluginFor('#FF00AA') })
     const helix = el.querySelectorAll('[data-testid="skillvial-helix-material"]')
     expect(helix.length).toBe(2)
     for (const mat of helix) {
@@ -151,7 +119,7 @@ describe('SkillVial plugin color', () => {
   })
 
   it('tracks color changes across plugins', async () => {
-    const el = await mount({ plugin: pluginFor('masks', '#00CC88') })
+    const el = await mount({ plugin: pluginFor('#00CC88') })
     const helix = materialOf(el, 'skillvial-helix-material')
     expect(helix?.getAttribute('emissive')?.toLowerCase()).toBe('#00cc88')
   })
@@ -159,7 +127,7 @@ describe('SkillVial plugin color', () => {
 
 describe('SkillVial dimmed', () => {
   it('reduces helix emissive and glass opacity when dimmed', async () => {
-    const lit = await mount({ plugin: pluginFor('orb') })
+    const lit = await mount({ plugin: pluginFor() })
     expect(materialOf(lit, 'skillvial-helix-material')?.getAttribute('emissiveintensity')).toBe(
       '1.8'
     )
@@ -169,7 +137,7 @@ describe('SkillVial dimmed', () => {
       root?.unmount()
     })
     host?.remove()
-    const dim = await mount({ plugin: pluginFor('orb'), dimmed: true })
+    const dim = await mount({ plugin: pluginFor(), dimmed: true })
     expect(materialOf(dim, 'skillvial-helix-material')?.getAttribute('emissiveintensity')).toBe(
       '0.25'
     )

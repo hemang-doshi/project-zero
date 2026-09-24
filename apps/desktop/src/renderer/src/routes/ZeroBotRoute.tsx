@@ -1,10 +1,18 @@
 import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import { ZERO_TYPE } from '../../../shared/tokens'
+import type { ProjectListItem } from '../../../shared/ipc'
+import type { PromptSubmitPayload } from '../../../shared/ipc'
 import { Chip } from './Chip'
-import { ChatRow, ThreadList } from './ZeroBotChat'
+import { ChatRow, ThinkingGroupBlock, ThreadList } from './ZeroBotChat'
+import { parseOpenCodeTranscript, type TranscriptUsage } from './opencodeTranscript'
+import { codexUsageFromEvent, formatProviderCost } from './providerUsage'
+import { useWindows } from '../store/windows'
 import type { Tone } from './runtime.types'
 import {
   applyBridgeEvent,
+  groupThreadsByRegisteredProject,
+  groupThreadsByFolder,
+  groupVisibleItems,
   EMPTY_HARNESS_LOG,
   mergeTranscript,
   parseThreadRows,
@@ -18,7 +26,6 @@ import {
 } from './chat.model'
 import {
   HARNESS_DEFAULT_MODEL,
-  HARNESS_MODELS,
   SEND_BLOCKED_NOTICE,
   VOICE_DISABLED_NOTICE,
   bridgeEventSummary,
@@ -35,9 +42,9 @@ import {
 } from './runtime.types'
 import {
   PROVIDER_DISPLAY,
+  projectErrorMessage,
   streamingLabel,
-  summarizeExecItem,
-  summarizeToolItem,
+  toolOutcomeSummary,
   turnItemCounts
 } from './zeroBot.presentation'
 
@@ -49,6 +56,7 @@ import {
 
 const workspaceStyle: React.CSSProperties = {
   height: '100%',
+  position: 'relative',
   display: 'flex',
   flexDirection: 'row',
   alignItems: 'stretch',
@@ -65,7 +73,7 @@ const sidebarStyle: React.CSSProperties = {
   padding: '14px 12px',
   borderRight: '1px solid var(--z-line)',
   background: 'color-mix(in srgb, var(--z-card-cream) 45%, transparent)',
-  overflowY: 'auto',
+  overflow: 'hidden',
   minHeight: 0
 }
 
@@ -89,18 +97,24 @@ const transcriptStyle: React.CSSProperties = {
   flex: 1,
   display: 'flex',
   flexDirection: 'column',
-  gap: 8,
-  padding: '4px 16px 12px',
+  gap: 11,
+  padding: '6px 24px 16px',
   overflowY: 'auto',
   minHeight: 60
 }
 
 const composerStyle: React.CSSProperties = {
-  borderTop: '1px solid var(--z-line)',
-  padding: '10px 16px 14px',
   display: 'flex',
   flexDirection: 'column',
-  gap: 8,
+  gap: 8
+}
+
+const composerBox: React.CSSProperties = {
+  border: '1px solid var(--z-line)',
+  borderRadius: 10,
+  padding: '8px 10px',
+  display: 'flex',
+  flexDirection: 'column',
   background: 'var(--z-card-white)'
 }
 
@@ -128,7 +142,7 @@ const sectionLabel: React.CSSProperties = {
 
 const bodyText: React.CSSProperties = {
   fontFamily: ZERO_TYPE.body,
-  fontSize: 12.5,
+  fontSize: 13.5,
   lineHeight: 1.55,
   color: 'var(--z-ink)',
   margin: 0
@@ -137,7 +151,7 @@ const bodyText: React.CSSProperties = {
 // Machine voice: mono reserved for ids, timestamps, model ids, commands.
 const machineMeta: React.CSSProperties = {
   fontFamily: ZERO_TYPE.mono,
-  fontSize: 10,
+  fontSize: 11,
   color: 'var(--z-secondary-ink)',
   lineHeight: 1.6,
   margin: 0,
@@ -150,14 +164,6 @@ const warnNotice: React.CSSProperties = {
   color: 'var(--z-primary-authority)',
   lineHeight: 1.55,
   margin: 0
-}
-
-const providerHead: React.CSSProperties = {
-  display: 'flex',
-  alignItems: 'center',
-  justifyContent: 'space-between',
-  gap: 8,
-  minWidth: 0
 }
 
 const providerButton: React.CSSProperties = {
@@ -176,7 +182,7 @@ const providerButton: React.CSSProperties = {
 
 const providerActive: React.CSSProperties = {
   ...providerButton,
-  borderColor: 'var(--z-line)',
+  border: '1px solid var(--z-line)',
   background: 'var(--z-card-white)'
 }
 
@@ -224,12 +230,6 @@ const modelChip: React.CSSProperties = {
   cursor: 'pointer'
 }
 
-const modelSelected: React.CSSProperties = {
-  ...modelChip,
-  background: 'var(--z-marker-yellow)',
-  borderColor: 'var(--z-secondary-ink)'
-}
-
 const eventRow: React.CSSProperties = {
   display: 'grid',
   gridTemplateColumns: '90px 120px 1fr',
@@ -249,14 +249,6 @@ const eventCell: React.CSSProperties = {
   whiteSpace: 'nowrap'
 }
 
-const folderHead: React.CSSProperties = {
-  display: 'flex',
-  alignItems: 'baseline',
-  justifyContent: 'space-between',
-  gap: 8,
-  minWidth: 0
-}
-
 const sessionRow: React.CSSProperties = {
   display: 'grid',
   gridTemplateColumns: '1fr auto',
@@ -273,11 +265,11 @@ const composerInput: React.CSSProperties = {
   lineHeight: 1.5,
   color: 'var(--z-ink)',
   background: 'transparent',
-  border: '1px solid var(--z-line)',
-  borderRadius: 8,
-  padding: '8px 10px',
-  resize: 'vertical',
-  minHeight: 56,
+  border: 'none',
+  outline: 'none',
+  padding: '2px 0',
+  resize: 'none',
+  minHeight: 66,
   width: '100%',
   boxSizing: 'border-box'
 }
@@ -320,10 +312,22 @@ export function BridgeEventRow({ event }: { event: BridgeEvent }): React.JSX.Ele
   )
 }
 
-const sessionTime = (ms: number): string => {
+const sessionDate = (ms: number): string => {
   if (!Number.isFinite(ms) || ms <= 0) return '—'
   const d = new Date(ms)
-  return Number.isNaN(d.getTime()) ? '—' : d.toISOString().slice(0, 16).replace('T', ' ')
+  return Number.isNaN(d.getTime())
+    ? '—'
+    : d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+}
+
+const sessionDetails = (session: OpenCodeFolderGroup['sessions'][number]): string => {
+  const d = new Date(session.updatedAt)
+  const time = Number.isNaN(d.getTime())
+    ? 'Time unavailable'
+    : d.toISOString().slice(0, 16).replace('T', ' ')
+  return [time, session.model, session.agent]
+    .filter((value): value is string => value !== null)
+    .join(' · ')
 }
 
 const threadTime = (seconds: number): string => {
@@ -332,32 +336,66 @@ const threadTime = (seconds: number): string => {
   return Number.isNaN(d.getTime()) ? '—' : d.toISOString().slice(0, 16).replace('T', ' ')
 }
 
-export function FolderGroupList({ groups }: { groups: OpenCodeFolderGroup[] }): React.JSX.Element {
+const formatTokenCount = (value: number | null): string =>
+  value === null ? '—' : value.toLocaleString()
+
+export function FolderGroupList({
+  groups,
+  selectedId,
+  onSelect
+}: {
+  groups: OpenCodeFolderGroup[]
+  selectedId: string | null
+  onSelect: (id: string) => void
+}): React.JSX.Element {
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({})
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 10, minWidth: 0 }}>
-      {groups.map((g) => (
-        <div key={g.path} style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}>
-          <div style={folderHead}>
-            <span data-voice="human" style={{ ...sectionLabel, fontSize: 10 }}>
-              {g.folder.toUpperCase()} · {g.count}
-            </span>
-            <span data-voice="machine" style={{ ...machineMeta, textAlign: 'right' }}>
-              {g.path}
-            </span>
-          </div>
+      {groups.map((g, index) => (
+        <details
+          key={g.path}
+          className="zw-group-details"
+          open={
+            expanded[g.path] ??
+            (index === 0 || g.sessions.some((session) => session.id === selectedId))
+          }
+          onToggle={(event) => {
+            const open = event.currentTarget.open
+            setExpanded((current) => ({ ...current, [g.path]: open }))
+          }}
+        >
+          <summary title={g.path}>
+            {g.folder} · {g.count}
+            {g.sessions.some((session) => session.id === selectedId) ? ' · selected' : ''}
+          </summary>
           {g.sessions.map((s) => (
-            <div key={s.id} style={sessionRow}>
+            <button
+              key={s.id}
+              type="button"
+              style={{
+                ...sessionRow,
+                width: '100%',
+                border: 'none',
+                background: selectedId === s.id ? 'var(--z-card-white)' : 'transparent',
+                cursor: 'pointer',
+                textAlign: 'left'
+              }}
+              onClick={() => onSelect(s.id)}
+              aria-current={selectedId === s.id ? 'true' : undefined}
+            >
               <span data-voice="human" style={{ ...bodyText, fontSize: 12 }}>
                 {s.title === '' ? s.id : s.title}
               </span>
-              <span data-voice="machine" style={{ ...machineMeta, textAlign: 'right' }}>
-                {sessionTime(s.updatedAt)}
-                {s.model !== null ? ` · ${s.model}` : ''}
-                {s.agent !== null ? ` · ${s.agent}` : ''}
+              <span
+                data-voice="machine"
+                style={{ ...machineMeta, textAlign: 'right' }}
+                title={sessionDetails(s)}
+              >
+                {sessionDate(s.updatedAt)}
               </span>
-            </div>
+            </button>
           ))}
-        </div>
+        </details>
       ))}
     </div>
   )
@@ -434,11 +472,19 @@ type ThreadLane = {
   items: ChatItem[]
   dropped: number
   threadId: string | null
+  usage: TranscriptUsage | null
 }
 
-const EMPTY_LANE: ThreadLane = { rows: [], items: [], dropped: 0, threadId: null }
+const EMPTY_LANE: ThreadLane = { rows: [], items: [], dropped: 0, threadId: null, usage: null }
 
 type HarnessState = Record<Harness, ThreadLane>
+
+type PendingPermission = {
+  provider: Harness
+  requestId: string | number
+  title: string
+  allowOptionId?: string
+}
 
 const EMPTY_LANES: HarnessState = { codex: { ...EMPTY_LANE }, opencode: { ...EMPTY_LANE } }
 
@@ -458,12 +504,42 @@ export const ZeroBotRoute = memo(function ZeroBotRoute(): React.JSX.Element {
   const [inFlight, setInFlight] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
-  const [inspectorOpen, setInspectorOpen] = useState(true)
+  const [skillProposalNotice, setSkillProposalNotice] = useState<string | null>(null)
+  const [inspectorOpen, setInspectorOpen] = useState(false)
+  const [expandedProjects, setExpandedProjects] = useState<Record<string, boolean>>({})
+  const [expandedFolders, setExpandedFolders] = useState<Record<string, boolean>>({})
+  const openRoute = useWindows((state) => state.openRoute)
+  const [workspaceWidth, setWorkspaceWidth] = useState<number | null>(null)
+  const workspaceRef = useRef<HTMLDivElement>(null)
   const [composerText, setComposerText] = useState('')
+  const [draft, setDraft] = useState<{ provider: Harness; cwd: string; draftId: string } | null>(
+    null
+  )
+  const [promptBusy, setPromptBusy] = useState(false)
+  const [promptHold, setPromptHold] = useState<{
+    id: string
+    categories: string[]
+    positions: number[]
+  } | null>(null)
+  const [pendingPermission, setPendingPermission] = useState<PendingPermission | null>(null)
+  const activePromptRef = useRef<string | null>(null)
+  const [projects, setProjects] = useState<ProjectListItem[]>([])
+  const [projectsError, setProjectsError] = useState<string | null>(null)
   const lanesRef = useRef<HarnessState>(EMPTY_LANES)
   const logsRef = useRef<Record<Harness, HarnessEventLog>>(EMPTY_HARNESS_LOG)
+  const usageRef = useRef<Map<string, TranscriptUsage>>(new Map())
   const openRef = useRef<Record<Harness, string | null>>({ codex: null, opencode: null })
   const aliveRef = useRef(true)
+
+  useEffect(() => {
+    if (typeof ResizeObserver === 'undefined' || workspaceRef.current === null) return
+    const observer = new ResizeObserver(([entry]) => {
+      setWorkspaceWidth(entry.contentRect.width)
+      if (entry.contentRect.width < 820) setInspectorOpen(false)
+    })
+    observer.observe(workspaceRef.current)
+    return () => observer.disconnect()
+  }, [])
 
   useEffect(() => {
     aliveRef.current = true
@@ -472,6 +548,14 @@ export const ZeroBotRoute = memo(function ZeroBotRoute(): React.JSX.Element {
         aliveRef.current = false
       }
     }
+    void window.zero
+      .invoke('projects.list')
+      .then((value) => {
+        if (aliveRef.current && Array.isArray(value)) setProjects(value as ProjectListItem[])
+      })
+      .catch((err: unknown) => {
+        if (aliveRef.current) setProjectsError(projectErrorMessage(err))
+      })
     const refresh = (h: Harness): void => {
       window.zero
         .invoke(h === 'codex' ? 'codex.state' : 'ocp.state')
@@ -498,6 +582,21 @@ export const ZeroBotRoute = memo(function ZeroBotRoute(): React.JSX.Element {
               .catch(() => {
                 /* fail-soft: the state card still shows the live bridge */
               })
+            void window.zero
+              .invoke('codex.discover')
+              .then((value) => {
+                if (!aliveRef.current) return
+                const parsed = parseDiscovery(value)
+                if (parsed === null) return
+                setDiscovery((current) => ({ ...current, codex: parsed }))
+                setModels((current) => ({
+                  ...current,
+                  codex: parsed.models.some((model) => model.id === current.codex)
+                    ? current.codex
+                    : (parsed.models[0]?.id ?? '')
+                }))
+              })
+              .catch(() => {})
           }
           // OpenCode discovery is a local read-only store scan, not a bridge
           // probe: it runs on mount with no connection and never sends.
@@ -523,11 +622,41 @@ export const ZeroBotRoute = memo(function ZeroBotRoute(): React.JSX.Element {
     refresh('codex')
     refresh('opencode')
     const unsubscribe = window.zero.subscribe('bridge', (u) => {
-      const push = u as { harness?: unknown; event?: { method?: unknown; params?: unknown } }
+      const push = u as {
+        harness?: unknown
+        event?: { id?: unknown; method?: unknown; params?: unknown }
+      }
       const h = push.harness === 'codex' || push.harness === 'opencode' ? push.harness : null
       const method = typeof push.event?.method === 'string' ? push.event.method : null
       if (h === null || method === null || !aliveRef.current) return
       const ev: BridgeEvent = { harness: h, method, params: push.event?.params }
+      if (
+        (method === 'session/request_permission' || method.includes('requestApproval')) &&
+        (typeof push.event?.id === 'string' || typeof push.event?.id === 'number')
+      ) {
+        const permissionParams =
+          typeof push.event.params === 'object' && push.event.params !== null
+            ? (push.event.params as Record<string, unknown>)
+            : {}
+        const options = Array.isArray(permissionParams['options'])
+          ? permissionParams['options']
+          : []
+        const allow = options.find(
+          (value) =>
+            typeof value === 'object' &&
+            value !== null &&
+            (value as Record<string, unknown>)['kind'] === 'allow_once'
+        ) as Record<string, unknown> | undefined
+        setPendingPermission({
+          provider: h,
+          requestId: push.event.id,
+          title:
+            typeof permissionParams['title'] === 'string'
+              ? permissionParams['title']
+              : 'Provider requests permission for a tool action.',
+          ...(typeof allow?.['optionId'] === 'string' ? { allowOptionId: allow.optionId } : {})
+        })
+      }
       const nextLogs = pushHarnessEvent(logsRef.current, ev)
       logsRef.current = nextLogs
       setLogs(nextLogs)
@@ -536,6 +665,24 @@ export const ZeroBotRoute = memo(function ZeroBotRoute(): React.JSX.Element {
         threadId?: unknown
       } | null
       const eventThread = typeof params?.threadId === 'string' ? params.threadId : null
+      if (h === 'codex' && method === 'thread/tokenUsage/updated') {
+        const usage = codexUsageFromEvent(ev.params, Date.now())
+        if (usage !== null) {
+          const key = `codex:${usage.threadId}`
+          usageRef.current.set(key, usage)
+          if (usageRef.current.size > 200)
+            usageRef.current.delete(usageRef.current.keys().next().value as string)
+          if (openId === usage.threadId) {
+            const current = lanesRef.current.codex
+            const next: HarnessState = {
+              ...lanesRef.current,
+              codex: { ...current, usage }
+            }
+            lanesRef.current = next
+            setLanes(next)
+          }
+        }
+      }
       if (openId !== null && (eventThread === null || eventThread === openId)) {
         const lane = lanesRef.current[h]
         const applied = applyBridgeEvent(lane.items, method, ev.params)
@@ -573,7 +720,10 @@ export const ZeroBotRoute = memo(function ZeroBotRoute(): React.JSX.Element {
   const info = states[harness]
   const result = discovery[harness] ?? null
   const selectedModel = models[harness]
-  const mismatch = harnessLockWarning(selectedModel, harness)
+  const mismatch =
+    result !== null && result.models.some((model) => model.id === selectedModel)
+      ? null
+      : harnessLockWarning(selectedModel, harness)
   const lane = lanes[harness]
   const log = logs[harness]
   const shownEvents = useMemo(() => visibleBridgeEvents(log.events, harness), [log.events, harness])
@@ -599,6 +749,12 @@ export const ZeroBotRoute = memo(function ZeroBotRoute(): React.JSX.Element {
   }
 
   const openThread = (threadId: string): void => {
+    setDraft(null)
+    const selectedRow = lanesRef.current.codex.rows.find((row) => row.id === threadId)
+    if (selectedRow?.model)
+      setModels((current) => ({ ...current, codex: selectedRow.model as string }))
+    activePromptRef.current = null
+    setPromptHold(null)
     // Codex-only by construction: it reads the codex lane and the read-only
     // codex.thread.get op. Callers switch the harness focus themselves, so no
     // stale-state guard here (a harness check would read the pre-click lane).
@@ -606,7 +762,7 @@ export const ZeroBotRoute = memo(function ZeroBotRoute(): React.JSX.Element {
     const laneNow = lanesRef.current.codex
     const opened: HarnessState = {
       ...lanesRef.current,
-      codex: { ...laneNow, threadId }
+      codex: { ...laneNow, threadId, usage: usageRef.current.get(`codex:${threadId}`) ?? null }
     }
     lanesRef.current = opened
     setLanes(opened)
@@ -631,22 +787,133 @@ export const ZeroBotRoute = memo(function ZeroBotRoute(): React.JSX.Element {
       .catch((err: unknown) => setError(err instanceof Error ? err.message : String(err)))
   }
 
+  const openOpenCodeThread = (threadId: string): void => {
+    setDraft(null)
+    openRef.current = { ...openRef.current, opencode: threadId }
+    const laneNow = lanesRef.current.opencode
+    const opened: HarnessState = {
+      ...lanesRef.current,
+      opencode: {
+        ...laneNow,
+        threadId,
+        items: [],
+        dropped: 0,
+        usage: usageRef.current.get(`opencode:${threadId}`) ?? null
+      }
+    }
+    lanesRef.current = opened
+    setLanes(opened)
+    setError(null)
+    setNotice(null)
+    const saved = discovery.opencode?.folders
+      .flatMap((group) => group.sessions)
+      .find((session) => session.id === threadId)
+    if (saved?.model) setModels((current) => ({ ...current, opencode: saved.model ?? '' }))
+    if (states.opencode.state === 'live') {
+      void window.zero
+        .invoke('ocp.thread.prepare', { threadId })
+        .then((value) => {
+          if (openRef.current.opencode !== threadId || typeof value !== 'object' || value === null)
+            return
+          const prepared = value as { currentModel?: unknown; models?: unknown }
+          const providerModels = Array.isArray(prepared.models)
+            ? prepared.models.flatMap((item) => {
+                if (typeof item !== 'object' || item === null) return []
+                const row = item as { id?: unknown; name?: unknown }
+                return typeof row.id === 'string'
+                  ? [
+                      {
+                        id: row.id,
+                        label: typeof row.name === 'string' ? row.name : row.id,
+                        advertised: true
+                      }
+                    ]
+                  : []
+              })
+            : []
+          setDiscovery((current) => ({
+            ...current,
+            opencode: {
+              ...(current.opencode ?? {
+                harness: 'opencode',
+                models: [],
+                threads: [],
+                folders: [],
+                note: null
+              }),
+              models: providerModels
+            }
+          }))
+          if (typeof prepared.currentModel === 'string')
+            setModels((current) => ({ ...current, opencode: prepared.currentModel as string }))
+        })
+        .catch((err: unknown) => setError(err instanceof Error ? err.message : String(err)))
+    }
+    window.zero.invoke('ocp.thread.get', { threadId }).then(
+      (value) => {
+        if (openRef.current.opencode !== threadId) return
+        const session =
+          typeof value === 'object' && value !== null
+            ? (value as { session?: unknown }).session
+            : null
+        const parsed = parseOpenCodeTranscript(session)
+        const current = lanesRef.current.opencode
+        if (parsed.usage?.threadId === threadId)
+          usageRef.current.set(`opencode:${threadId}`, parsed.usage)
+        const next: HarnessState = {
+          ...lanesRef.current,
+          opencode: {
+            ...current,
+            items: parsed.items,
+            dropped: parsed.dropped,
+            usage: parsed.usage?.threadId === threadId ? parsed.usage : null
+          }
+        }
+        lanesRef.current = next
+        setLanes(next)
+        if (parsed.items.length === 0) setNotice('No messages in this OpenCode session yet.')
+      },
+      (err: unknown) => {
+        if (openRef.current.opencode === threadId)
+          setError(err instanceof Error ? err.message : String(err))
+      }
+    )
+  }
+
   const newConversation = (): void => {
-    // Local view only: no session/new exists on the backend, and the composer
-    // is honestly blocked, so this clears the open thread without creating
-    // anything on any provider.
+    activePromptRef.current = null
+    setPromptHold(null)
+    setError(null)
+    const currentId = openRef.current[harness]
+    const codexRow = lanesRef.current.codex.rows.find((row) => row.id === currentId)
+    const codexProject = codexRow?.projectId
+      ? projects.find((project) => project.id === codexRow.projectId)
+      : null
+    const openCodeRow = discovery.opencode?.folders
+      .flatMap((group) => group.sessions)
+      .find((session) => session.id === currentId)
+    const cwd = harness === 'codex' ? (codexRow?.cwd ?? codexProject?.path) : openCodeRow?.directory
+    if (!live || !cwd || !result?.models.some((model) => model.id === selectedModel)) {
+      setNotice(
+        'Select a connected conversation with a verified directory and advertised model before creating a new one.'
+      )
+      return
+    }
+    setDraft({
+      provider: harness,
+      cwd,
+      draftId: `draft-${Date.now()}-${Math.random().toString(36).slice(2)}`
+    })
     openRef.current = { ...openRef.current, [harness]: null }
-    const laneNow = lanesRef.current[harness]
+    const current = lanesRef.current[harness]
     const next: HarnessState = {
       ...lanesRef.current,
-      [harness]: { ...laneNow, threadId: null, items: [], dropped: 0 }
+      [harness]: { ...current, threadId: null, items: [], dropped: 0, usage: null }
     }
     lanesRef.current = next
     setLanes(next)
-    setError(null)
-    setNotice(
-      'Cleared the open view. Nothing was created on any provider — describe the work below and Zero will hold it here until sending exists.'
-    )
+    setComposerText('')
+    setNotice('New conversation draft. The provider creates a conversation when you send.')
   }
 
   const run = (action: 'connect' | 'disconnect' | 'discover'): void => {
@@ -679,23 +946,195 @@ export const ZeroBotRoute = memo(function ZeroBotRoute(): React.JSX.Element {
           // The codex-only guard lives inside loadThreads itself, so the
           // call site can delegate without duplicating the harness check.
           if (action === 'connect') void loadThreads(harness)
+          if (action === 'connect' && harness === 'codex') {
+            void window.zero
+              .invoke('codex.discover')
+              .then((value) => {
+                const parsed = parseDiscovery(value)
+                if (parsed === null) return
+                setDiscovery((current) => ({ ...current, codex: parsed }))
+                setModels((current) => ({
+                  ...current,
+                  codex: parsed.models.some((model) => model.id === current.codex)
+                    ? current.codex
+                    : (parsed.models[0]?.id ?? '')
+                }))
+              })
+              .catch(() => {})
+          }
         }
       })
       .catch((err: unknown) => setError(err instanceof Error ? err.message : String(err)))
       .finally(() => setInFlight(false))
   }
 
-  const modelOptions = Array.from(
-    new Set([...HARNESS_MODELS[harness], ...(result?.models.map((m) => m.id) ?? [])])
-  )
+  const modelOptions = result?.models.map((model) => model.id) ?? []
 
+  const codexRows = lanes.codex.rows
+  const projectThreads = useMemo(
+    () => groupThreadsByRegisteredProject(projects, codexRows),
+    [projects, codexRows]
+  )
+  const firstProjectWithRows = projectThreads.groups.findIndex((group) => group.rows.length > 0)
   const openRow = lane.rows.find((r) => r.id === lane.threadId) ?? null
+  const openProject =
+    projectThreads.groups.find(({ rows }) => rows.some((row) => row.id === openRow?.id))?.project ??
+    null
+  const canSend =
+    live &&
+    (lane.threadId !== null || draft?.provider === harness) &&
+    selectedModel !== '' &&
+    modelOptions.includes(selectedModel) &&
+    (draft?.provider === harness || harness === 'opencode' || Boolean(openProject)) &&
+    composerText.trim() !== '' &&
+    !promptBusy
+  const promptRequest = (): PromptSubmitPayload | null =>
+    draft?.provider === harness
+      ? {
+          provider: harness,
+          model: selectedModel,
+          cwd: draft.cwd,
+          draftId: draft.draftId,
+          text: composerText
+        }
+      : lane.threadId === null
+        ? null
+        : { provider: harness, model: selectedModel, threadId: lane.threadId, text: composerText }
+  const promptResult = (value: unknown, request: PromptSubmitPayload): void => {
+    const result = value as {
+      state?: string
+      turnId?: string
+      threadId?: string
+      holdId?: string
+      categories?: string[]
+      positions?: number[]
+      reason?: string
+    }
+    if (activePromptRef.current !== JSON.stringify(request)) {
+      if (result.state === 'held' && typeof result.holdId === 'string') {
+        void window.zero
+          .invoke('prompt.decide', { ...request, holdId: result.holdId, action: 'cancel' })
+          .catch(() => {})
+      }
+      setNotice(
+        result.state === 'accepted'
+          ? 'The original turn was accepted; your newer edit was not sent.'
+          : 'Prompt changed during Airlock review. Your current text was not sent; submit it again.'
+      )
+      return
+    }
+    if (result.state === 'held' && typeof result.holdId === 'string') {
+      setPromptHold({
+        id: result.holdId,
+        categories: result.categories ?? [],
+        positions: result.positions ?? []
+      })
+      setNotice('Airlock paused this prompt before provider dispatch. Review the categories below.')
+    } else if (result.state === 'accepted' && typeof result.turnId === 'string') {
+      setPromptHold(null)
+      activePromptRef.current = null
+      setComposerText((current) => (current === request.text ? '' : current))
+      setNotice('Provider accepted the turn. Completion and cost are not yet verified.')
+      if (typeof result.threadId === 'string' && draft?.provider === harness) {
+        if (harness === 'codex') {
+          void loadThreads('codex').then(() => openThread(result.threadId as string))
+        } else {
+          void window.zero.invoke('ocp.discover').then((discovered) => {
+            const parsed = parseDiscovery(discovered)
+            if (parsed !== null) setDiscovery((current) => ({ ...current, opencode: parsed }))
+            openOpenCodeThread(result.threadId as string)
+          })
+        }
+      }
+    } else {
+      setPromptHold(null)
+      if (typeof result.threadId === 'string' && draft?.provider === harness) {
+        setDraft(null)
+        openRef.current = { ...openRef.current, [harness]: result.threadId }
+        const current = lanesRef.current[harness]
+        const next: HarnessState = {
+          ...lanesRef.current,
+          [harness]: { ...current, threadId: result.threadId }
+        }
+        lanesRef.current = next
+        setLanes(next)
+        setNotice(
+          'The provider conversation was created, but the turn failed. Open the new conversation to retry; your draft is intact.'
+        )
+        if (harness === 'codex') void loadThreads('codex')
+        else
+          void window.zero.invoke('ocp.discover').then((discovered) => {
+            const parsed = parseDiscovery(discovered)
+            if (parsed !== null) setDiscovery((current) => ({ ...current, opencode: parsed }))
+          })
+      }
+      const reason = result.reason
+      if (typeof result.threadId !== 'string')
+        setNotice(
+          reason === 'dispatch-unavailable'
+            ? `${PROVIDER_DISPLAY[harness]} could not start this turn. Check the connection and selected conversation; your draft is intact.`
+            : reason === 'thread-unavailable'
+              ? 'This Codex conversation cannot be resumed in Zero. It may be active in Codex; open it there or start a new Zero conversation. Your draft is intact.'
+              : reason === 'scanner-unavailable'
+                ? 'Airlock could not screen this prompt. Nothing was sent; try again after it recovers.'
+                : reason === 'expired-or-changed'
+                  ? 'The Airlock decision expired or the draft changed. Review it and send again.'
+                  : 'Prompt was not sent. Check the text and selected destination.'
+        )
+    }
+  }
+  const submitPrompt = (): void => {
+    const request = promptRequest()
+    if (!canSend || request === null) return
+    activePromptRef.current = JSON.stringify(request)
+    setPromptBusy(true)
+    setError(null)
+    void window.zero
+      .invoke('prompt.submit', request)
+      .then((value) => promptResult(value, request))
+      .catch(() => setNotice('Prompt was not sent. The Airlock or provider is unavailable.'))
+      .finally(() => setPromptBusy(false))
+  }
+  const decidePrompt = (action: 'cancel' | 'send-once'): void => {
+    const request = promptRequest()
+    if (promptHold === null || request === null || promptBusy) return
+    const holdId = promptHold.id
+    setPromptHold(null)
+    setPromptBusy(true)
+    void window.zero
+      .invoke('prompt.decide', { ...request, holdId, action })
+      .then((value) =>
+        action === 'cancel'
+          ? setNotice('Airlock hold cancelled; nothing was sent.')
+          : promptResult(value, request)
+      )
+      .catch(() => setNotice('Prompt was not sent. The Airlock decision failed.'))
+      .finally(() => setPromptBusy(false))
+  }
+  const decidePermission = (action: 'allow-once' | 'reject'): void => {
+    const permission = pendingPermission
+    if (permission === null) return
+    setPendingPermission(null)
+    void window.zero
+      .invoke('provider.permission.decide', {
+        provider: permission.provider,
+        requestId: permission.requestId,
+        action,
+        ...(action === 'allow-once' && permission.allowOptionId
+          ? { optionId: permission.allowOptionId }
+          : {})
+      })
+      .catch((err: unknown) => setError(err instanceof Error ? err.message : String(err)))
+  }
   const activity = streamingLabel(lane.items)
+  const displayItems = useMemo(() => groupVisibleItems(lane.items), [lane.items])
   const counts = useMemo(() => turnItemCounts(lane.items), [lane.items])
   const toolItems = useMemo(
     () => lane.items.filter((i) => i.kind === 'tool' || i.kind === 'exec'),
     [lane.items]
   )
+  const toolSummary = useMemo(() => toolOutcomeSummary(lane.items), [lane.items])
+  const selectedUsage = lane.usage?.threadId === lane.threadId ? lane.usage : null
   // Context indicator from real lane data only: provider, selected model and
   // the items actually in view. Project and branch need the context-packet
   // backend (spec §§32-34), which does not exist — marked pending below.
@@ -704,14 +1143,54 @@ export const ZeroBotRoute = memo(function ZeroBotRoute(): React.JSX.Element {
       ? `${PROVIDER_DISPLAY[harness]} · ${selectedModel} · ${lane.items.length} item${lane.items.length === 1 ? '' : 's'} in this view`
       : `${PROVIDER_DISPLAY[harness]} · ${selectedModel}`
 
-  const codexRows = lanes.codex.rows
   const codexInfo = states.codex
-  const opencodeInfo = states.opencode
   const opencodeResult = discovery.opencode ?? null
+  const openOpenCodeRow =
+    opencodeResult?.folders
+      .flatMap((group) => group.sessions)
+      .find((session) => session.id === lanes.opencode.threadId) ?? null
+  const compact = workspaceWidth !== null && workspaceWidth < 620
+  const overlayInspector = workspaceWidth !== null && workspaceWidth < 1050
+
+  const proposeSkillFromWork = async (): Promise<void> => {
+    if (lane.threadId === null || lane.items.length === 0 || promptBusy) return
+    setSkillProposalNotice(null)
+    const evidence = lane.items
+      .reduce<Array<{ kind: string; command?: string; tool?: string }>>((items, item) => {
+        if (item.kind === 'exec') items.push({ kind: 'exec', command: item.command })
+        else if (item.kind === 'tool') items.push({ kind: 'tool', tool: item.tool })
+        return items
+      }, [])
+      .slice(-400)
+    try {
+      const result = await window.zero.invoke('skills.learning.propose', {
+        provider: harness,
+        sourceId: lane.threadId,
+        items: evidence
+      })
+      setSkillProposalNotice(
+        typeof result === 'object' &&
+          result !== null &&
+          typeof (result as Record<string, unknown>).id === 'string'
+          ? 'Draft proposal saved. Review and edit it in Skills Lab.'
+          : 'This thread does not contain enough command or tool evidence for a skill draft.'
+      )
+    } catch {
+      setSkillProposalNotice('Could not create a local skill proposal.')
+    }
+  }
 
   return (
-    <div className="zw-route" data-region="workspace" style={workspaceStyle}>
-      <aside data-region="sidebar" style={sidebarStyle} aria-label="Conversations">
+    <div ref={workspaceRef} className="zw-route" data-region="workspace" style={workspaceStyle}>
+      <aside
+        data-region="sidebar"
+        style={
+          compact
+            ? { ...sidebarStyle, width: '42%', minWidth: 168, maxWidth: 264, flexShrink: 1 }
+            : sidebarStyle
+        }
+        aria-label="Conversations"
+      >
         <span data-voice="human" style={sectionLabel}>
           PROJECT ZERO — ZERO BOT
         </span>
@@ -719,56 +1198,140 @@ export const ZeroBotRoute = memo(function ZeroBotRoute(): React.JSX.Element {
           New conversation
         </button>
 
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0 }}>
-          <div style={providerHead}>
-            <button
-              type="button"
-              style={harness === 'codex' ? providerActive : providerButton}
-              aria-pressed={harness === 'codex'}
-              onClick={() => setHarness('codex')}
-            >
-              Codex
-            </button>
-            <Chip label={STATE_LABEL[codexInfo.state]} tone={STATE_TONE[codexInfo.state]} />
-          </div>
-          <span data-voice="human" style={sectionLabel}>
-            DISCOVERY · THREADS
-          </span>
-          {codexRows.length === 0 ? (
-            <EmptyState
-              title="No conversations yet"
-              explanation={
-                codexInfo.state === 'live'
-                  ? 'Connected — the read-only thread list returned no threads yet.'
-                  : 'Connect Codex to load the read-only thread list.'
-              }
-            />
-          ) : (
-            <ThreadList
-              rows={codexRows}
-              selectedId={lanes.codex.threadId}
-              onSelect={(id) => {
-                setHarness('codex')
-                openThread(id)
-              }}
-            />
-          )}
+        <div
+          role="group"
+          aria-label="Conversation source"
+          style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 4 }}
+        >
+          <button
+            type="button"
+            style={harness === 'codex' ? providerActive : providerButton}
+            aria-pressed={harness === 'codex'}
+            onClick={() => {
+              activePromptRef.current = null
+              setPromptHold(null)
+              setHarness('codex')
+            }}
+          >
+            Projects
+          </button>
+          <button
+            type="button"
+            style={harness === 'opencode' ? providerActive : providerButton}
+            aria-pressed={harness === 'opencode'}
+            onClick={() => {
+              activePromptRef.current = null
+              setPromptHold(null)
+              setHarness('opencode')
+            }}
+          >
+            OpenCode
+          </button>
         </div>
 
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0 }}>
-          <div style={providerHead}>
-            <button
-              type="button"
-              style={harness === 'opencode' ? providerActive : providerButton}
-              aria-pressed={harness === 'opencode'}
-              onClick={() => setHarness('opencode')}
-            >
-              OpenCode
-            </button>
-            <Chip label={STATE_LABEL[opencodeInfo.state]} tone={STATE_TONE[opencodeInfo.state]} />
-          </div>
-          {opencodeResult !== null && opencodeResult.folders.length > 0 ? (
-            <FolderGroupList groups={opencodeResult.folders} />
+        <div
+          style={{
+            flex: 1,
+            overflowY: 'auto',
+            minHeight: 0,
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 10
+          }}
+        >
+          {harness === 'codex' ? (
+            <>
+              <span data-voice="human" style={sectionLabel}>
+                REGISTERED PROJECTS
+              </span>
+              {projectsError !== null ? (
+                <details className="zw-group-details">
+                  <summary style={warnNotice}>Projects unavailable · Zero runtime offline</summary>
+                  <p style={warnNotice}>{projectsError}</p>
+                </details>
+              ) : null}
+              {projectThreads.groups.map(({ project, rows }, projectIndex) => (
+                <details
+                  key={project.id}
+                  aria-label={`Project ${project.name}`}
+                  className="zw-group-details"
+                  open={
+                    expandedProjects[project.id] ??
+                    (projectIndex === firstProjectWithRows ||
+                      rows.some((row) => row.id === lanes.codex.threadId))
+                  }
+                  onToggle={(event) => {
+                    const open = event.currentTarget.open
+                    setExpandedProjects((current) => ({ ...current, [project.id]: open }))
+                  }}
+                >
+                  <summary data-voice="human" title={project.path}>
+                    {project.name} · {rows.length}
+                    {rows.some((row) => row.id === lanes.codex.threadId) ? ' · selected' : ''}
+                  </summary>
+                  {groupThreadsByFolder(project.path, rows).map((folder) => (
+                    <details
+                      key={folder.path ?? 'unknown'}
+                      className="zw-group-details zw-folder-details"
+                      open={
+                        expandedFolders[`${project.id}:${folder.path}`] ??
+                        folder.rows.some((row) => row.id === lanes.codex.threadId)
+                      }
+                      onToggle={(event) => {
+                        const open = event.currentTarget.open
+                        setExpandedFolders((current) => ({
+                          ...current,
+                          [`${project.id}:${folder.path}`]: open
+                        }))
+                      }}
+                    >
+                      <summary title={folder.path ?? undefined}>
+                        {folder.label} · {folder.rows.length}
+                      </summary>
+                      <ThreadList
+                        rows={folder.rows}
+                        selectedId={lanes.codex.threadId}
+                        onSelect={openThread}
+                      />
+                    </details>
+                  ))}
+                </details>
+              ))}
+              {projects.length === 0 && projectsError === null ? (
+                <p style={bodyText}>No registered projects yet.</p>
+              ) : null}
+              <details
+                aria-label="Unprojected conversations"
+                className="zw-group-details"
+                style={{ marginTop: 'auto' }}
+              >
+                <summary data-voice="human">
+                  UNPROJECTED · {projectThreads.unprojected.length}
+                </summary>
+                {projectThreads.unprojected.length > 0 ? (
+                  <ThreadList
+                    rows={projectThreads.unprojected}
+                    selectedId={lanes.codex.threadId}
+                    onSelect={openThread}
+                  />
+                ) : (
+                  <EmptyState
+                    title="No conversations yet"
+                    explanation={
+                      codexInfo.state === 'live'
+                        ? 'Connected — no unprojected threads in the read-only list.'
+                        : 'Connect Codex to load the read-only thread list.'
+                    }
+                  />
+                )}
+              </details>
+            </>
+          ) : opencodeResult !== null && opencodeResult.folders.length > 0 ? (
+            <FolderGroupList
+              groups={opencodeResult.folders}
+              selectedId={lanes.opencode.threadId}
+              onSelect={openOpenCodeThread}
+            />
           ) : (
             <EmptyState
               title={
@@ -786,7 +1349,7 @@ export const ZeroBotRoute = memo(function ZeroBotRoute(): React.JSX.Element {
           )}
         </div>
 
-        <div style={{ marginTop: 'auto', display: 'flex', flexDirection: 'column', gap: 6 }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, flexShrink: 0 }}>
           <span data-voice="human" style={sectionLabel}>
             {harness === 'codex' ? 'CODEX APP-SERVER' : 'OPENCODE ACP'} BRIDGE
           </span>
@@ -836,14 +1399,28 @@ export const ZeroBotRoute = memo(function ZeroBotRoute(): React.JSX.Element {
       </aside>
 
       <main data-region="canvas" style={canvasStyle} aria-label="Conversation">
-        <div style={canvasHead}>
+        <div
+          style={
+            compact
+              ? {
+                  ...canvasHead,
+                  alignItems: 'flex-start',
+                  flexWrap: 'wrap',
+                  padding: '10px 10px 6px'
+                }
+              : canvasHead
+          }
+        >
           <div style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}>
             <span data-voice="human" style={sectionLabel}>
               CONVERSATION · {harness.toUpperCase()}
             </span>
             {lane.threadId !== null ? (
-              <span data-voice="human" style={{ ...bodyText, fontWeight: 700 }}>
-                {openRow !== null ? threadTitle(openRow) : lane.threadId}
+              <span
+                data-voice="human"
+                style={{ ...bodyText, fontWeight: 700, overflowWrap: 'anywhere' }}
+              >
+                {openRow !== null ? threadTitle(openRow) : openOpenCodeRow?.title || lane.threadId}
               </span>
             ) : null}
             {activity !== null ? (
@@ -864,6 +1441,7 @@ export const ZeroBotRoute = memo(function ZeroBotRoute(): React.JSX.Element {
               type="button"
               style={actionButton}
               aria-expanded={inspectorOpen}
+              aria-controls="turn-inspector"
               onClick={() => setInspectorOpen((v) => !v)}
             >
               {inspectorOpen ? 'Hide inspector' : 'Show inspector'}
@@ -871,7 +1449,24 @@ export const ZeroBotRoute = memo(function ZeroBotRoute(): React.JSX.Element {
           </div>
         </div>
 
-        <div style={transcriptStyle}>
+        <div className="zw-transcript" style={transcriptStyle}>
+          {pendingPermission !== null ? (
+            <div role="alert" aria-label="Provider permission" style={warnNotice}>
+              <p>{pendingPermission.title}</p>
+              <button type="button" onClick={() => decidePermission('reject')}>
+                Reject
+              </button>
+              <button
+                type="button"
+                disabled={
+                  pendingPermission.provider === 'opencode' && !pendingPermission.allowOptionId
+                }
+                onClick={() => decidePermission('allow-once')}
+              >
+                Allow once
+              </button>
+            </div>
+          ) : null}
           {error !== null ? (
             <ErrorPanel
               harness={harness}
@@ -885,25 +1480,29 @@ export const ZeroBotRoute = memo(function ZeroBotRoute(): React.JSX.Element {
               title="No conversation open"
               explanation={
                 harness === 'opencode'
-                  ? 'OpenCode sessions are listed on the left. This build has no transcript read for them yet, so they stay labels.'
+                  ? 'Choose an OpenCode session on the left to read its saved messages and tool calls.'
                   : 'Choose a thread on the left to read it. Live turns append here while the bridge streams.'
               }
               technical={
                 harness === 'codex'
                   ? 'thread/list + thread/read · read-only · bounded to the last 400 items'
-                  : 'local session store · read-only · no transcript read in this build'
+                  : 'local session store + sanitized CLI export · read-only · bounded to the last 400 items'
               }
             />
           ) : (
             <>
-              {lane.items.map((item, n) => (
-                <ChatRow
-                  key={item.id === '' ? `${item.kind}-anon-${n}` : item.id}
-                  item={item}
-                  harness={harness}
-                  model={openRow?.model ?? null}
-                />
-              ))}
+              {displayItems.map((item, n) =>
+                item.kind === 'thinking-group' ? (
+                  <ThinkingGroupBlock key={item.id} items={item.items} />
+                ) : (
+                  <ChatRow
+                    key={item.id === '' ? `${item.kind}-anon-${n}` : item.id}
+                    item={item}
+                    harness={harness}
+                    model={openRow?.model ?? null}
+                  />
+                )
+              )}
               {lane.dropped > 0 ? (
                 <p data-voice="human" style={bodyText}>
                   +{lane.dropped} earlier item(s) kept out of this bounded view.
@@ -918,7 +1517,7 @@ export const ZeroBotRoute = memo(function ZeroBotRoute(): React.JSX.Element {
           ) : null}
         </div>
 
-        <div data-region="composer" style={composerStyle}>
+        <div className="zw-composer-shell" data-region="composer" style={composerStyle}>
           <div
             style={{
               display: 'flex',
@@ -934,145 +1533,295 @@ export const ZeroBotRoute = memo(function ZeroBotRoute(): React.JSX.Element {
               {contextLine}
             </span>
           </div>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }} aria-label="Model selector">
-            {modelOptions.map((m) => (
-              <button
-                key={m}
-                type="button"
-                style={selectedModel === m ? modelSelected : modelChip}
-                aria-pressed={selectedModel === m}
-                onClick={() => setModels((s) => ({ ...s, [harness]: m }))}
-              >
-                {m}
-              </button>
-            ))}
-          </div>
           {mismatch !== null ? (
             <p data-voice="human" style={warnNotice}>
               {mismatch} Mirror: {mirrorLabel(harness)}
             </p>
           ) : null}
-          <textarea
-            data-voice="human"
-            style={composerInput}
-            rows={3}
-            value={composerText}
-            onChange={(e) => setComposerText(e.target.value)}
-            placeholder="Describe the work for Zero…"
-            aria-label="Message Zero"
-          />
-          <p data-voice="human" style={bodyText}>
-            {SEND_BLOCKED_NOTICE}
-          </p>
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-            <button type="button" style={disabledSend} disabled aria-label="Send turn">
-              Send
-            </button>
-            <button type="button" style={disabledAction} disabled aria-label="Voice input">
-              Voice
-            </button>
+          <div style={composerBox}>
+            <textarea
+              data-voice="human"
+              style={composerInput}
+              rows={3}
+              value={composerText}
+              onChange={(e) => {
+                activePromptRef.current = null
+                setPromptHold(null)
+                setComposerText(e.target.value)
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && e.metaKey) {
+                  e.preventDefault()
+                  if (canSend && promptHold === null) submitPrompt()
+                  else setNotice(SEND_BLOCKED_NOTICE)
+                }
+              }}
+              placeholder="Describe the work for Zero…"
+              aria-label="Message Zero"
+            />
+            <div
+              style={{ display: 'flex', gap: 8, alignItems: 'center', justifyContent: 'flex-end' }}
+            >
+              <select
+                aria-label="Model selector"
+                style={{
+                  ...modelChip,
+                  borderRadius: 6,
+                  maxWidth: compact ? 132 : 180,
+                  minWidth: 0,
+                  flex: '1 1 100px'
+                }}
+                value={selectedModel}
+                onChange={(e) => {
+                  activePromptRef.current = null
+                  setPromptHold(null)
+                  setModels((s) => ({ ...s, [harness]: e.target.value }))
+                }}
+              >
+                {modelOptions.length === 0 && selectedModel === '' ? (
+                  <option value="" disabled>
+                    No advertised models
+                  </option>
+                ) : null}
+                {selectedModel !== '' && !modelOptions.includes(selectedModel) ? (
+                  <option value={selectedModel} disabled>
+                    {selectedModel} · unavailable
+                  </option>
+                ) : null}
+                {result?.models.map((model) => (
+                  <option key={model.id} value={model.id}>
+                    {model.label}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                style={disabledAction}
+                disabled
+                aria-label="Voice input"
+                title={VOICE_DISABLED_NOTICE}
+              >
+                <svg
+                  aria-hidden="true"
+                  width="16"
+                  height="16"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                >
+                  <rect x="9" y="2" width="6" height="12" rx="3" />
+                  <path d="M5 10a7 7 0 0 0 14 0M12 17v5m-4 0h8" />
+                </svg>
+              </button>
+              <button
+                type="button"
+                style={canSend && promptHold === null ? sendButton : disabledSend}
+                disabled={!canSend || promptHold !== null}
+                onClick={submitPrompt}
+                aria-label="Send turn"
+                title={canSend ? 'Send through Airlock' : SEND_BLOCKED_NOTICE}
+              >
+                <svg
+                  aria-hidden="true"
+                  width="16"
+                  height="16"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                >
+                  <path d="M12 19V5m-6 6 6-6 6 6" />
+                </svg>
+              </button>
+            </div>
           </div>
-          <p data-voice="human" style={bodyText}>
-            {VOICE_DISABLED_NOTICE}
-          </p>
+          {promptHold !== null ? (
+            <div role="alert" aria-label="Airlock hold" style={warnNotice}>
+              <p>
+                Sensitive data detected: {promptHold.categories.join(', ')}. Positions:{' '}
+                {promptHold.positions.join(', ')}. No prompt has been sent.
+              </p>
+              <button type="button" onClick={() => decidePrompt('cancel')} disabled={promptBusy}>
+                Cancel
+              </button>
+              <button type="button" onClick={() => decidePrompt('send-once')} disabled={promptBusy}>
+                Send once
+              </button>
+            </div>
+          ) : (
+            <p data-voice="human" style={bodyText}>
+              {live && (harness === 'opencode' || Boolean(openProject))
+                ? 'Send runs through the local Airlock. Sensitive prompts pause for approval.'
+                : SEND_BLOCKED_NOTICE}
+            </p>
+          )}
         </div>
       </main>
 
-      {inspectorOpen ? (
-        <aside data-region="inspector" style={inspectorStyle} aria-label="Turn inspector">
+      <aside
+        id="turn-inspector"
+        className={`zw-inspector${inspectorOpen ? '' : ' is-collapsed'}`}
+        data-region="inspector"
+        style={{
+          ...inspectorStyle,
+          width: compact ? 240 : 288,
+          ...(overlayInspector
+            ? {
+                position: 'absolute',
+                right: 0,
+                top: 0,
+                bottom: 0,
+                zIndex: 5,
+                background: 'var(--z-card-cream)',
+                boxShadow: inspectorOpen ? '-12px 0 30px rgb(0 0 0 / 12%)' : 'none'
+              }
+            : {})
+        }}
+        aria-label="Turn inspector"
+        aria-hidden={!inspectorOpen}
+        inert={!inspectorOpen}
+      >
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <span data-voice="human" style={sectionLabel}>
-            INSPECTOR · TURN DETAILS
+            INSPECTOR
           </span>
-          {openRow !== null ? (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}>
-              <p data-voice="human" style={{ ...bodyText, fontWeight: 700 }}>
-                {threadTitle(openRow)}
-              </p>
-              <p data-voice="machine" style={machineMeta}>
-                {openRow.id}
-              </p>
-              <p data-voice="machine" style={machineMeta}>
-                {threadTime(threadTimestamp(openRow))}
-                {openRow.model !== null ? ` · ${openRow.model}` : ''}
-                {openRow.status !== '' ? ` · ${openRow.status}` : ''}
-              </p>
-            </div>
-          ) : (
-            <EmptyState
-              title="No turn selected"
-              explanation="Open a thread to inspect its details, tool calls and context here."
-            />
-          )}
-
-          <span data-voice="human" style={sectionLabel}>
-            TOOLS · {toolItems.length}
-          </span>
-          {toolItems.length === 0 ? (
-            <p data-voice="human" style={bodyText}>
-              No tool calls in this turn yet.
+          {overlayInspector ? (
+            <button type="button" style={actionButton} onClick={() => setInspectorOpen(false)}>
+              Close
+            </button>
+          ) : null}
+        </div>
+        {openRow !== null ? (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}>
+            <p data-voice="human" style={{ ...bodyText, fontWeight: 700 }}>
+              {threadTitle(openRow)}
             </p>
-          ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0 }}>
-              {toolItems.map((item, n) => (
-                <p
-                  key={item.id === '' ? `tool-anon-${n}` : item.id}
-                  data-voice="human"
-                  style={{ ...bodyText, fontSize: 12 }}
-                >
-                  {item.kind === 'exec' ? summarizeExecItem(item) : summarizeToolItem(item)}
+          </div>
+        ) : (
+          <EmptyState
+            title="No turn selected"
+            explanation="Open a thread to inspect its details, tool calls and context here."
+          />
+        )}
+
+        <span data-voice="human" style={sectionLabel}>
+          TOOLS · {toolItems.length}
+        </span>
+        {toolItems.length === 0 ? (
+          <p data-voice="human" style={bodyText}>
+            No tool calls in this turn yet.
+          </p>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0 }}>
+            <p data-voice="human" style={{ ...bodyText, fontSize: 12 }}>
+              {toolSummary.completed} completed · {toolSummary.failed} failed ·{' '}
+              {toolSummary.running} running
+            </p>
+            <details>
+              <summary data-voice="human" style={{ ...bodyText, cursor: 'pointer' }}>
+                Calls by tool
+              </summary>
+              {toolSummary.groups.map((group) => (
+                <p key={group.name} data-voice="human" style={{ ...bodyText, fontSize: 12 }}>
+                  {group.name} · {group.count}
                 </p>
               ))}
-            </div>
-          )}
+            </details>
+          </div>
+        )}
 
-          <span data-voice="human" style={sectionLabel}>
-            CONTEXT
-          </span>
-          <p data-voice="human" style={bodyText}>
-            {counts.messages} message{counts.messages === 1 ? '' : 's'} · {counts.thinking} thinking
-            · {counts.tools} tool call{counts.tools === 1 ? '' : 's'}
-            {counts.notices > 0
-              ? ` · ${counts.notices} protocol note${counts.notices === 1 ? '' : 's'}`
+        <span data-voice="human" style={sectionLabel}>
+          USAGE
+        </span>
+        <p data-voice="human" style={bodyText}>
+          {selectedUsage !== null
+            ? `${formatTokenCount(selectedUsage.input)} input · ${formatTokenCount(selectedUsage.output)} output · ${formatTokenCount(selectedUsage.total)} total`
+            : 'No verified token totals for this conversation yet.'}
+        </p>
+        {selectedUsage !== null ? (
+          <p data-voice="machine" style={machineMeta}>
+            {formatTokenCount(selectedUsage.cachedInput)} cached input ·{' '}
+            {formatTokenCount(selectedUsage.reasoningOutput)} reasoning output
+            {formatProviderCost(selectedUsage.cost) !== null
+              ? ` · provider cost ${formatProviderCost(selectedUsage.cost)}`
               : ''}
+            <br />
+            {selectedUsage.source === 'codex-live' ? 'Codex live' : 'OpenCode saved'} ·{' '}
+            {new Date(selectedUsage.observedAt).toLocaleTimeString()}
           </p>
-          {lane.dropped > 0 ? (
-            <p data-voice="human" style={bodyText}>
-              +{lane.dropped} earlier item(s) beyond the bounded view.
+        ) : null}
+
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <span data-voice="human" style={sectionLabel}>
+            AIRLOCK · {promptHold !== null ? 'Held' : live ? 'Active' : 'Unavailable'}
+          </span>
+          <button type="button" style={actionButton} onClick={() => openRoute('airlock')}>
+            History
+          </button>
+        </div>
+
+        <details>
+          <summary data-voice="human" style={{ ...bodyText, cursor: 'pointer' }}>
+            Details
+          </summary>
+          {openRow !== null ? (
+            <p data-voice="machine" style={machineMeta}>
+              Task {openRow.id} · {threadTime(threadTimestamp(openRow))}
+              {openRow.status !== '' ? ` · ${openRow.status}` : ''}
             </p>
           ) : null}
           <p data-voice="human" style={bodyText}>
-            Project and branch context, provider handoff and automatic routing are designed but
-            pending — this build has no context-packet backend, so every turn stays inside its own
-            provider thread.
+            {PROVIDER_DISPLAY[harness]} · {selectedModel} · {openProject?.name ?? 'No project'}
           </p>
-
-          <span data-voice="human" style={sectionLabel}>
-            CONVERSATION · BRIDGE EVENTS
-          </span>
-          {shownEvents.length === 0 ? (
-            <p data-voice="human" style={bodyText}>
-              {live
-                ? 'Connected; no bridge event has streamed into this window yet.'
-                : 'No bridge events in this window yet. Connect manually to surface streamed protocol state.'}
-            </p>
-          ) : (
-            <>
-              {shownEvents.map((e, i) => (
-                <BridgeEventRow key={`${e.harness}-${i}`} event={e} />
-              ))}
-              {log.dropped > 0 ? (
-                <p data-voice="human" style={bodyText}>
-                  +{log.dropped} older event(s) kept out of bounded {harness} memory.
+          <p data-voice="human" style={bodyText}>
+            {counts.messages} messages · {counts.thinking} reasoning items · {counts.tools} tools
+            {counts.notices > 0 ? ` · ${counts.notices} protocol notes` : ''}
+          </p>
+          {lane.threadId !== null ? (
+            <details>
+              <summary data-voice="human" style={{ ...bodyText, cursor: 'pointer' }}>
+                Skill learning
+              </summary>
+              <p data-voice="human" style={bodyText}>
+                Create a local editable draft from this selected transcript. Zero keeps only command
+                and tool names.
+              </p>
+              <button
+                type="button"
+                style={actionButton}
+                disabled={lane.items.length === 0 || promptBusy}
+                onClick={() => void proposeSkillFromWork()}
+              >
+                Propose skill from this work
+              </button>
+              {skillProposalNotice !== null ? (
+                <p role="status" style={bodyText}>
+                  {skillProposalNotice}
                 </p>
               ) : null}
-            </>
-          )}
-          <p data-voice="human" style={bodyText}>
-            Events are retained bounded memory, never a live or actionable run while the bridge is
-            not connected.
-          </p>
-        </aside>
-      ) : null}
+            </details>
+          ) : null}
+          {lane.dropped > 0 ? (
+            <p data-voice="human" style={bodyText}>
+              +{lane.dropped} earlier items outside this view
+            </p>
+          ) : null}
+          <details>
+            <summary data-voice="human" style={{ ...bodyText, cursor: 'pointer' }}>
+              Bridge events · {shownEvents.length}
+            </summary>
+            {shownEvents.map((event, index) => (
+              <BridgeEventRow key={`${event.harness}-${index}`} event={event} />
+            ))}
+            {log.dropped > 0 ? (
+              <p data-voice="human" style={bodyText}>
+                +{log.dropped} older events outside this view
+              </p>
+            ) : null}
+          </details>
+        </details>
+      </aside>
     </div>
   )
 })

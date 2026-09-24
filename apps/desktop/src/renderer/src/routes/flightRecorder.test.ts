@@ -17,7 +17,7 @@ const row = (overrides: Partial<FlightRow>): FlightRow => ({
   id: 'x',
   source: 'event',
   seq: 1,
-  time: '2026-01-01T00:00:00Z',
+  time: '2026-09-11T06:00:08.164134Z',
   channel: 'entity.changed',
   actor: 'zerod',
   outcome: 'RECORDED',
@@ -161,10 +161,10 @@ describe('parseSnapshot flight fields', () => {
     expect(snapshot?.events).toHaveLength(100)
     expect(snapshot?.audit).toHaveLength(100)
     expect(snapshot?.events[0]).toEqual({
-      seq: 1,
-      id: 'sample-event-001',
+      seq: 191990,
+      id: '1789106408161-7edd0c1b8e1b75da7ca539d5',
       kind: 'entity.changed',
-      time: '2026-01-01T00:00:00Z'
+      time: '2026-09-11T06:00:08.164134Z'
     })
   })
 

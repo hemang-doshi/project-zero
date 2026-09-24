@@ -7,6 +7,7 @@ import {
   ChatRow,
   ExecBlock,
   ThinkingBlock,
+  ThinkingGroupBlock,
   ThreadList,
   ToolBlock,
   type ThinkingItem
@@ -86,6 +87,26 @@ const rows: ThreadRow[] = [
 ]
 
 describe('ThinkingBlock', () => {
+  it('shows consecutive provider notes as one keyboard-accessible disclosure', () => {
+    mount(
+      createElement(ThinkingGroupBlock, {
+        items: [
+          { kind: 'thinking', id: 'r0', text: '', summary: '' },
+          thinking,
+          { kind: 'thinking', id: 'r2', text: 'second private detail', summary: 'Checked files' }
+        ]
+      })
+    )
+    const button = host?.querySelector('button')
+    expect(host?.querySelectorAll('button')).toHaveLength(1)
+    expect(button?.getAttribute('aria-expanded')).toBe('false')
+    expect(host?.innerHTML).not.toContain('raw internal reasoning text')
+    expect(host?.innerHTML).not.toContain('second private detail')
+    act(() => button?.dispatchEvent(new MouseEvent('click', { bubbles: true })))
+    expect(button?.getAttribute('aria-expanded')).toBe('true')
+    expect(host?.textContent).toContain('raw internal reasoning text')
+    expect(host?.textContent).toContain('second private detail')
+  })
   it('hides reasoning by default behind a collapsed Thinking row', () => {
     const html = mount(createElement(ThinkingBlock, { item: thinking }))
     expect(html).toContain('Thinking')
@@ -107,6 +128,14 @@ describe('ThinkingBlock', () => {
       host?.querySelector('button')?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
     })
     expect(host?.innerHTML).not.toContain('raw internal reasoning text')
+  })
+
+  it('labels provider-withheld reasoning without implying a missing generated summary', () => {
+    const html = mount(
+      createElement(ThinkingBlock, { item: { ...thinking, text: '', summary: '' } })
+    )
+    expect(html).toContain('reasoning unavailable')
+    expect(html).not.toContain('no summary available')
   })
 })
 
@@ -145,6 +174,8 @@ describe('ExecBlock', () => {
     })
     expect(host?.innerHTML).toContain('npm test')
     expect(host?.innerHTML).toContain('all green')
+    expect(host?.querySelector('[role="region"][aria-label="Terminal output"]')).not.toBeNull()
+    expect(host?.querySelector('.zw-terminal-command')?.textContent).toBe('$ npm test')
   })
 
   it('marks a failed execution honestly', () => {
@@ -206,13 +237,16 @@ describe('ChatRow Zero attribution', () => {
 })
 
 describe('ThreadList', () => {
-  it('renders titled, untitled and preview rows with timestamps and selection', () => {
+  it('keeps thread titles prominent and metadata compact', () => {
     const onSelect = vi.fn()
     const html = mount(createElement(ThreadList, { rows, selectedId: 't-new', onSelect }))
     expect(html).toContain('newest one')
     expect(html).toContain('untitled')
-    expect(html).toContain('2025')
     const first = host?.querySelector<HTMLButtonElement>('button')
+    const metadata = first?.querySelector('[data-voice="machine"]')
+    expect(metadata?.textContent).not.toContain('2025')
+    expect(metadata?.textContent).not.toContain('gpt-5.6-sol')
+    expect(metadata?.textContent?.length).toBeLessThanOrEqual(10)
     act(() => {
       first?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
     })

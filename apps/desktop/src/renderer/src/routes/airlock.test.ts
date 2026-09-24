@@ -14,7 +14,7 @@ import {
   type CockpitApproval
 } from './runtime.types'
 
-const NOW = Date.parse('2026-01-01T06:00:00.000Z')
+const NOW = Date.parse('2026-09-11T06:00:00.000Z')
 
 const approval = (overrides: Partial<CockpitApproval>): CockpitApproval => ({
   id: 'inv-1',
@@ -22,7 +22,7 @@ const approval = (overrides: Partial<CockpitApproval>): CockpitApproval => ({
   capability: 'display.render',
   hash: 'h1',
   status: 'WAITING_APPROVAL',
-  deadline: '2026-01-01T06:01:00.000Z',
+  deadline: '2026-09-11T06:01:00.000Z',
   input: { project: 'project-zero' },
   input_omitted: false,
   ...overrides
@@ -31,7 +31,7 @@ const approval = (overrides: Partial<CockpitApproval>): CockpitApproval => ({
 const snapshotWith = (a: CockpitApproval): unknown => ({
   version: '0.1',
   revision: 5,
-  timestamp: '2026-01-01T06:00:00.000Z',
+  timestamp: '2026-09-11T06:00:00.000Z',
   session: {
     id: 's1',
     project_id: 'p1',
@@ -47,7 +47,7 @@ const snapshotWith = (a: CockpitApproval): unknown => ({
   audit: [
     {
       seq: 10,
-      time: '2026-01-01T05:00:00.000Z',
+      time: '2026-09-11T05:00:00.000Z',
       action: 'approvals.approve',
       decision: 'APPROVED',
       principal: 'owner',
@@ -56,7 +56,7 @@ const snapshotWith = (a: CockpitApproval): unknown => ({
     },
     {
       seq: 11,
-      time: '2026-01-01T05:00:01.000Z',
+      time: '2026-09-11T05:00:01.000Z',
       action: 'integration.observed',
       decision: 'SUCCEEDED',
       principal: 'zerod',
@@ -120,7 +120,7 @@ describe('approval authority', () => {
 
   it('reads expiry from the RFC3339 deadline', () => {
     expect(approvalExpired(approval({}), NOW)).toBe(false)
-    expect(approvalExpired(approval({ deadline: '2026-01-01T05:59:00.000Z' }), NOW)).toBe(true)
+    expect(approvalExpired(approval({ deadline: '2026-09-11T05:59:00.000Z' }), NOW)).toBe(true)
     expect(approvalExpired(approval({ deadline: 'unparseable' }), NOW)).toBe(false)
   })
 
@@ -136,7 +136,7 @@ describe('approval authority', () => {
       canDeny: false,
       reason: expect.stringContaining('retained snapshot evidence')
     })
-    const expired = approval({ deadline: '2026-01-01T05:59:00.000Z' })
+    const expired = approval({ deadline: '2026-09-11T05:59:00.000Z' })
     expect(approvalActions('live', expired, NOW)).toEqual({
       canApprove: false,
       canDeny: true,
@@ -149,7 +149,7 @@ describe('approval authority', () => {
 
   it('names the freshness honestly: retained wins over expired while not live', () => {
     expect(approvalFreshness('live', approval({}), NOW)).toBe('live')
-    expect(approvalFreshness('live', approval({ deadline: '2026-01-01T05:59:00.000Z' }), NOW)).toBe(
+    expect(approvalFreshness('live', approval({ deadline: '2026-09-11T05:59:00.000Z' }), NOW)).toBe(
       'expired'
     )
     expect(approvalFreshness('offline', approval({}), NOW)).toBe('retained')
@@ -163,7 +163,7 @@ describe('approval authority', () => {
       'omits one or more input fields'
     )
     expect(
-      approvalNotice('live', approval({ deadline: '2026-01-01T05:59:00.000Z' }), NOW)
+      approvalNotice('live', approval({ deadline: '2026-09-11T05:59:00.000Z' }), NOW)
     ).toContain('deadline has passed')
   })
 })
@@ -214,7 +214,7 @@ describe('AirlockApprovalRow', () => {
   it('disables approve but keeps the daemon deny for an expired live approval', () => {
     const html = renderToString(
       createElement(AirlockApprovalRow, {
-        item: approval({ deadline: '2026-01-01T05:59:00.000Z' }),
+        item: approval({ deadline: '2026-09-11T05:59:00.000Z' }),
         conn: 'live',
         now: NOW
       })

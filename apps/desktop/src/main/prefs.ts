@@ -12,6 +12,7 @@ import { isSnapEntry, type SnapEntry } from '../shared/desktop-snap'
 
 export type Prefs = {
   version: 1
+  theme: 'light' | 'dark'
   windows: Record<string, Rect>
   snaps: Record<string, SnapEntry>
   icons: Record<string, { x: number; y: number }>
@@ -29,6 +30,7 @@ export type Prefs = {
 export function defaultPrefs(): Prefs {
   return {
     version: 1,
+    theme: 'light',
     windows: {
       desk: { ...DEFAULT_SIZE, x: 28, y: 28 },
       runtime: { ...DEFAULT_SIZE, x: 56, y: 56 }
@@ -96,6 +98,7 @@ export function applyPrefsPatch(prefs: Prefs, patch: unknown): Prefs {
   }
   const p = patch as Record<string, unknown>
   const next: Prefs = { ...prefs }
+  if (p.theme === 'light' || p.theme === 'dark') next.theme = p.theme
   if (isWallpaper(p.wallpaper)) next.wallpaper = { ...p.wallpaper }
   if (typeof p.icons === 'object' && p.icons !== null && !Array.isArray(p.icons)) {
     const icons: Prefs['icons'] = { ...next.icons }
@@ -151,6 +154,7 @@ export function startupMigrate(prefs: Prefs): Prefs {
   // Old prefs files predate the field — stamp the default.
   return {
     ...prefs,
+    theme: prefs.theme === 'dark' ? 'dark' : 'light',
     windows,
     icons,
     snaps: prefs.snaps ?? {},

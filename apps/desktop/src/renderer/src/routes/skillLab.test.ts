@@ -2,12 +2,7 @@ import { createElement } from 'react'
 import { renderToString } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 import { SkillLabRoute } from './SkillLabRoute'
-import {
-  SKILL_INJECTION_CONTRACT,
-  SKILL_FIXTURES,
-  skillSummary,
-  type SkillFixture
-} from './runtime.types'
+import { SKILL_FIXTURES, skillSummary, type SkillFixture } from './runtime.types'
 
 const skill = (overrides: Partial<SkillFixture>): SkillFixture => ({
   id: 'demo-skill',
@@ -48,25 +43,21 @@ describe('skill fixtures', () => {
 })
 
 describe('SkillLabRoute', () => {
-  it('renders every fixture skill with its source label', () => {
+  it('renders an honest local wall without presenting fixture data as installed', () => {
     const html = renderToString(createElement(SkillLabRoute))
-    for (const s of SKILL_FIXTURES) {
-      expect(html).toContain(s.name)
-      expect(html).toContain(s.source.toUpperCase())
-    }
+    expect(html).toContain('Skill wall')
+    expect(html).toContain('Search skills')
+    expect(html).not.toContain(SKILL_FIXTURES[0].name)
   })
 
-  it('marks the unusable skill visibly instead of dropping it', () => {
-    const unusable = SKILL_FIXTURES.find((s) => !s.isUsable)
+  it('marks catalog installation unavailable until the safe adapter exists', () => {
     const html = renderToString(createElement(SkillLabRoute))
-    expect(html).toContain('UNUSABLE')
-    expect(html).toContain(unusable?.rejectionReason as string)
+    expect(html).toContain('Installing a remote skill is unavailable')
   })
 
-  it('presents the injection contract and the read-only scope honestly', () => {
+  it('presents the read-only scope honestly', () => {
     const html = renderToString(createElement(SkillLabRoute))
-    expect(html).toContain('READ-ONLY')
-    expect(html).toContain(SKILL_INJECTION_CONTRACT)
-    expect(html).toContain('Nothing here executes skill code')
+    expect(html).toContain('LOCAL INVENTORY')
+    expect(html).toContain('nothing here executes skill code')
   })
 })

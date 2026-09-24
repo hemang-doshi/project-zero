@@ -119,7 +119,7 @@ describe('MousePad structure', () => {
     expect(el.querySelector('[data-testid="mousepad"]')).not.toBeNull()
   })
 
-  it('carries a red accent pair echoing the reference design', async () => {
+  it('carries a red accent pair echoing the owner photo', async () => {
     const el = await mount({ status: 'online' })
     const accents = el.querySelectorAll('[data-testid="mousepad-accent-material"]')
     expect(accents.length).toBe(2)
@@ -192,7 +192,10 @@ describe('MousePad detail pass 2', () => {
       ['braid-rings', '6'],
       ['stitches', '62']
     ] as Array<[string, string]>) {
-      expect(el.querySelector(`[name="${name}"]`)?.getAttribute('data-count'), name).toBe(count)
+      expect(
+        el.querySelector(`[name="${name}"]`)?.getAttribute('args')?.split(',').at(-1),
+        name
+      ).toBe(count)
     }
   })
 

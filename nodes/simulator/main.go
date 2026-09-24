@@ -9,9 +9,9 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
-	"github.com/hemang-doshi/project-zero/core/identity"
-	"github.com/hemang-doshi/project-zero/core/runtime"
-	"github.com/hemang-doshi/project-zero/sdk/go/node"
+	"projectzero.local/zero/core/identity"
+	"projectzero.local/zero/core/runtime"
+	"projectzero.local/zero/sdk/go/node"
 	"syscall"
 	"time"
 )

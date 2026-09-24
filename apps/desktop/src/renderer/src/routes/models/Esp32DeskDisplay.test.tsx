@@ -156,7 +156,10 @@ describe('Esp32DeskDisplay structure', () => {
       ['standoffs', '4'],
       ['button-legends', '2']
     ] as Array<[string, string]>) {
-      expect(el.querySelector(`[name="${name}"]`)?.getAttribute('data-count'), name).toBe(count)
+      expect(
+        el.querySelector(`[name="${name}"]`)?.getAttribute('args')?.split(',').at(-1),
+        name
+      ).toBe(count)
     }
   })
 

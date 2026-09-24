@@ -8,67 +8,70 @@ const cpu = (t: CpuTimes): { times: CpuTimes } => ({ times: t })
 const GIB = 1024 ** 3
 const MIB = 1024 ** 2
 
-// Synthetic batch output fixtures represent common macOS command output (vm_stat 16384-byte pages, netstat -ib columns,
+// Batch output fixtures mirror the real macOS tool outputs recorded during
+// the source probes (vm_stat 16384-byte pages, netstat -ib columns,
 // ioreg IOKit Statistics, ps -A -M per-thread rows).
 const PS_SECTION = `USER               PID   TT   %CPU STAT PRI     STIME     UTIME COMMAND
 root                 1   ??    0.0 S    31T   0:00.04   0:00.01 /sbin/launchd
                      1         0.0 S    37T   0:09.15   0:02.89
                      1         0.0 S    20T   0:01.54   0:02.89
-sampleuser           200   ??    0.1 S    37T   0:00.48   0:00.10 /usr/libexec/exampled
-                     200        0.0 S    37T   0:00.48   0:00.10
+hemang              334   ??    0.1 S    37T   0:00.48   0:00.10 /usr/libexec/logd
+                     334        0.0 S    37T   0:00.48   0:00.10
 `
 
 const VM_STAT_SECTION = `Mach Virtual Memory Statistics: (page size of 16384 bytes)
-Pages free:                                    1000.
-Pages active:                                 2000.
-Pages inactive:                               3000.
-Pages speculative:                             400.
+Pages free:                                    32257.
+Pages active:                                 254966.
+Pages inactive:                               240318.
+Pages speculative:                             14083.
 Pages throttled:                                   0.
-Pages wired down:                             600.
-Pages purgeable:                               500.
-"Translation faults":                      10000.
-Pages copy-on-write:                        500.
-Pages zero filled:                         20000.
-Pages reactivated:                           100.
-Pages purged:                                50.
-File-backed pages:                            1200.
-Anonymous pages:                              2500.
-Pages stored in compressor:                   700.
-Pages occupied by compressor:                 300.
-Decompressions:                              500.
-Compressions:                                700.
-Pageins:                                     800.
-Pageouts:                                      20.
+Pages wired down:                             172591.
+Pages purgeable:                               14672.
+"Translation faults":                      218850525.
+Pages copy-on-write:                        11360665.
+Pages zero filled:                         145853813.
+Pages reactivated:                           7483439.
+Pages purged:                                1540816.
+File-backed pages:                            181743.
+Anonymous pages:                              327624.
+Pages stored in compressor:                   639764.
+Pages occupied by compressor:                 294851.
+Decompressions:                              4668445.
+Compressions:                                6377731.
+Pageins:                                     5708256.
+Pageouts:                                      51709.
 Swapins:                                           0.
 Swapouts:                                          0.
 `
 
-const SYSCTL_SECTION = `vm.swapusage: total = 1024.00M  used = 128.00M  free = 896.00M  (encrypted)
+const SYSCTL_SECTION = `vm.swapusage: total = 1024.00M  used = 512.00M  free = 512.00M  (encrypted)
 kern.memorystatus_vm_pressure_level: 1
 `
 
 const NET_STAT_SECTION = `Name       Mtu   Network       Address            Ipkts Ierrs     Ibytes    Opkts Oerrs     Obytes  Coll
-lo0        16384 <Link#1>                        10000     0  2000000   10000     0  2000000     0
-lo0        16384 127           localhost         10000     -  2000000   10000     -  2000000     -
-en0        1500  <Link#4>    02:00:00:00:00:01      100     0      10000      80     0        8000     0
-en0        1500  192.0.2      example-host          100     -      10000      80     -        8000     -
-en9        1500  <Link#6>    02:00:00:00:00:02       20     0       4000      10     0       2000     0
+lo0        16384 <Link#1>                        883011     0  951953745   883011     0  951953745     0
+lo0        16384 127           localhost         883011     -  951953745   883011     -  951953745     -
+en0        1500  <Link#4>    da:0b:71:62:c3:b2     1000     0     500000     900     0     450000     0
+en0        1500  192.168      hemangs-mac         1000     -     500000     900     -     450000     -
+en9        1500  <Link#6>    da:0b:71:62:c3:99       20     0       4000      10     0       2000     0
 `
 
-const DISK_SECTION = `+-o diskExample  <class IOBlockStorageDriver, id 0x100000001, registered, matched, active, busy 0 (380 ms), retain 72>
+const DISK_SECTION = `+-o disk0s1  <class IOBlockStorageDriver, id 0x1000003a9, registered, matched, active, busy 0 (380 ms), retain 72>
     {
-      "Statistics" = {"Operations (Write)"=500,"Latency Time (Write)"=0,"Bytes (Read)"=10000000,"Errors (Write)"=0,"Total Time (Read)"=1000000,"Latency Time (Read)"=0,"Retries (Read)"=0,"Errors (Read)"=0,"Total Time (Write)"=2000000,"Bytes (Write)"=5000000,"Operations (Read)"=1000,"Retries (Write)"=0}
+      "Statistics" = {"Operations (Write)"=2515963,"Latency Time (Write)"=0,"Bytes (Read)"=156378263552,"Errors (Write)"=0,"Total Time (Read)"=2525008045834,"Latency Time (Read)"=0,"Retries (Read)"=0,"Errors (Read)"=0,"Total Time (Write)"=109335973308,"Bytes (Write)"=47597654016,"Operations (Read)"=8348407,"Retries (Write)"=0}
       "IOClass" = "IONVMeBlockStorageDriver"
     }
 `
 
-const GPU_SECTION = `+-o AGXAcceleratorExample  <class AGXAcceleratorExample, id 0x100000001, registered, matched, active, busy 0 (380 ms), retain 72>
-      "PerformanceStatistics" = {"In use system memory (driver)"=0,"Device Utilization %"=42,"Renderer Utilization %"=29,"Tiler Utilization %"=29}
+const GPU_SECTION = `+-o AGXAcceleratorG16G  <class AGXAcceleratorG16G, id 0x1000003a9, registered, matched, active, busy 0 (380 ms), retain 72>
+      "PerformanceStatistics" = {"In use system memory (driver)"=0,"Device Utilization %"=29,"Renderer Utilization %"=29,"Tiler Utilization %"=29}
 `
 
 const BATCH_OUTPUT = [
   '===PS===',
   PS_SECTION,
+  '===PROCESS===',
+  '12 22.5 111 /Applications/Editor',
   '===VM_STAT===',
   VM_STAT_SECTION,
   '===SYSCTL===',
@@ -159,6 +162,26 @@ describe('CPU system/user/idle split', () => {
   })
 })
 
+describe('main telemetry history', () => {
+  it('retains timestamped measured samples and reports failed families', async () => {
+    let now = 1000
+    const sampler = createTelemetrySampler(fakeDeps({ now: () => now }))
+    await sampler.sample()
+    now = 3000
+    const history = sampler.history()
+    expect(history).toHaveLength(1)
+    expect(history[0]).toMatchObject({ at: 1000, sample: { gpu: 29, processes: [{ pid: 12 }] }, failures: [] })
+  })
+
+  it('marks GPU unavailable without turning it into zero', async () => {
+    const output = BATCH_OUTPUT.replace(`===GPU===\n${GPU_SECTION}`, '')
+    const sampler = createTelemetrySampler(fakeDeps({ spawnBatch: () => Promise.resolve(output) }))
+    const sample = await sampler.sample()
+    expect(sample.gpu).toBeNull()
+    expect(sampler.history()[0]?.failures).toContain('gpu')
+  })
+})
+
 describe('threads and processes (ps section)', () => {
   it('counts process rows and thread rows from ps -A -M', async () => {
     const s = createTelemetrySampler(fakeDeps())
@@ -187,13 +210,13 @@ describe('memory breakdown (vm_stat + sysctl sections)', () => {
     const m = sample.memory
     expect(m?.total).toBe(16 * GIB)
     // app = (anonymous − purgeable) × page size
-    expect(m?.app).toBe((2_500 - 500) * 16_384)
-    expect(m?.wired).toBe(600 * 16_384)
-    expect(m?.compressed).toBe(300 * 16_384)
+    expect(m?.app).toBe((327_624 - 14_672) * 16_384)
+    expect(m?.wired).toBe(172_591 * 16_384)
+    expect(m?.compressed).toBe(294_851 * 16_384)
     // cached files = file-backed + speculative
-    expect(m?.cachedFiles).toBe((1_200 + 400) * 16_384)
+    expect(m?.cachedFiles).toBe((181_743 + 14_083) * 16_384)
     // used = app + wired + compressed
-    expect(m?.used).toBe((2_500 - 500) * 16_384 + 600 * 16_384 + 300 * 16_384)
+    expect(m?.used).toBe((327_624 - 14_672) * 16_384 + 172_591 * 16_384 + 294_851 * 16_384)
     if (m !== null) {
       expect(m.percent).toBeCloseTo((m.used / (16 * GIB)) * 100, 5)
       expect(m.pressure).toBeCloseTo(m.percent, 5)
@@ -204,7 +227,7 @@ describe('memory breakdown (vm_stat + sysctl sections)', () => {
     const s = createTelemetrySampler(fakeDeps())
     const sample = await s.sample()
     expect(sample.memory?.level).toBe('low')
-    expect(sample.memory?.swapUsed).toBe(128 * MIB)
+    expect(sample.memory?.swapUsed).toBe(512 * MIB)
   })
 
   it('falls back to freemem for used and breakdown nulls when vm_stat fails', async () => {
@@ -255,17 +278,17 @@ describe('disk I/O (ioreg IOKit statistics)', () => {
     const s = createTelemetrySampler(fakeDeps())
     const sample = await s.sample()
     const io = sample.io
-    expect(io?.reads).toBe(1_000)
-    expect(io?.writes).toBe(500)
-    expect(io?.dataRead).toBe(10_000_000)
-    expect(io?.dataWritten).toBe(5_000_000)
+    expect(io?.reads).toBe(8_348_407)
+    expect(io?.writes).toBe(2_515_963)
+    expect(io?.dataRead).toBe(156_378_263_552)
+    expect(io?.dataWritten).toBe(47_597_654_016)
   })
 
   it('computes per-second rates from deltas across two samples', async () => {
     let tick = 0
     const stats = [
-      '{"Operations (Write)"=500,"Bytes (Read)"=10000000,"Operations (Read)"=1000,"Bytes (Write)"=5000000}',
-      '{"Operations (Write)"=502,"Bytes (Read)"=12097152,"Operations (Read)"=1002,"Bytes (Write)"=5524288}'
+      '{"Operations (Write)"=2515963,"Bytes (Read)"=156378263552,"Operations (Read)"=8348407,"Bytes (Write)"=47597654016}',
+      '{"Operations (Write)"=2515965,"Bytes (Read)"=156380360704,"Operations (Read)"=8348409,"Bytes (Write)"=47598178304}'
     ]
     const s = createTelemetrySampler(
       fakeDeps({
@@ -294,8 +317,8 @@ describe('disk I/O (ioreg IOKit statistics)', () => {
   it('stays null and re-baselines when a counter rolls back', async () => {
     let tick = 0
     const stats = [
-      '{"Operations (Write)"=500,"Bytes (Read)"=10000000,"Operations (Read)"=1000,"Bytes (Write)"=5000000}',
-      '{"Operations (Write)"=497,"Bytes (Read)"=10000000,"Operations (Read)"=997,"Bytes (Write)"=5000000}'
+      '{"Operations (Write)"=2515963,"Bytes (Read)"=156378263552,"Operations (Read)"=8348407,"Bytes (Write)"=47597654016}',
+      '{"Operations (Write)"=2515960,"Bytes (Read)"=156378263552,"Operations (Read)"=8348400,"Bytes (Write)"=47597654016}'
     ]
     const s = createTelemetrySampler(
       fakeDeps({
@@ -315,7 +338,7 @@ describe('disk I/O (ioreg IOKit statistics)', () => {
     expect(second.io?.readsPerSec).toBeNull()
     expect(second.io?.writesPerSec).toBeNull()
     // cumulative values are still honestly reported
-    expect(second.io?.reads).toBe(997)
+    expect(second.io?.reads).toBe(8_348_400)
   })
 
   it('is null when the disk section is missing', async () => {
@@ -336,10 +359,10 @@ describe('network (netstat -ib section)', () => {
     const s = createTelemetrySampler(fakeDeps())
     const sample = await s.sample()
     const net = sample.net
-    expect(net?.packetsIn).toBe(120)
-    expect(net?.packetsOut).toBe(90)
-    expect(net?.dataReceived).toBe(14_000)
-    expect(net?.dataSent).toBe(10_000)
+    expect(net?.packetsIn).toBe(1_020)
+    expect(net?.packetsOut).toBe(910)
+    expect(net?.dataReceived).toBe(504_000)
+    expect(net?.dataSent).toBe(452_000)
   })
 
   it('computes packets and bytes per second from deltas', async () => {
@@ -365,7 +388,7 @@ describe('network (netstat -ib section)', () => {
           Promise.resolve(
             BATCH_OUTPUT.replace(
               /^en0 .*?\n/m,
-              `en0        1500  <Link#4>    02:00:00:00:00:01     ${rows[Math.min(tick, rows.length - 1)].ipkts}     0     ${rows[Math.min(tick, rows.length - 1)].ibytes}     ${rows[Math.min(tick, rows.length - 1)].opkts}     0     ${rows[Math.min(tick, rows.length - 1)].obytes}     0\n`
+              `en0        1500  <Link#4>    da:0b:71:62:c3:b2     ${rows[Math.min(tick, rows.length - 1)].ipkts}     0     ${rows[Math.min(tick, rows.length - 1)].ibytes}     ${rows[Math.min(tick, rows.length - 1)].opkts}     0     ${rows[Math.min(tick, rows.length - 1)].obytes}     0\n`
             )
           )
       })
@@ -396,7 +419,7 @@ describe('GPU (ioreg IOAccelerator)', () => {
   it('parses Device Utilization % from PerformanceStatistics', async () => {
     const s = createTelemetrySampler(fakeDeps())
     const sample = await s.sample()
-    expect(sample.gpu).toBe(42)
+    expect(sample.gpu).toBe(29)
   })
 
   it('stays null when the GPU section has no utilization key', async () => {
