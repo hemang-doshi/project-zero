@@ -1,10 +1,12 @@
 # Project Zero — full project handoff
 
-Updated: **2026-09-24 00:54 IST**. Start with [AGENTS.md](AGENTS.md) and [snapshot.md](snapshot.md). The approved September 23 recovery plans have been implemented in the isolated worktree; this section records verified behavior and remaining external gates.
+Updated: **2026-09-24 10:11 IST**. Start with [AGENTS.md](AGENTS.md) and [snapshot.md](snapshot.md). The approved September 23 recovery plans have been implemented in the isolated worktree; this section records verified behavior and remaining external gates.
 
 ## Current source and recovery
 
-Implementation is committed as `e992b04` on `codex/zero-redesign` in `/Users/hemangdoshi/.codex/worktrees/zero-redesign/project-zero`. The original checkout and production profile were left untouched. The untracked Playwright artifacts are under `apps/desktop/output/playwright/`; they are excluded from the implementation commit.
+Implementation is committed as `e992b04` on `codex/zero-redesign` in `/Users/hemangdoshi/.codex/worktrees/zero-redesign/project-zero`; the previous handoff update is `f62c766`. The original checkout and production profile were left untouched. The untracked Playwright artifacts are under `apps/desktop/output/playwright/`; they are excluded from commits.
+
+The user confirmed that the tracked SwiftUI app should remain. The source tree contains one `ZeroMenu` executable that opens `CockpitAppRoot` from `ZeroCockpit` and includes a menu-bar extra, plus the Spotify observer/audio helpers; it does not contain a separate legacy Swift app. No Swift source was removed. GitHub publication targets `hemang-doshi/project-zero`; its `main` branch has unrelated history, so publish this worktree as a new `codex/zero-redesign` branch and leave `main` unchanged.
 
 The actual Electron preview is PID 54622, served from the worktree build with remote debugging on 127.0.0.1:9222. It uses the isolated `ProjectZero/dev-electron` profile. The unpacked application build exists at `apps/desktop/.runtime/desktop-build/mac-arm64/Zero Desktop.app`, but it was not installed or used for a live provider send. Stop the preview only through its owning session; do not start another production daemon.
 
@@ -90,7 +92,8 @@ Canonical product specification: [PROJECT_ZERO_SPEC.md](PROJECT_ZERO_SPEC.md), o
 | Policy and effects | `core/runtime/actions.go`, `dispatch.go`. Permission states DENIED, ASK, SESSION_ALLOWED, ALWAYS_ALLOWED; deny precedence, exact-action approval, deadlines, desired display restoration and transactional outbox. Never blindly repeat an uncertain non-idempotent effect. |
 | Projects / focus / context | `core/runtime` personal/session/context code. Stable project registration and aliases, explicit end/switch, accumulated elapsed time, provenance/freshness and explicit override precedence. RUNNING time includes runtime downtime; PAUSED time freezes. Projection rebuild must not dispatch physical effects. |
 | Integrations | `integrations/git`, runtime integration/workers code, native helpers. Fixed Git arguments/timeouts on registered paths only, no fetch/scripts/file mutation. Integration work stays outside serialized transactions. Spotify nominally polls every 2 s while enabled/running; Git every 15 s during focus. |
-| Native UI | `apps/macos`: the current `ZeroMenu` SwiftUI/AppKit window is only an early menu-bar interface, not the required native cockpit. `ZeroKit` provides Unix transport/artwork/filter code; `ZeroMacObserve` provides Spotify scripting; `ZeroAudio` provides the Core Audio tap. Pending request identity survives transport uncertainty. The next UI design must introduce a normal native app window, reduce the menu surface, and format elapsed time as hours/minutes/seconds. |
+| Desktop UI | `apps/desktop`: Electron is the current redesign surface for Zero Bot, Desk, Skills Lab, Runtime and the rest of the cockpit. Dark mode, compact reasoning, provider sessions and live telemetry are covered in the snapshot and current tests. |
+| Legacy native UI and macOS helpers | `apps/macos`: preserve the tracked SwiftUI `ZeroMenu` app and `ZeroCockpit` library; the app opens cockpit windows and provides a menu-bar extra. The same package builds `ZeroMacObserve` and `ZeroAudio` helpers used by the Go runtime. |
 | ESP32 | `nodes/esp32-desk/main`: protocol parser, rendering, provisioning, keys, debounced BOOT, Wi-Fi/WebSocket lifecycle. |
 | Schemas / generators | `proto/schemas`, `proto/fixtures`; `tools/schema-gen.py`, `tools/release-gen.py`. Display fixtures run in Go and C. Do not manually diverge generated metadata. |
 | Install / recovery | `tools/build-macos.py`, `install-release.py`, `setup-signing.py`; `docs/runbooks/`. |
