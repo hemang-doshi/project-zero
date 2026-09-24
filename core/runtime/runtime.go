@@ -14,6 +14,8 @@ import (
 	"time"
 )
 
+const nodeOfflineAfter = 90 * time.Second
+
 type Runtime struct {
 	Updates     *Updates
 	MacObserver string
@@ -300,7 +302,7 @@ func (r *Runtime) queryList(ctx context.Context, kind, query string) ([]map[stri
 				if err == nil {
 					age := r.Now().Sub(at)
 					status = "ONLINE"
-					if age >= 90*time.Second {
+					if age >= nodeOfflineAfter {
 						status = "OFFLINE"
 					} else if age >= 60*time.Second {
 						status = "SUSPECT"
