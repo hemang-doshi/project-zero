@@ -1,15 +1,15 @@
 # Current working snapshot
 
-Updated: **2026-09-24 10:53 IST**. Read [handoff.md](handoff.md) for architecture and recovery context.
+Updated: **2026-09-24 11:42 IST**. Read [handoff.md](handoff.md) for architecture and recovery context.
 
 ## Current worktree
 
 - Repository: `/Users/hemangdoshi/.codex/worktrees/zero-redesign/project-zero`
-- Branch `codex/zero-redesign`, latest code fix `ac89137` (`fix(runtime): skip offline display targets`), followed by a documentation refresh. The source branch is published to `hemang-doshi/project-zero`.
+- Branch `codex/zero-redesign` is published with its 173-commit history replayed linearly on the current `main` base. The replay retains the offline display queue fix and later app changes. The original history is preserved remotely at `codex/zero-redesign-pre-rebase`.
 - The original checkout at `/Users/hemangdoshi/Developer/project-zero` remains untouched.
 - Three untracked Playwright review images remain under `apps/desktop/output/playwright/`; they are not part of the publication.
 - The user confirmed the tracked SwiftUI app should remain. The tree contains one `ZeroMenu` executable using `ZeroCockpit` for cockpit windows and a menu-bar extra, plus Spotify helper executables. There is no separately tracked legacy Swift app, and no Swift source was removed.
-- GitHub `main` is now at `ebb4c866444fe61e9b69d1d7c92ada76dae32e40` (tree `c9afdb2a281afe796e0d93c24c7685a84a2160c8`), published by merged PR #11. The protected branch was updated through a passing, linear-history PR; source wins overlapping paths and all 28 main-only files remain. `codex/zero-redesign` remains published with its implementation history. The SwiftUI app and Spotify helpers are present in the main tree.
+- PR #11 published the combined app tree while preserving all 28 files that existed only on `main`. PR #12 carries the rebased `codex/zero-redesign` history into `main` under the protected linear-history rules. The SwiftUI app and Spotify helpers remain in the combined tree.
 - Desktop package is 1.0.0, Electron 39.8.10. Core release manifest remains product/build 0.2.0 / 0.2.0-7, wire protocol 0.1, schema versions 0.1/0.2, database version 2. OpenCode 1.18.30 is installed.
 
 ## Implemented
@@ -22,9 +22,9 @@ Updated: **2026-09-24 10:53 IST**. Read [handoff.md](handoff.md) for architectur
 
 ## Verification
 
-- Exact published main tree: Electron **933/933 tests across 76 files**, typecheck, `GOPROXY=off GOSUMDB=off go test ./...`, release/schema generators, Swift build, Electron lint/build, and Go race tests passed. GitHub Actions passed all three required jobs before merge. The Go suite includes main-only runtime tests and the offline display queue regression.
+- Rebased tree: Electron **933/933 tests across 76 files**, typecheck and `GOPROXY=off GOSUMDB=off go test ./...` passed. The Go suite includes main-only runtime tests and the offline display queue regression. PR #11's release/schema generators, Swift build, Electron lint/build and Go race jobs all passed. PR #12 must pass the protected repository checks before merge.
 - Playwright exercised the Electron UI for dark/light theme selection, Zero Bot send/Airlock hold, Runtime history and chart panels, OpenCode saved transcript/usage, and Desk. The last preview process has exited; the unpacked bundle remains at `apps/desktop/.runtime/desktop-build/mac-arm64/Zero Desktop.app` and was not installed.
-- GitHub PR #11 is the protected publication path for the combined tree. Its required CI checks must pass before `main` can advance.
+- PR #12 is the current history integration; verify the remote `main` and `codex/zero-redesign` ancestry after it merges.
 - Safe review images: `apps/desktop/output/playwright/zero-bot-draft-dark.png`, `zero-runtime-dark.png`, and `zero-desk-dark.png`.
 
 ## Environment limits and next step
