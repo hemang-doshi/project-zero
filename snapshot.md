@@ -1,6 +1,6 @@
 # Current working snapshot
 
-Updated: **2026-09-24 10:17 IST**. This records the approved implementation work in the isolated app worktree. Read [handoff.md](handoff.md) for architecture and recovery context.
+Updated: **2026-09-24 10:22 IST**. This records the approved implementation work in the isolated app worktree. Read [handoff.md](handoff.md) for architecture and recovery context.
 
 ## Current worktree
 
@@ -9,7 +9,7 @@ Updated: **2026-09-24 10:17 IST**. This records the approved implementation work
 - The original checkout at `/Users/hemangdoshi/Developer/project-zero` remains untouched.
 - Only untracked files are three Playwright dark-theme review images under `apps/desktop/output/playwright/`; they contain no transcript or process names.
 - The user confirmed the tracked SwiftUI app should remain. The tracked tree contains one `ZeroMenu` executable using the `ZeroCockpit` library, with the cockpit windows and a menu-bar extra, plus Spotify helper executables. No separate old Swift app is tracked; no Swift source was removed.
-- GitHub target is `hemang-doshi/project-zero`. New branch `codex/zero-redesign` is published; its remote tip matched local commit `8839aa3` at the last check. The current handoff-only update is a fast-forward on that branch. GitHub `main` has unrelated history and remains unchanged.
+- GitHub target is `hemang-doshi/project-zero`. New branch `codex/zero-redesign` is published. `main` has unrelated history, so this version is promoted with a non-force two-parent merge commit: existing `main` is the first parent, this branch the second. Main-only tracked files are preserved; overlapping paths use this branch's current version.
 - Desktop package is 1.0.0, Electron is 39.8.10. Core release manifest remains product/build 0.2.0 / 0.2.0-7, wire protocol 0.1, schema versions 0.1/0.2, database version 2. OpenCode 1.18.30 is installed.
 
 ## Implemented
