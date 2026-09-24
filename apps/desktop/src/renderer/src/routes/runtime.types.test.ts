@@ -22,13 +22,13 @@ describe('selectSession', () => {
   it('reads the session fields the routes render', () => {
     const session = selectSession(fixture())
     expect(session).toEqual({
-      id: 'sample-session-001',
+      id: '1788913498387-dfc67f5f489247d2685e37b0',
       project_id: 'project-zero',
       project: 'Project Zero',
       state: 'RUNNING',
-      elapsed_ms: 120000,
-      since_ms: 1767225600000,
-      revision: 1
+      elapsed_ms: 188571082,
+      since_ms: 1788981229646,
+      revision: 321
     })
   })
 
@@ -41,7 +41,7 @@ describe('selectSession', () => {
 })
 
 describe('parseSnapshot', () => {
-  it('parses the anonymized sample snapshot', () => {
+  it('parses the recorded production snapshot', () => {
     const snapshot = parseSnapshot(fixture())
     expect(snapshot).not.toBeNull()
     expect(snapshot?.version).toBe('0.1')
@@ -50,10 +50,32 @@ describe('parseSnapshot', () => {
       id: 'desk-display-01',
       revoked: false,
       capabilities: ['display.render', 'display.clear'],
-      last_seen: '2026-01-01T00:00:00Z',
+      last_seen: '2026-09-11T05:59:49.463537Z',
       status: 'ONLINE'
     })
     expect(snapshot?.integrations.map((i) => i.id)).toEqual(['git', 'spotify', 'codex'])
+    expect(snapshot?.listeningSession).toBeNull()
+  })
+
+  it('parses bounded Spotify listening observations with provenance', () => {
+    const value = fixture() as Record<string, unknown>
+    const snapshot = parseSnapshot({
+      ...value,
+      listening_session: {
+        id: 'session-1',
+        source: 'local-spotify-observer',
+        started_at: '2026-09-23T12:00:00Z',
+        last_observed_at: '2026-09-23T12:00:10Z',
+        playback_state: 'playing',
+        active_duration_ms: 10000,
+        tracks: [{ track: 'Song', artist: 'Artist', observed_at: '2026-09-23T12:00:00Z' }]
+      }
+    })
+    expect(snapshot?.listeningSession).toMatchObject({
+      source: 'local-spotify-observer',
+      activeDurationMs: 10000,
+      tracks: [{ track: 'Song', artist: 'Artist', uri: null }]
+    })
   })
 
   it('coerces numeric revoked flags', () => {
@@ -96,6 +118,14 @@ describe('connectivity', () => {
     expect(connectivity('connecting', snap).tone).toBe('attention')
   })
 
+  it('calls a never-established runtime unavailable instead of reconnecting', () => {
+    expect(connectivity('reconnecting', null)).toEqual({
+      label: 'OFFLINE',
+      detail: 'Runtime unavailable · waiting to reconnect',
+      tone: 'error'
+    })
+  })
+
   it('reports connected display nodes when live', () => {
     const c = connectivity('live', snap)
     expect(c.tone).toBe('healthy')
@@ -116,7 +146,7 @@ describe('connectivity', () => {
 
 describe('gitLine', () => {
   it('reads the git integration data when present', () => {
-    expect(gitLine(fixture())).toEqual({ branch: 'main', dirty: 'true' })
+    expect(gitLine(fixture())).toEqual({ branch: 'build/v0.2', dirty: 'true' })
   })
 
   it('returns null without a git integration', () => {
@@ -190,51 +220,85 @@ describe('extrapolate', () => {
 
 describe('machine sample shape', () => {
   it('starts with every panel unavailable', () => {
-    const sample: MachineSample = { cpu: null, memory: null, io: null, net: null, gpu: null }
+    const sample: MachineSample = {
+      cpu: null,
+      memory: null,
+      io: null,
+      net: null,
+      gpu: null,
+      processes: []
+    }
     expect(sample).toEqual(EMPTY_MACHINE_SAMPLE)
   })
 })
 
 const WELL_FORMED: Record<string, unknown> = {
-  cpu: { system: 4.25, user: 30, idle: 65.75, threads: 128, processes: 42 },
+  cpu: { system: 4.25, user: 30, idle: 65.75, threads: 3185, processes: 780 },
   memory: {
     total: 17_179_869_184,
-    used: 8_589_934_592,
-    percent: 50,
-    pressure: 50,
+    used: 13_421_772_800,
+    percent: 78.125,
+    pressure: 78.125,
     level: 'medium',
-    app: 4_294_967_296,
-    wired: 1_610_612_736,
-    compressed: 1_073_741_824,
-    cachedFiles: 1_610_612_736,
-    swapUsed: 134_217_728
+    app: 5_368_709_120,
+    wired: 3_221_225_472,
+    compressed: 4_831_838_208,
+    cachedFiles: 2_684_354_560,
+    swapUsed: 536_870_912
   },
   io: {
-    reads: 1_234_567,
-    writes: 2_345_678,
+    reads: 8_348_407,
+    writes: 2_515_963,
     readsPerSec: 12.5,
     writesPerSec: 3.5,
-    dataRead: 1_073_741_824,
-    dataWritten: 268_435_456,
+    dataRead: 156_378_263_552,
+    dataWritten: 47_597_654_016,
     dataReadPerSec: 1_048_576,
     dataWrittenPerSec: 262_144
   },
   net: {
-    packetsIn: 12_345,
-    packetsOut: 6_789,
-    packetsInPerSec: 4.5,
-    packetsOutPerSec: 3.5,
-    dataReceived: 2_000_000,
-    dataSent: 1_500_000,
-    dataReceivedPerSec: 1_024,
-    dataSentPerSec: 512
+    packetsIn: 883_011,
+    packetsOut: 883_011,
+    packetsInPerSec: 25.5,
+    packetsOutPerSec: 21.5,
+    dataReceived: 951_953_745,
+    dataSent: 951_953_745,
+    dataReceivedPerSec: 40_960,
+    dataSentPerSec: 20_480
   },
-  gpu: 42
+  gpu: 29,
+  processes: [{ pid: 72, name: 'Codex', cpuPercent: 1.25, residentBytes: 4_194_304 }]
 }
 
 describe('parseTelemetry', () => {
   it('parses a well-formed sampler payload into the panel sample', () => {
     expect(parseTelemetry(WELL_FORMED)).toEqual(WELL_FORMED)
+  })
+
+  it('keeps only ten attributable process rows and bounds process names', () => {
+    const sample = parseTelemetry({
+      ...WELL_FORMED,
+      processes: [
+        { pid: 72, name: 'Codex', cpuPercent: 1.25, residentBytes: 4_194_304 },
+        null,
+        { pid: 'not-a-pid', name: 'Invalid', cpuPercent: 3, residentBytes: 5 },
+        ...Array.from({ length: 10 }, (_, index) => ({
+          pid: 100 + index,
+          name: `process-${index}-${'x'.repeat(90)}`,
+          cpuPercent: null,
+          residentBytes: 1024
+        }))
+      ]
+    })
+
+    expect(sample.processes).toHaveLength(10)
+    expect(sample.processes?.[0]).toEqual({
+      pid: 72,
+      name: 'Codex',
+      cpuPercent: 1.25,
+      residentBytes: 4_194_304
+    })
+    expect(sample.processes?.[9]?.name).toHaveLength(80)
   })
 
   it('keeps nulls for absent or malformed parts instead of dropping the sample', () => {
@@ -272,7 +336,8 @@ describe('parseTelemetry', () => {
         dataWrittenPerSec: null
       },
       net: null,
-      gpu: 9
+      gpu: 9,
+      processes: []
     })
     expect(parseTelemetry(null)).toEqual(EMPTY_MACHINE_SAMPLE)
     expect(parseTelemetry('nonsense')).toEqual(EMPTY_MACHINE_SAMPLE)
@@ -346,9 +411,9 @@ describe('selectSpotify', () => {
       enabled: true,
       status: 'ONLINE',
       state: 'paused',
-      track: 'Example Track',
-      artist: 'Example Artist',
-      artworkId: '0000000000000000000000000000000000000000000000000000000000000000',
+      track: 'Parking Lot',
+      artist: 'Mustard',
+      artworkId: 'f74dcb2fdf1cb1496dfa3f98e9a305eb3b43674242d728acee0082d9c528c087',
       audioCapture: 'DISABLED'
     })
   })

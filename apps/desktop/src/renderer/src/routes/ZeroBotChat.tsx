@@ -24,7 +24,7 @@ const machineVoice: React.CSSProperties = {
 
 const micro: React.CSSProperties = {
   fontFamily: ZERO_TYPE.mono,
-  fontSize: 8.5,
+  fontSize: 10,
   fontWeight: 700,
   letterSpacing: '0.12em',
   color: 'var(--z-secondary-ink)'
@@ -32,7 +32,7 @@ const micro: React.CSSProperties = {
 
 const markdownBody: React.CSSProperties = {
   fontFamily: ZERO_TYPE.body,
-  fontSize: 12,
+  fontSize: 13.5,
   lineHeight: 1.55,
   color: 'var(--z-ink)',
   overflowWrap: 'anywhere',
@@ -51,66 +51,60 @@ export const MarkdownText = memo(function MarkdownText({
   )
 })
 
-export const ThinkingBlock = memo(function ThinkingBlock({
-  item
+export const ThinkingGroupBlock = memo(function ThinkingGroupBlock({
+  items
 }: {
-  item: ThinkingItem
+  items: ThinkingItem[]
 }): React.JSX.Element {
   const [open, setOpen] = useState(false)
-  const summary = item.summary !== '' ? item.summary : 'no summary available'
+  const firstSummary = items.find((item) => item.summary.trim() !== '')?.summary.trim() ?? ''
+  const plainSummary = firstSummary
+    .replace(/[*_`#]+/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+  const summary =
+    plainSummary !== ''
+      ? plainSummary.length > 58
+        ? `${plainSummary.slice(0, 57)}…`
+        : plainSummary
+      : items.some((item) => item.text.trim() !== '')
+        ? 'details available'
+        : 'reasoning unavailable from provider'
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0 }}>
+    <div className="zw-thinking" style={{ minWidth: 0 }}>
       <button
         type="button"
         aria-expanded={open}
         onClick={() => setOpen((v) => !v)}
         data-voice="human"
-        style={{
-          ...humanVoice,
-          fontSize: 11.5,
-          fontWeight: 700,
-          background: 'transparent',
-          border: '1px solid color-mix(in srgb, var(--z-line) 80%, transparent)',
-          borderRadius: 6,
-          padding: '4px 10px',
-          cursor: 'pointer',
-          textAlign: 'left',
-          color: 'var(--z-secondary-ink)',
-          minWidth: 0,
-          overflow: 'hidden',
-          textOverflow: 'ellipsis',
-          whiteSpace: 'nowrap'
-        }}
+        className="zw-thinking-toggle"
+        style={humanVoice}
       >
-        {open ? '▾' : '▸'} Thinking… {summary}
+        <span aria-hidden="true">{open ? '▾' : '▸'}</span> Thinking ·{' '}
+        {items.length > 1 ? `${items.length} updates` : summary}
       </button>
       {open ? (
-        <div
-          data-voice="machine"
-          style={{
-            fontFamily: ZERO_TYPE.mono,
-            fontSize: 10.5,
-            lineHeight: 1.5,
-            color: 'var(--z-secondary-ink)',
-            whiteSpace: 'pre-wrap',
-            overflowWrap: 'anywhere',
-            maxHeight: 220,
-            overflowY: 'auto'
-          }}
-        >
-          {item.text !== '' ? item.text : '—'}
+        <div className="zw-thinking-detail" data-voice="machine">
+          {items.map((item) =>
+            item.text.trim() !== '' || item.summary.trim() !== '' ? (
+              <div key={item.id} data-reasoning-id={item.id}>
+                {item.summary.trim() !== '' ? <strong>{item.summary}</strong> : null}
+                {item.text.trim() !== '' ? <p>{item.text}</p> : null}
+              </div>
+            ) : null
+          )}
+          {items.every((item) => item.text.trim() === '' && item.summary.trim() === '')
+            ? 'No further detail supplied by provider.'
+            : null}
         </div>
       ) : null}
     </div>
   )
 })
 
-const execShell: React.CSSProperties = {
-  fontFamily: ZERO_TYPE.mono,
-  fontSize: 11,
-  color: 'var(--z-ink)',
-  minWidth: 0
-}
+export const ThinkingBlock = memo(function ThinkingBlock({ item }: { item: ThinkingItem }) {
+  return <ThinkingGroupBlock items={[item]} />
+})
 
 const exitTone = (exitCode: number | null, status: string): string => {
   if (exitCode !== null && exitCode !== 0) return 'var(--z-error-red)'
@@ -160,7 +154,7 @@ export const ExecBlock = memo(function ExecBlock({ item }: { item: ExecItem }): 
         <span style={{ ...micro, color: 'var(--z-secondary-ink)' }}>{open ? '▾' : '▸'}</span>
         <span
           data-voice="human"
-          style={{ ...humanVoice, fontSize: 12, color: 'var(--z-ink)', flex: 1 }}
+          style={{ ...humanVoice, fontSize: 13, color: 'var(--z-ink)', flex: 1 }}
         >
           {summary}
         </span>
@@ -172,42 +166,18 @@ export const ExecBlock = memo(function ExecBlock({ item }: { item: ExecItem }): 
         </span>
       </button>
       {open ? (
-        <>
-          <span
-            data-voice="machine"
-            style={{
-              ...machineVoice,
-              ...execShell,
-              whiteSpace: 'pre-wrap',
-              overflowWrap: 'anywhere'
-            }}
-          >
-            {item.command}
-          </span>
-          {item.cwd !== '' ? (
-            <span data-voice="machine" style={{ ...machineVoice, ...micro, opacity: 0.8 }}>
-              CWD {item.cwd}
-            </span>
-          ) : null}
+        <div
+          className="zw-terminal"
+          data-voice="machine"
+          role="region"
+          aria-label="Terminal output"
+        >
+          {item.cwd !== '' ? <div className="zw-terminal-cwd">{item.cwd}</div> : null}
+          <pre className="zw-terminal-command">$ {item.command}</pre>
           {item.output !== null && item.output !== '' ? (
-            <div
-              data-voice="machine"
-              style={{
-                ...machineVoice,
-                ...execShell,
-                background: 'color-mix(in srgb, var(--z-canvas-tan) 55%, transparent)',
-                borderRadius: 6,
-                padding: '6px 8px',
-                whiteSpace: 'pre-wrap',
-                overflowWrap: 'anywhere',
-                maxHeight: 180,
-                overflowY: 'auto'
-              }}
-            >
-              {item.output}
-            </div>
+            <pre className="zw-terminal-output">{item.output}</pre>
           ) : null}
-        </>
+        </div>
       ) : null}
     </div>
   )
@@ -262,7 +232,7 @@ export const ToolBlock = memo(function ToolBlock({ item }: { item: ToolItem }): 
         <span style={{ ...micro, color: 'var(--z-secondary-ink)' }}>{open ? '▾' : '▸'}</span>
         <span
           data-voice="human"
-          style={{ ...humanVoice, fontSize: 12, color: 'var(--z-ink)', flex: 1 }}
+          style={{ ...humanVoice, fontSize: 13, color: 'var(--z-ink)', flex: 1 }}
         >
           {summary}
         </span>
@@ -331,10 +301,10 @@ const NoticeRow = memo(function NoticeRow({ item }: { item: NoticeItem }): React
 
 const userBubble: React.CSSProperties = {
   alignSelf: 'flex-end',
-  maxWidth: '88%',
-  background: 'var(--z-card-cream)',
-  border: '1px solid var(--z-orange)',
-  borderRadius: '10px 10px 3px 10px',
+  maxWidth: '78%',
+  background: 'color-mix(in srgb, var(--z-orange) 9%, var(--z-card-cream))',
+  border: '1px solid transparent',
+  borderRadius: '14px 14px 4px 14px',
   padding: '8px 12px',
   minWidth: 0,
   display: 'flex',
@@ -344,11 +314,11 @@ const userBubble: React.CSSProperties = {
 
 const assistantBubble: React.CSSProperties = {
   alignSelf: 'flex-start',
-  maxWidth: '92%',
-  background: 'var(--z-card-white)',
-  border: '1px solid var(--z-line)',
-  borderRadius: '10px 10px 10px 3px',
-  padding: '8px 12px',
+  maxWidth: '88%',
+  background: 'transparent',
+  border: '1px solid transparent',
+  borderRadius: 12,
+  padding: '6px 2px',
   minWidth: 0,
   display: 'flex',
   flexDirection: 'column',
@@ -379,7 +349,7 @@ export const ChatRow = memo(function ChatRow({
         <div style={item.role === 'user' ? userBubble : assistantBubble}>
           <span
             data-voice="human"
-            style={{ ...humanVoice, fontSize: 12, fontWeight: 700, color: 'var(--z-ink)' }}
+            style={{ ...humanVoice, fontSize: 13, fontWeight: 700, color: 'var(--z-ink)' }}
           >
             {item.role === 'user' ? 'You' : (attribution?.author ?? 'Zero')}
           </span>
@@ -406,11 +376,23 @@ export const ChatRow = memo(function ChatRow({
   }
 })
 
-const threadTime = (row: ThreadRow): string => {
+const threadDate = (row: ThreadRow): string => {
   const ts = threadTimestamp(row)
   if (ts <= 0) return '—'
   const d = new Date(ts * 1000)
-  return Number.isNaN(d.getTime()) ? '—' : d.toISOString().slice(0, 16).replace('T', ' ')
+  return Number.isNaN(d.getTime())
+    ? '—'
+    : d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+}
+
+const threadDetails = (row: ThreadRow): string => {
+  const ts = threadTimestamp(row)
+  if (ts <= 0) return 'Time unavailable'
+  const d = new Date(ts * 1000)
+  const time = Number.isNaN(d.getTime())
+    ? 'Time unavailable'
+    : d.toISOString().slice(0, 16).replace('T', ' ')
+  return [time, row.model].filter((value): value is string => value !== null).join(' · ')
 }
 
 export const ThreadList = memo(function ThreadList({
@@ -430,6 +412,7 @@ export const ThreadList = memo(function ThreadList({
           <button
             key={row.id}
             type="button"
+            className="zw-thread-row"
             onClick={() => onSelect(row.id)}
             aria-pressed={selected}
             style={{
@@ -439,9 +422,9 @@ export const ThreadList = memo(function ThreadList({
               textAlign: 'left',
               padding: '7px 10px',
               borderRadius: 8,
-              border: `1px solid ${selected ? 'var(--z-orange)' : 'var(--z-line)'}`,
+              border: '1px solid transparent',
               background: selected
-                ? 'color-mix(in srgb, var(--z-hover-orange) 12%, var(--z-card-white))'
+                ? 'color-mix(in srgb, var(--z-hover-orange) 12%, transparent)'
                 : 'transparent',
               cursor: 'pointer',
               minWidth: 0
@@ -451,7 +434,7 @@ export const ThreadList = memo(function ThreadList({
               data-voice="human"
               style={{
                 fontFamily: ZERO_TYPE.body,
-                fontSize: 11.5,
+                fontSize: 12.5,
                 fontWeight: selected ? 700 : 400,
                 color: 'var(--z-ink)',
                 overflow: 'hidden',
@@ -461,9 +444,8 @@ export const ThreadList = memo(function ThreadList({
             >
               {threadTitle(row)}
             </span>
-            <span data-voice="machine" style={rowLabel}>
-              {threadTime(row)}
-              {row.model !== null ? ` · ${row.model}` : ''}
+            <span data-voice="machine" style={rowLabel} title={threadDetails(row)}>
+              {threadDate(row)}
             </span>
           </button>
         )

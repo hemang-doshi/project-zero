@@ -9,11 +9,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"github.com/hemang-doshi/project-zero/core/identity"
-	"github.com/hemang-doshi/project-zero/core/protocol"
-	"github.com/hemang-doshi/project-zero/core/release"
-	"github.com/hemang-doshi/project-zero/core/runtime"
-	"github.com/hemang-doshi/project-zero/sdk/go/client"
+	"projectzero.local/zero/core/identity"
+	"projectzero.local/zero/core/protocol"
+	"projectzero.local/zero/core/release"
+	"projectzero.local/zero/core/runtime"
+	"projectzero.local/zero/sdk/go/client"
 	"strings"
 )
 

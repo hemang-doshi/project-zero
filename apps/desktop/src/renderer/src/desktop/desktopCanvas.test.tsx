@@ -28,6 +28,8 @@ afterEach(() => {
   container?.remove()
   container = null
   root = null
+  useDesktopPrefs.setState({ theme: 'light' })
+  delete document.documentElement.dataset.theme
 })
 
 const base = (): DesktopCanvasProps => ({
@@ -84,6 +86,12 @@ describe('DesktopCanvas maximize wiring', () => {
   it('renders the real taskbar with window buttons', () => {
     const el = mount(base())
     expect(el.querySelector('button[data-window="desk"]')).not.toBeNull()
+  })
+
+  it('applies the persisted appearance theme to the desktop document', () => {
+    useDesktopPrefs.setState({ theme: 'dark' })
+    mount(base())
+    expect(document.documentElement.dataset.theme).toBe('dark')
   })
 })
 

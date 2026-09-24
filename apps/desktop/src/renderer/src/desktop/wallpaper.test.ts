@@ -18,7 +18,7 @@ describe('wallpaperStyle', () => {
     })
   })
   it('maps a picked custom image through the zero-img protocol', () => {
-    expect(wallpaperUrl('/tmp/example/img.png')).toBe('zero-img://local/%2Ftmp%2Fexample%2Fimg.png')
+    expect(wallpaperUrl('/Users/h/img.png')).toBe('zero-img://local/%2FUsers%2Fh%2Fimg.png')
     const cover = wallpaperStyle({ kind: 'custom', path: '/x/a.png', mode: 'cover' })
     expect(cover.backgroundImage).toContain('zero-img://local/%2Fx%2Fa.png')
     expect(cover.backgroundSize).toBe('cover')

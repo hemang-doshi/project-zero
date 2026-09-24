@@ -1,4 +1,4 @@
-module github.com/hemang-doshi/project-zero
+module projectzero.local/zero
 
 go 1.25.0
 

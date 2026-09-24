@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import type { RouteId } from './canvas'
+import { networkInitialRect, workspaceInitialRect, type RouteId } from './canvas'
 import type { Rect } from '../../../shared/desktop-windows'
 import {
   detectSnapZone,
@@ -21,6 +21,7 @@ import { DESKTOP_ITEMS, fileById, viewerTitle, type DesktopIcon } from './items'
 import {
   hydrateDesktopPrefs,
   setIconPosition,
+  setTheme,
   setWallpaper,
   setWindowRect,
   setWindowSnap,
@@ -54,7 +55,13 @@ const openIcon = (icon: DesktopIcon): void => {
   const windows = useWindows.getState()
   const bounds = canvasBounds()
   if (icon.kind === 'route' && icon.route) {
-    windows.openRoute(icon.route, prefs.windows[icon.route])
+    const initial =
+      icon.route === 'network'
+        ? networkInitialRect(bounds)
+        : icon.route === 'zeroBot' || icon.route === 'skillLab'
+          ? workspaceInitialRect(bounds)
+          : undefined
+    windows.openRoute(icon.route, prefs.windows[icon.route] ?? initial)
     // A reopened window re-snaps against the current canvas, like reload.
     const entry = prefs.snaps[icon.route]
     if (isSnapEntry(entry)) windows.hydrateSnaps({ [icon.route]: entry }, bounds)
@@ -84,11 +91,15 @@ export function DesktopCanvas({
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [dragPreview, setDragPreview] = useState<DragPreview | null>(null)
   const wallpaper = useDesktopPrefs((s) => s.wallpaper)
+  const theme = useDesktopPrefs((s) => s.theme)
   const iconPositions = useDesktopPrefs((s) => s.icons)
   const focus = useWindows((s) => s.focus)
   useEffect(() => {
     void hydrateDesktopPrefs(canvasBounds())
   }, [])
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme
+  }, [theme])
   useEffect(() => {
     // Maximized and snapped windows keep spanning the canvas when the app
     // window itself is resized (the store refits both from their kinds).
@@ -236,6 +247,8 @@ export function DesktopCanvas({
       />
       {settingsOpen ? (
         <SettingsSheet
+          theme={theme}
+          onTheme={setTheme}
           wallpaper={wallpaper}
           onKind={(kind) =>
             setWallpaper(

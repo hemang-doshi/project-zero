@@ -1,25 +1,34 @@
-# Zero Desktop
+# desktop
 
-Electron + React + TypeScript cockpit for the local Project Zero runtime. The daemon remains authoritative; this app is a client.
+An Electron application with React and TypeScript
 
-## Development
+## Recommended IDE Setup
 
-Requires Node.js 22+ and npm. From this directory:
+- [VSCode](https://code.visualstudio.com/) + [ESLint](https://marketplace.visualstudio.com/items?itemName=dbaeumer.vscode-eslint) + [Prettier](https://marketplace.visualstudio.com/items?itemName=esbenp.prettier-vscode)
 
-```sh
-npm ci
-npm run dev
+## Project Setup
+
+### Install
+
+```bash
+$ npm install
 ```
 
-The app expects a compatible local runtime at `~/Library/Application Support/ProjectZero/zero.sock` on macOS. Start the runtime separately and use isolated development data.
+### Development
 
-## Checks and builds
-
-```sh
-npm test
-npm run typecheck
-npm run lint
-npm run build
+```bash
+$ npm run dev
 ```
 
-`npm run build` creates an unsigned development bundle. Release signing/notarization requires owner-managed Apple credentials and is not configured in public CI. The Electron package version (`package.json`) is managed separately from the runtime manifest.
+### Build
+
+```bash
+# For windows
+$ npm run build:win
+
+# For macOS
+$ npm run build:mac
+
+# For Linux
+$ npm run build:linux
+```

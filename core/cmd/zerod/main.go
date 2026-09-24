@@ -11,10 +11,10 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
-	"github.com/hemang-doshi/project-zero/core/api"
-	"github.com/hemang-doshi/project-zero/core/identity"
-	"github.com/hemang-doshi/project-zero/core/processlock"
-	"github.com/hemang-doshi/project-zero/core/runtime"
+	"projectzero.local/zero/core/api"
+	"projectzero.local/zero/core/identity"
+	"projectzero.local/zero/core/processlock"
+	"projectzero.local/zero/core/runtime"
 	"strings"
 	"syscall"
 	"time"
@@ -60,7 +60,6 @@ func run() error {
 	r.MacAudio = *audio
 	go r.RunAudio(ctx)
 	go r.RunIntegrations(ctx)
-	go r.RunMaintenance(ctx)
 	var ca *identity.Authority
 	if !*local {
 		ca, e = identity.Load("project-zero.runtime-authority")

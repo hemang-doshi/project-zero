@@ -1,93 +1,113 @@
 # Project Zero
 
-**Project Zero is a local-first personal runtime for explicit, explainable automation.** A local daemon owns committed state; the CLI and desktop clients display that state and submit typed actions. Optional integrations and an ESP32 desk node are bounded clients of the runtime.
+A personal, local-first environment runtime. This repository implements the
+v0.1 foundation and dedicated ESP32 desk-node path from PROJECT_ZERO_SPEC.md.
+The authoritative state is in zerod, not the CLI or display.
 
-This repository is released under the [MIT License](LICENSE). The current source snapshot identifies the runtime as **0.2.0, build 0.2.0-8**. The Electron package has its own package version (**1.0.0**). These version tracks are intentionally distinct. This is a source release; signed installers and hardware acceptance are not implied.
+## Build and test
 
-## Components
-
-- `core/` — Go runtime, local API, state storage, identity and policy.
-- `cli/` — `zero` command-line client.
-- `apps/desktop/` — Electron, React and TypeScript desktop cockpit.
-- `apps/macos/` — native macOS menu app, observer and audio helper.
-- `nodes/` — ESP32 desk-node firmware and simulator.
-- `proto/` — versioned JSON schemas and public test fixtures.
-- `sdk/` and `integrations/` — Go client SDK and integrations.
-
-## Security model
-
-Zero is designed to run on an owner-controlled machine. Local state is managed by `zerod`; mutating requests pass through typed runtime actions and policy checks. Runtime identity uses the macOS Keychain on supported macOS builds. The local API uses an owner-only Unix socket. The optional node listener binds to loopback by default; LAN exposure requires explicit configuration and enrolled client certificates.
-
-Zero is not a hosted service, a multi-tenant server, or a security boundary against an attacker who controls the user account or machine. Review [SECURITY.md](SECURITY.md) before exposing a listener or pairing a device. Never commit enrollment material, private keys, Wi-Fi credentials, runtime databases, signing identities, or recovery backups.
-
-## Requirements
-
-- Go 1.25 or newer.
-- Node.js 22 or newer and npm for the Electron app.
-- macOS 14 or newer and Xcode Command Line Tools for native apps and Keychain-backed identity.
-- Python 3 for repository helper scripts and tests.
-- ESP-IDF 5.5.2 for firmware builds; see [firmware development](docs/firmware.md).
-
-The production runtime identity path requires macOS and CGO. Other platforms can build parts of the Go code, but do not provide the production Keychain identity backend.
-
-## Build and run the local runtime
+Requires macOS, Go 1.25, Xcode command-line tools (for the Keychain bridge).
 
 ```sh
 go mod download
 make build
-mkdir -p "$HOME/ProjectZero-dev"
-bin/zerod --data "$HOME/ProjectZero-dev" --local-only
-```
-
-In another terminal:
-
-```sh
-bin/zero --socket "$HOME/ProjectZero-dev/zero.sock" status
-bin/zero --socket "$HOME/ProjectZero-dev/zero.sock" doctor
-```
-
-This uses a separate development data directory. Do not point a development daemon at a production database. The local-only mode does not start the node listener.
-
-## Electron desktop app
-
-```sh
-cd apps/desktop
-npm ci
-npm run dev
-```
-
-The Electron client connects to the local runtime socket under `~/Library/Application Support/ProjectZero/zero.sock`. Start a compatible local runtime separately. The repository does not include a signed or notarized installer; `npm run build` creates an unsigned development build. Packaging and signing depend on an owner-managed Apple Developer identity and are not performed by public CI.
-
-## Native macOS apps
-
-```sh
-swift test --package-path apps/macos
-swift build --package-path apps/macos
-```
-
-For the native development workflow, see [development and release](docs/development.md). Installing or replacing a runtime on a personal Mac is a separate, explicit operation.
-
-## Development checks
-
-```sh
 make test
-python3 tools/release-gen.py --check
-python3 tools/schema-gen.py --check
-cd apps/desktop
-npm ci
-npm test
-npm run typecheck
-npm run lint
 ```
 
-The firmware host fixtures and ESP-IDF build are separate: `bash tools/test-firmware.sh`. A successful host build does not establish physical hardware acceptance. See [firmware development](docs/firmware.md).
+`make test` disables module-network access and runs Go tests with the race
+detector. A fresh machine must download dependencies first. The cgo bridge
+uses Security.framework; there is no plaintext fallback for runtime keys.
 
-## Versions
+## Run
 
-`core/release/manifest.json` is the source for the runtime product version, build identifier, wire protocols, render schemas and database version. Run `python3 tools/release-gen.py --check` to verify generated language bindings. Do not infer wire compatibility from the product version. Electron's npm package version is managed independently in `apps/desktop/package.json`.
+```sh
+bin/zerod --data .runtime/live
+bin/zero --socket .runtime/live/zero.sock status
+bin/zero --socket .runtime/live/zero.sock session start 'Project Zero'
+bin/zero --socket .runtime/live/zero.sock session pause
+bin/zero --socket .runtime/live/zero.sock session show
+```
 
-Release notes and known limitations are in [CHANGELOG.md](CHANGELOG.md). For architecture, see [docs/architecture.md](docs/architecture.md).
+Node networking defaults to loopback. Use `--listen :7443` for an explicitly
+enabled LAN listener. TLS always requires enrolled client certificates.
+`--local-only` runs the Unix API without network identity. Default data location
+when `--data` is omitted is `~/Library/Application Support/ProjectZero`.
 
-## Contributing
+## Pair the simulator
 
-Issues and pull requests are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) and the [Code of Conduct](CODE_OF_CONDUCT.md) first. Security issues should be reported privately using GitHub's **Report a vulnerability** feature.
+```sh
+bin/zero-simulator --init
+# Compare the displayed fingerprint, then substitute it below.
+bin/zero --socket .runtime/live/zero.sock nodes pair desk-simulator \
+  .runtime/simulator/node.csr VERIFIED_FINGERPRINT > .runtime/simulator/enrollment.json
+bin/zero-simulator --enrollment .runtime/simulator/enrollment.json
+bin/zero --socket .runtime/live/zero.sock grants set \
+  '{"principal":"owner","capability":"display.render","target":"desk-simulator","state":"ALWAYS_ALLOWED"}'
+bin/zero --socket .runtime/live/zero.sock grants set \
+  '{"principal":"node:desk-simulator","capability":"session.toggle","target":"runtime","state":"ALWAYS_ALLOWED"}'
+bin/zero-simulator
+```
+
+Press Enter in the connected simulator to send a button event. Offline input is
+discarded. Starting/pausing/resuming the session queues a display update.
+The simulator stores its private test identity under its ignored owner-only directory.
+
+## Approvals and explanations
+
+```sh
+bin/zero --socket .runtime/live/zero.sock capabilities invoke desk-simulator display.render '{"project":"Hello"}'
+bin/zero --socket .runtime/live/zero.sock approvals list
+bin/zero --socket .runtime/live/zero.sock approvals approve INVOCATION_ID
+bin/zero --socket .runtime/live/zero.sock privacy audit
+bin/zero --socket .runtime/live/zero.sock events query
+```
+
+Inspect exact target/input/hash before approving. DENIED wins over a prior
+approval; SESSION_ALLOWED needs an RFC3339 `expires` value. A request ID is an
+idempotency key: reuse with changed input is rejected. All ordinary mutating
+commands accept `--dry-run`; pairing has its own explicit verification flow.
+
+`events replay` rebuilds the session projection without performing effects.
+The audit hash chain provides local tamper evidence, not protection against
+an attacker controlling the owner account.
+
+## Development LaunchAgent
+
+`python3 tools/launch-agent.py` generates a plist without loading it.
+Use `--install` to opt in. Unload with
+`launchctl bootout gui/$(id -u)/dev.projectzero.zerod`.
+Keep the binary path stable while it is loaded.
+
+## Physical firmware
+
+Pinned ESP-IDF 5.5.2, esp_websocket_client 1.6.1, mDNS 1.9.1.
+Read `docs/runbooks/hardware-recovery.md` before any flash.
+
+```sh
+source .runtime/toolchains/esp-idf/export.sh
+idf.py -C nodes/esp32-desk build
+idf.py -C nodes/esp32-desk -p "$ZERO_PORT" -b 115200 flash
+```
+
+The firmware initially displays its key fingerprint and accepts `CSR` over
+115200-baud serial. The private key never leaves the device. Provisioning
+supplies a signed enrollment certificate, CA, runtime endpoint, timestamp, and
+Wi-Fi credentials over the owner-controlled USB connection.
+
+Real hardware acceptance, interruption tests, and the 24-hour soak are tracked
+separately from software tests. See the implementation plan and evidence files;
+building firmware alone does not establish a completed physical milestone.
+
+## Current acceptance status
+
+The physical manual session loop is working and user-confirmed. The 24-hour
+hardware soak is in progress; this is not yet an accepted v0.1 release.
+See [acceptance evidence](docs/evidence/2026-09-08-acceptance.md) for verified
+results and remaining work.
+
+## v0.2 development preview
+
+Independent project/context, local intents, Git status, native menu bar and
+focus-reminder development now proceeds while Codex observation remains
+unavailable. See [development setup](docs/runbooks/v02-development.md). The
+preview uses separate data and does not replace the physical v0.1 runtime.

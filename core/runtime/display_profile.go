@@ -5,7 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"github.com/hemang-doshi/project-zero/core/protocol"
+	"projectzero.local/zero/core/protocol"
 	"strings"
 	"unicode/utf8"
 )

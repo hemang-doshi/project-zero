@@ -1,22 +1,37 @@
 import { ipcMain, type BrowserWindow } from 'electron'
 import { randomUUID } from 'node:crypto'
-import { join } from 'node:path'
+import { realpathSync } from 'node:fs'
+import { isAbsolute, join } from 'node:path'
 import {
   validateOp,
   type ArtworkPayload,
   type CommandPayload,
+  type ConversationNewPayload,
   type DevicesListPayload,
   type DevicesListResult,
   type ProjectPayload,
+  type ProviderPermissionPayload,
+  type ProjectListItem,
+  type PromptSubmitPayload,
+  type PromptDecidePayload,
   type SkillsDiscoverPayload,
   type SkillsDiscoverResult,
   type TelemetrySample,
+  type TelemetryPoint,
   type ThreadGetPayload
 } from '../shared/ipc'
 import { applyPrefsPatch, type Prefs } from './prefs'
 import { createBridgePair, type BridgeDeps, type HarnessId, type RpcEvent } from './bridges'
-import { defaultOpenCodeDbPath, readOpenCodeSessionStore } from './opencode-sessions'
+import {
+  defaultOpenCodeDbPath,
+  readOpenCodeSession,
+  readOpenCodeSessionStore
+} from './opencode-sessions'
 import { artworkDataUrl } from './artwork-image'
+import { searchSkillsCatalog, type CatalogSkill } from './skills-catalog'
+import type { SkillLearningStore } from './skills-learning'
+import { PromptGateway, type PromptRequest } from './prompt-gateway'
+import { dispatchProviderPrompt, ProviderDispatchError } from './provider-dispatch'
 import type { CockpitModel, ModelUpdate } from './cockpit-model'
 
 export type PrefsStoreLike = {
@@ -31,8 +46,13 @@ export type SocketDeps = {
   store: PrefsStoreLike
   pickImage: () => Promise<string | null>
   sampleTelemetry: () => Promise<TelemetrySample>
+  telemetryHistory?: () => TelemetryPoint[]
+  importWallpaper?: (source: string) => string
   listDevices: (refreshBt: boolean) => Promise<DevicesListResult>
   discoverSkills: (refresh: boolean) => Promise<SkillsDiscoverResult>
+  searchSkills?: (query: string) => Promise<CatalogSkill[]>
+  skillLearning?: SkillLearningStore
+  providerDispatch?: (request: PromptRequest) => Promise<{ turnId: string; threadId?: string }>
   openCodeDbPath?: string
 }
 
@@ -50,9 +70,8 @@ export function bridgePair(): BridgeDeps {
 }
 
 export function registerIpcHandlers(deps: SocketDeps): void {
-  ipcMain.handle('zero:invoke', (_event, op: unknown, payload: unknown) =>
-    dispatch(op, payload, deps)
-  )
+  const invoke = createDispatch(deps)
+  ipcMain.handle('zero:invoke', (_event, op: unknown, payload: unknown) => invoke(op, payload))
 }
 
 export function attachCockpitPush(model: CockpitModel, win: BrowserWindow): void {
@@ -77,6 +96,30 @@ function projectPath(id: string): string {
   return `/v0.1/projects/${encodeURIComponent(id)}`
 }
 
+function projectList(value: unknown): ProjectListItem[] {
+  if (typeof value !== 'object' || value === null) {
+    throw new Error('Malformed projects response')
+  }
+  const raw = (value as { projects?: unknown }).projects
+  if (raw === null) return [] // Go encodes a nil slice as null for a valid empty registry.
+  if (!Array.isArray(raw)) throw new Error('Malformed projects response')
+  const projects = raw
+  if (projects.length > 500) throw new Error('Projects response too large')
+  return projects.flatMap((project) => {
+    if (typeof project !== 'object' || project === null) throw new Error('Malformed project row')
+    const row = project as Record<string, unknown>
+    if (
+      typeof row.id !== 'string' ||
+      !row.id ||
+      typeof row.name !== 'string' ||
+      typeof row.path !== 'string'
+    ) {
+      throw new Error('Malformed project row')
+    }
+    return row.removed === true ? [] : [{ id: row.id, name: row.name, path: row.path }]
+  })
+}
+
 function buildCommand(
   op: string,
   body?: Record<string, unknown>
@@ -93,10 +136,191 @@ function listOf(result: unknown): unknown[] {
   return Array.isArray(data) ? data : []
 }
 
+function boundCodexThread(value: unknown): unknown {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return null
+  const thread = value as Record<string, unknown>
+  if (!Array.isArray(thread['turns'])) return thread
+  const turns: unknown[] = []
+  let itemBudget = 400
+  let turnBudget = 400
+  for (let index = thread['turns'].length - 1; index >= 0 && turnBudget > 0; index -= 1) {
+    const rawTurn = thread['turns'][index]
+    if (typeof rawTurn !== 'object' || rawTurn === null || Array.isArray(rawTurn)) continue
+    const turn = rawTurn as Record<string, unknown>
+    const rawItems = Array.isArray(turn['items']) ? turn['items'] : []
+    if (rawItems.length > 0 && itemBudget === 0) break
+    const items = rawItems.slice(Math.max(0, rawItems.length - itemBudget))
+    itemBudget -= items.length
+    turnBudget -= 1
+    turns.unshift({ ...turn, items })
+  }
+  return { ...thread, turns }
+}
+
+type SkillLearningItem = { kind: 'exec'; command: string } | { kind: 'tool'; tool: string }
+
+function recordOf(value: unknown): Record<string, unknown> | null {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null
+}
+
+function codexLearningItems(value: unknown): SkillLearningItem[] {
+  const thread = recordOf(value)
+  if (!Array.isArray(thread?.['turns'])) return []
+  const items: SkillLearningItem[] = []
+  for (const rawTurn of thread['turns']) {
+    const turn = recordOf(rawTurn)
+    if (!Array.isArray(turn?.['items'])) continue
+    for (const rawItem of turn['items']) {
+      const item = recordOf(rawItem)
+      if (item?.['type'] === 'commandExecution' && typeof item['command'] === 'string') {
+        items.push({ kind: 'exec', command: item['command'] })
+      } else if (
+        ['mcpToolCall', 'dynamicToolCall', 'functionCallOutput', 'webSearch', 'fileChange'].includes(
+          String(item?.['type'] ?? '')
+        )
+      ) {
+        const tool = item?.['type'] === 'functionCallOutput' ? item['name'] :
+          item?.['type'] === 'webSearch' ? 'webSearch' :
+            item?.['type'] === 'fileChange' ? 'fileChange' : item?.['tool']
+        if (typeof tool === 'string') items.push({ kind: 'tool', tool })
+      }
+      if (items.length >= 400) return items
+    }
+  }
+  return items
+}
+
+function openCodeLearningItems(value: unknown): SkillLearningItem[] {
+  const session = recordOf(value)
+  if (!Array.isArray(session?.['messages'])) return []
+  const items: SkillLearningItem[] = []
+  for (const rawMessage of session['messages']) {
+    const message = recordOf(rawMessage)
+    if (!Array.isArray(message?.['parts'])) continue
+    for (const rawPart of message['parts']) {
+      const part = recordOf(rawPart)
+      if (part?.['type'] !== 'tool' || typeof part['tool'] !== 'string') continue
+      const state = recordOf(part['state'])
+      const input = recordOf(state?.['input'])
+      if (part['tool'] === 'bash' && typeof input?.['command'] === 'string') {
+        items.push({ kind: 'exec', command: input['command'] })
+      } else {
+        items.push({ kind: 'tool', tool: part['tool'] })
+      }
+      if (items.length >= 400) return items
+    }
+  }
+  return items
+}
+
+function promptRequest(
+  value: unknown,
+  decision = false
+): PromptRequest & Partial<PromptDecidePayload> {
+  if (typeof value !== 'object' || value === null || Array.isArray(value))
+    throw new Error('Malformed prompt')
+  const row = value as Record<string, unknown>
+  const draft = Object.hasOwn(row, 'draftId')
+  const required = decision
+    ? draft
+      ? ['provider', 'model', 'cwd', 'draftId', 'text', 'holdId', 'action']
+      : ['provider', 'model', 'threadId', 'text', 'holdId', 'action']
+    : draft
+      ? ['provider', 'model', 'cwd', 'draftId', 'text']
+      : ['provider', 'model', 'threadId', 'text']
+  if (
+    Object.keys(row).length !== required.length ||
+    required.some((key) => !Object.hasOwn(row, key))
+  )
+    throw new Error('Malformed prompt')
+  if (
+    (row.provider !== 'codex' && row.provider !== 'opencode') ||
+    typeof row.model !== 'string' ||
+    row.model.length < 1 ||
+    row.model.length > 120 ||
+    (draft
+      ? typeof row.cwd !== 'string' ||
+        !isAbsolute(row.cwd) ||
+        row.cwd.length > 4096 ||
+        typeof row.draftId !== 'string' ||
+        !/^[A-Za-z0-9_-]{1,120}$/.test(row.draftId)
+      : typeof row.threadId !== 'string' || row.threadId.length < 1 || row.threadId.length > 120) ||
+    typeof row.text !== 'string' ||
+    !row.text.trim() ||
+    Buffer.byteLength(row.text, 'utf8') > 32_000 ||
+    (decision &&
+      (typeof row.holdId !== 'string' ||
+        !/^[0-9a-f-]{36}$/i.test(row.holdId) ||
+        (row.action !== 'cancel' && row.action !== 'send-once')))
+  )
+    throw new Error('Malformed prompt')
+  return row as PromptSubmitPayload & Partial<PromptDecidePayload>
+}
+
 export function createDispatch(
   deps: SocketDeps,
   getBridgePair: () => BridgeDeps = getBridges
 ): (op: unknown, payload?: unknown) => Promise<unknown> {
+  const createdOpenCodeSessions = new Map<string, string>()
+  const draftBindings = new Map<
+    string,
+    { provider: 'codex' | 'opencode'; cwd: string; threadId: string }
+  >()
+  const dispatch = async (
+    request: PromptRequest
+  ): Promise<{ turnId: string; threadId?: string }> => {
+    if (deps.providerDispatch) return deps.providerDispatch(request)
+    let threadId = request.threadId
+    if (!threadId) {
+      if (!request.cwd || !request.draftId) throw new Error('Malformed draft')
+      const cwd = realpathSync(request.cwd)
+      const bound = draftBindings.get(request.draftId)
+      if (bound) {
+        if (bound.provider !== request.provider || bound.cwd !== cwd)
+          throw new Error('Draft binding changed')
+        threadId = bound.threadId
+      } else {
+        const created = (await newConversation({
+          provider: request.provider,
+          cwd,
+          model: request.model
+        })) as { threadId: string }
+        threadId = created.threadId
+        draftBindings.set(request.draftId, { provider: request.provider, cwd, threadId })
+        if (request.provider === 'opencode') createdOpenCodeSessions.set(threadId, cwd)
+      }
+    }
+    try {
+      const result = await dispatchProviderPrompt(
+        { ...request, threadId },
+        {
+          codex: getBridgePair().codex,
+          opencode: getBridgePair().ocp,
+          openCodeSession: (id) => {
+            const createdCwd = createdOpenCodeSessions.get(id)
+            if (createdCwd) return { id, directory: createdCwd }
+            const store = readOpenCodeSessionStore(deps.openCodeDbPath ?? defaultOpenCodeDbPath())
+            const session = store.groups
+              .flatMap((group) => group.sessions)
+              .find((row) => row.id === id)
+            return session ? { id: session.id, directory: session.directory } : null
+          },
+          onDiagnostic: (entry) => console.warn('Zero provider dispatch failed', entry)
+        }
+      )
+      return request.draftId ? { ...result, threadId } : result
+    } catch (error) {
+      if (request.draftId)
+        throw new ProviderDispatchError(
+          error instanceof ProviderDispatchError ? error.reason : 'dispatch-unavailable',
+          threadId
+        )
+      throw error
+    }
+  }
+  const gateway = new PromptGateway(dispatch)
   const bridgeState = async (harness: 'codex' | 'ocp'): Promise<unknown> => {
     const bridge = getBridgePair()[harness]
     return { state: bridge.state, lastDiagnostic: bridge.lastDiagnostic }
@@ -137,7 +361,123 @@ export function createDispatch(
     const result = await bridge.send('thread/read', { threadId, includeTurns: true })
     const root =
       typeof result === 'object' && result !== null ? (result as Record<string, unknown>) : {}
-    return { harness: 'codex', thread: root['thread'] ?? null }
+    deps.skillLearning?.observe('codex', threadId, codexLearningItems(root['thread']))
+    return { harness: 'codex', thread: boundCodexThread(root['thread']) }
+  }
+  const prepareOpenCode = async (payload: unknown): Promise<unknown> => {
+    const { threadId } = (payload ?? {}) as Partial<ThreadGetPayload>
+    if (typeof threadId !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(threadId))
+      throw new Error('Malformed OpenCode session id')
+    const bridge = getBridgePair().ocp
+    if (bridge.state !== 'live') throw new Error('not connected')
+    const store = readOpenCodeSessionStore(deps.openCodeDbPath ?? defaultOpenCodeDbPath())
+    const session = store.groups
+      .flatMap((group) => group.sessions)
+      .find((row) => row.id === threadId)
+    if (!session) throw new Error('OpenCode session not found')
+    const result = await bridge.send('session/load', {
+      sessionId: threadId,
+      cwd: session.directory,
+      mcpServers: []
+    })
+    const root =
+      typeof result === 'object' && result !== null ? (result as Record<string, unknown>) : {}
+    const configs = Array.isArray(root['configOptions']) ? root['configOptions'] : []
+    const model = configs.find(
+      (value) =>
+        typeof value === 'object' &&
+        value !== null &&
+        (value as Record<string, unknown>)['id'] === 'model'
+    ) as Record<string, unknown> | undefined
+    const options = Array.isArray(model?.['options']) ? model.options : []
+    const models = options.flatMap((value) => {
+      if (typeof value !== 'object' || value === null) return []
+      const row = value as Record<string, unknown>
+      if (typeof row['value'] !== 'string' || row['value'] === '') return []
+      return [
+        { id: row['value'], name: typeof row['name'] === 'string' ? row['name'] : row['value'] }
+      ]
+    })
+    return {
+      sessionId: threadId,
+      cwd: session.directory,
+      currentModel: typeof model?.['currentValue'] === 'string' ? model.currentValue : null,
+      models
+    }
+  }
+  const newConversation = async (payload: unknown): Promise<unknown> => {
+    if (typeof payload !== 'object' || payload === null || Array.isArray(payload))
+      throw new Error('Malformed conversation request')
+    const { provider, cwd, model } = payload as Partial<ConversationNewPayload>
+    if (
+      (provider !== 'codex' && provider !== 'opencode') ||
+      typeof cwd !== 'string' ||
+      !isAbsolute(cwd) ||
+      typeof model !== 'string' ||
+      model === '' ||
+      model.length > 120
+    )
+      throw new Error('Malformed conversation request')
+    const bridge = provider === 'codex' ? getBridgePair().codex : getBridgePair().ocp
+    if (bridge.state !== 'live') throw new Error('not connected')
+    if (provider === 'codex') {
+      const result = await bridge.send('thread/start', {
+        cwd,
+        model,
+        approvalPolicy: 'on-request',
+        sandbox: 'workspace-write'
+      })
+      const root =
+        typeof result === 'object' && result !== null ? (result as Record<string, unknown>) : {}
+      const thread =
+        typeof root['thread'] === 'object' && root['thread'] !== null
+          ? (root['thread'] as Record<string, unknown>)
+          : {}
+      if (typeof thread['id'] !== 'string' || thread['id'] === '')
+        throw new Error('Malformed thread creation')
+      return { provider, threadId: thread['id'] }
+    }
+    const result = await bridge.send('session/new', { cwd, mcpServers: [] })
+    const root =
+      typeof result === 'object' && result !== null ? (result as Record<string, unknown>) : {}
+    if (typeof root['sessionId'] !== 'string' || root['sessionId'] === '')
+      throw new Error('Malformed session creation')
+    return { provider, threadId: root['sessionId'] }
+  }
+  const decideProviderPermission = (payload: unknown): { accepted: true } => {
+    if (typeof payload !== 'object' || payload === null || Array.isArray(payload))
+      throw new Error('Malformed permission decision')
+    const row = payload as Record<string, unknown>
+    const { provider, requestId, action, optionId } = row as Partial<ProviderPermissionPayload>
+    const expectedKeys =
+      action === 'allow-once' && provider === 'opencode'
+        ? ['provider', 'requestId', 'action', 'optionId']
+        : ['provider', 'requestId', 'action']
+    if (
+      Object.keys(row).length !== expectedKeys.length ||
+      expectedKeys.some((key) => !Object.hasOwn(row, key)) ||
+      (provider !== 'codex' && provider !== 'opencode') ||
+      (typeof requestId !== 'string' && typeof requestId !== 'number') ||
+      requestId === '' ||
+      (action !== 'allow-once' && action !== 'reject') ||
+      (provider === 'opencode' &&
+        action === 'allow-once' &&
+        (typeof optionId !== 'string' || optionId === ''))
+    )
+      throw new Error('Malformed permission decision')
+    const bridge = provider === 'codex' ? getBridgePair().codex : getBridgePair().ocp
+    if (bridge.state !== 'live') throw new Error('not connected')
+    if (provider === 'opencode') {
+      bridge.respond(
+        requestId,
+        action === 'allow-once'
+          ? { outcome: { outcome: 'selected', optionId } }
+          : { outcome: { outcome: 'cancelled' } }
+      )
+    } else {
+      bridge.respond(requestId, { decision: action === 'allow-once' ? 'accept' : 'decline' })
+    }
+    return { accepted: true }
   }
   // The daemon caches artwork by content digest (entities kind='artwork'); the
   // cockpit display projection deliberately omits the blob, so this op reads
@@ -172,8 +512,10 @@ export function createDispatch(
         deps.store.save(next)
         return next
       }
-      case 'wallpaper.pick':
-        return deps.pickImage()
+      case 'wallpaper.pick': {
+        const source = await deps.pickImage()
+        return source === null ? null : (deps.importWallpaper?.(source) ?? source)
+      }
       case 'codex.connect':
         return getBridgePair().codex.connect()
       case 'codex.disconnect':
@@ -194,10 +536,38 @@ export function createDispatch(
         return getBridgePair().ocp.disconnect()
       case 'ocp.send':
         throw new Error('send blocked until runtime path ships')
+      case 'prompt.submit':
+        return gateway.submit(promptRequest(payload))
+      case 'prompt.decide': {
+        const request = promptRequest(payload, true)
+        return gateway.decide(request.holdId!, request.action!, request)
+      }
+      case 'conversation.new':
+        return newConversation(payload)
+      case 'provider.permission.decide':
+        return decideProviderPermission(payload)
       case 'ocp.state':
         return bridgeState('ocp')
       case 'ocp.discover':
         return discover('ocp')
+      case 'ocp.thread.get': {
+        const { threadId } = (payload ?? {}) as Partial<ThreadGetPayload>
+        if (typeof threadId !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(threadId))
+          throw new Error('Malformed OpenCode session id')
+        const store = readOpenCodeSessionStore(deps.openCodeDbPath ?? defaultOpenCodeDbPath())
+        if (
+          !store.groups.some((group) => group.sessions.some((session) => session.id === threadId))
+        )
+          throw new Error('OpenCode session not found')
+        const session = readOpenCodeSession(
+          deps.openCodeDbPath ?? defaultOpenCodeDbPath(),
+          threadId
+        )
+        deps.skillLearning?.observe('opencode', threadId, openCodeLearningItems(session))
+        return { harness: 'opencode', session }
+      }
+      case 'ocp.thread.prepare':
+        return prepareOpenCode(payload)
       case 'snapshot.fetch':
         return deps.fetchSnapshot(deps.socketPath)
       case 'command.send': {
@@ -210,8 +580,12 @@ export function createDispatch(
         if (typeof id !== 'string') throw new Error('Malformed project payload')
         return deps.fetchSnapshot(deps.socketPath, { path: projectPath(id) })
       }
+      case 'projects.list':
+        return projectList(await deps.fetchSnapshot(deps.socketPath, { path: '/v0.1/projects' }))
       case 'telemetry.sample':
         return deps.sampleTelemetry()
+      case 'telemetry.history':
+        return deps.telemetryHistory?.() ?? []
       case 'devices.list': {
         const { refreshBt } = (payload ?? {}) as Partial<DevicesListPayload>
         return deps.listDevices(refreshBt === true)
@@ -234,10 +608,62 @@ export function createDispatch(
           } satisfies SkillsDiscoverResult
         }
       }
+      case 'skills.search': {
+        if (
+          typeof payload !== 'object' ||
+          payload === null ||
+          Array.isArray(payload) ||
+          Object.keys(payload).length !== 1
+        )
+          throw new Error('Malformed catalog query')
+        const query = (payload as { query?: unknown }).query
+        if (typeof query !== 'string' || query.trim().length < 2 || query.length > 80) {
+          throw new Error('Malformed catalog query')
+        }
+        return (deps.searchSkills ?? searchSkillsCatalog)(query.trim())
+      }
+      case 'skills.learning.get':
+        return deps.skillLearning?.get() ?? { learningEnabled: false, proposals: [] }
+      case 'skills.learning.set': {
+        if (typeof payload !== 'object' || payload === null || Array.isArray(payload) ||
+          Object.keys(payload).length !== 1 || typeof (payload as Record<string, unknown>)['enabled'] !== 'boolean') {
+          throw new Error('Malformed skill learning setting')
+        }
+        return deps.skillLearning?.setLearningEnabled((payload as { enabled: boolean }).enabled) ??
+          { learningEnabled: false, proposals: [] }
+      }
+      case 'skills.learning.observe':
+      case 'skills.learning.propose': {
+        if (typeof payload !== 'object' || payload === null || Array.isArray(payload)) throw new Error('Malformed skill learning evidence')
+        const row = payload as Record<string, unknown>
+        if (Object.keys(row).length !== 3 || typeof row['provider'] !== 'string' ||
+          typeof row['sourceId'] !== 'string' || !Array.isArray(row['items'])) throw new Error('Malformed skill learning evidence')
+        const store = deps.skillLearning
+        if (!store) return []
+        if (op === 'skills.learning.observe') return store.observe(row['provider'], row['sourceId'], row['items'])
+        return store.proposeFromWork(row['provider'], row['sourceId'], row['items'])
+      }
+      case 'skills.learning.edit': {
+        if (typeof payload !== 'object' || payload === null || Array.isArray(payload)) throw new Error('Malformed skill proposal edit')
+        const row = payload as Record<string, unknown>
+        if (Object.keys(row).length !== 3 || typeof row['proposalId'] !== 'string' ||
+          typeof row['slug'] !== 'string' || typeof row['draft'] !== 'string') throw new Error('Malformed skill proposal edit')
+        return deps.skillLearning?.updateDraft(row['proposalId'], row['slug'], row['draft']) ?? null
+      }
+      case 'skills.learning.reject':
+      case 'skills.learning.approve':
+      case 'skills.learning.rollback': {
+        if (typeof payload !== 'object' || payload === null || Array.isArray(payload) ||
+          Object.keys(payload).length !== 1 || typeof (payload as Record<string, unknown>)['proposalId'] !== 'string') {
+          throw new Error('Malformed skill proposal action')
+        }
+        const proposalId = (payload as { proposalId: string }).proposalId
+        if (!deps.skillLearning) return null
+        if (op === 'skills.learning.reject') return deps.skillLearning.reject(proposalId)
+        if (op === 'skills.learning.approve') return deps.skillLearning.approve(proposalId)
+        deps.skillLearning.rollback(proposalId)
+        return deps.skillLearning.get()
+      }
     }
   }
-}
-
-async function dispatch(op: unknown, payload: unknown, deps: SocketDeps): Promise<unknown> {
-  return createDispatch(deps)(op, payload)
 }

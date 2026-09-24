@@ -4,7 +4,8 @@ import type {
   TelemetryIo,
   TelemetryMemory,
   TelemetryNet,
-  TelemetrySample
+  TelemetrySample,
+  TelemetryProcess
 } from '../../../shared/ipc'
 
 export type Tone = 'neutral' | 'healthy' | 'attention' | 'error'
@@ -88,11 +89,33 @@ export type CockpitAudio = {
   status: string
 }
 
+export type CockpitListeningTrack = {
+  track: string
+  artist: string
+  uri: string | null
+  observedAt: string
+}
+
+export type CockpitListeningSession = {
+  id: string
+  source: string
+  startedAt: string
+  lastObservedAt: string
+  endedAt: string | null
+  playbackState: string
+  activeDurationMs: number
+  activeFrom: string | null
+  contextType: string | null
+  contextUri: string | null
+  tracks: CockpitListeningTrack[]
+}
+
 export type CockpitSnapshot = {
   version: string
   revision: number
   timestamp: string
   session: CockpitSession
+  listeningSession: CockpitListeningSession | null
   integrations: CockpitIntegration[]
   nodes: CockpitNode[]
   events: CockpitEvent[]
@@ -111,7 +134,8 @@ export const EMPTY_MACHINE_SAMPLE: MachineSample = {
   memory: null,
   io: null,
   net: null,
-  gpu: null
+  gpu: null,
+  processes: []
 }
 
 // Lenient parse of the telemetry.sample payload from the main-process
@@ -155,7 +179,23 @@ export function parseTelemetry(value: unknown): MachineSample {
     memory: memoryFamily,
     io: io === null ? null : ioCell(io),
     net: net === null ? null : netCell(net),
-    gpu: optNum(root.gpu)
+    gpu: optNum(root.gpu),
+    processes: Array.isArray(root.processes)
+      ? root.processes
+          .flatMap((value) => {
+            const process = asRecord(value)
+            if (process === null || !isNum(process.pid) || !isStr(process.name)) return []
+            return [
+              {
+                pid: process.pid,
+                name: process.name.slice(0, 80),
+                cpuPercent: optNum(process.cpuPercent),
+                residentBytes: optNum(process.residentBytes)
+              } satisfies TelemetryProcess
+            ]
+          })
+          .slice(0, 10)
+      : []
   }
 }
 
@@ -370,6 +410,7 @@ function parseSnapshotUncached(value: unknown): CockpitSnapshot | null {
     revision: root.revision,
     timestamp: root.timestamp,
     session,
+    listeningSession: parseListeningSession(root.listening_session),
     integrations,
     nodes,
     events: parseEvents(root.events),
@@ -385,6 +426,51 @@ function parseSnapshotUncached(value: unknown): CockpitSnapshot | null {
       : [],
     audio: parseAudio(root.audio),
     firings: Array.isArray(root.firings) ? root.firings.length : 0
+  }
+}
+
+function parseListeningSession(value: unknown): CockpitListeningSession | null {
+  const row = asRecord(value)
+  if (
+    row === null ||
+    !isStr(row.id) ||
+    !isStr(row.source) ||
+    !isStr(row.started_at) ||
+    !isStr(row.last_observed_at) ||
+    !isStr(row.playback_state) ||
+    !isNum(row.active_duration_ms)
+  )
+    return null
+  const tracks = Array.isArray(row.tracks)
+    ? row.tracks.flatMap((item) => {
+        const track = asRecord(item)
+        return track !== null &&
+          isStr(track.track) &&
+          isStr(track.artist) &&
+          isStr(track.observed_at)
+          ? [
+              {
+                track: track.track,
+                artist: track.artist,
+                uri: isStr(track.uri) ? track.uri : null,
+                observedAt: track.observed_at
+              }
+            ]
+          : []
+      })
+    : []
+  return {
+    id: row.id,
+    source: row.source,
+    startedAt: row.started_at,
+    lastObservedAt: row.last_observed_at,
+    endedAt: isStr(row.ended_at) ? row.ended_at : null,
+    playbackState: row.playback_state,
+    activeDurationMs: row.active_duration_ms,
+    activeFrom: isStr(row.active_from) ? row.active_from : null,
+    contextType: isStr(row.context_type) ? row.context_type : null,
+    contextUri: isStr(row.context_uri) ? row.context_uri : null,
+    tracks
   }
 }
 
@@ -432,13 +518,21 @@ export function selectSpotify(snapshot: unknown): SpotifyMedia | null {
 }
 
 export function connectivity(conn: RuntimeConnState, snapshot: unknown): Connectivity {
-  if (conn === 'connecting' || conn === 'reconnecting') {
+  const parsed = parseSnapshot(snapshot)
+  if (conn === 'connecting') {
+    return { label: 'CONNECTING', detail: 'Connecting to Zero runtime', tone: 'attention' }
+  }
+  if (conn === 'reconnecting' && parsed !== null) {
     return { label: 'RECONNECTING', detail: 'Runtime reconnecting', tone: 'attention' }
   }
   if (conn !== 'live') {
-    return { label: 'OFFLINE', detail: 'Runtime offline', tone: 'error' }
+    return {
+      label: 'OFFLINE',
+      detail:
+        conn === 'reconnecting' ? 'Runtime unavailable · waiting to reconnect' : 'Runtime offline',
+      tone: 'error'
+    }
   }
-  const parsed = parseSnapshot(snapshot)
   if (parsed === null) {
     return { label: 'OFFLINE', detail: 'Runtime unavailable', tone: 'error' }
   }
@@ -740,21 +834,21 @@ export type Harness = 'codex' | 'opencode'
 export type BridgeConnState = 'unknown' | 'disconnected' | 'connecting' | 'live'
 
 export const HARNESS_MODELS: Record<Harness, string[]> = {
-  codex: ['gpt-5.6-luna', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-6-astra'],
-  opencode: ['muse-spark-1.3']
+  codex: [],
+  opencode: []
 }
 
 export const HARNESS_DEFAULT_MODEL: Record<Harness, string> = {
   codex: 'gpt-5.6-luna',
-  opencode: 'muse-spark-1.3'
+  opencode: ''
 }
 
 export const mirrorLabel = (harness: Harness): string => `zero-meta/${harness}/events.jsonl`
 
 export function harnessLockWarning(model: string, harness: Harness): string | null {
   if (HARNESS_MODELS[harness].includes(model)) return null
-  const home = harness === 'codex' ? 'Codex (GPT only)' : 'OpenCode (Muse Spark only)'
-  return `Model ${model} is not allowed in the ${harness} harness. It stays locked to its home harness (${home}); this mismatch is mirrored, not sent.`
+  if (model === '') return null
+  return `Model ${model} has not been advertised by the active ${harness} session and cannot be sent.`
 }
 
 export type BridgeEvent = {
@@ -924,7 +1018,7 @@ const folderOptions = (rows: unknown[]): OpenCodeFolderGroup[] => {
 }
 
 export const SEND_BLOCKED_NOTICE =
-  'Send is honestly blocked in this build: the daemon command path has no conversational send yet.'
+  'Connect the provider, open a conversation with a verified directory, and choose an advertised model to send.'
 
 export const VOICE_DISABLED_NOTICE =
   'Voice input is disabled in this build; use system dictation instead.'

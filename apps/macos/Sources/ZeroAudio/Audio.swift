@@ -1,4 +1,4 @@
-// Spotify-only level tap; audio is not recorded.
+// Adapted from Times Gate host/macos/AuxDeckAudio.swift; Spotify-only tap, no recording.
 import ZeroKit
 import CoreAudio
 import AudioToolbox

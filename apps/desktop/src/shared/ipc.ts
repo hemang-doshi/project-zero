@@ -4,7 +4,21 @@ export const OPS = {
   'snapshot.fetch': true,
   'command.send': true,
   'project.get': true,
+  'projects.list': true,
   'skills.discover': true,
+  'skills.search': true,
+  'skills.learning.get': true,
+  'skills.learning.set': true,
+  'skills.learning.observe': true,
+  'skills.learning.propose': true,
+  'skills.learning.edit': true,
+  'skills.learning.reject': true,
+  'skills.learning.approve': true,
+  'skills.learning.rollback': true,
+  'prompt.submit': true,
+  'prompt.decide': true,
+  'conversation.new': true,
+  'provider.permission.decide': true,
   'codex.connect': true,
   'codex.disconnect': true,
   'codex.send': true,
@@ -17,8 +31,11 @@ export const OPS = {
   'ocp.send': true,
   'ocp.state': true,
   'ocp.discover': true,
+  'ocp.thread.get': true,
+  'ocp.thread.prepare': true,
   'wallpaper.pick': true,
   'telemetry.sample': true,
+  'telemetry.history': true,
   'artwork.fetch': true,
   'devices.list': true
 } as const
@@ -27,10 +44,34 @@ export type OpName = keyof typeof OPS
 export const validateOp = (op: string): op is OpName => Object.hasOwn(OPS, op)
 export type CommandPayload = { op: string; body?: Record<string, unknown> }
 export type ProjectPayload = { id: string }
+export type ProjectListItem = { id: string; name: string; path: string }
 export type ArtworkPayload = { id: string }
 export type CodexSendPayload = { method: string; params?: unknown }
 export type ThreadGetPayload = { threadId: string }
 export type SkillsDiscoverPayload = { refresh?: boolean }
+export type PromptSubmitPayload = {
+  provider: 'codex' | 'opencode'
+  model: string
+  text: string
+} & (
+  | { threadId: string; cwd?: never; draftId?: never }
+  | { threadId?: never; cwd: string; draftId: string }
+)
+export type PromptDecidePayload = PromptSubmitPayload & {
+  holdId: string
+  action: 'cancel' | 'send-once'
+}
+export type ConversationNewPayload = {
+  provider: 'codex' | 'opencode'
+  cwd: string
+  model: string
+}
+export type ProviderPermissionPayload = {
+  provider: 'codex' | 'opencode'
+  requestId: string | number
+  action: 'allow-once' | 'reject'
+  optionId?: string
+}
 
 // Wire result of the skills.discover op, produced by the main-process skill
 // discoverer (Task 37D) over lane B's pure discovery layer. Shapes mirror
@@ -50,7 +91,6 @@ export type DiscoveredPluginGroup = {
   id: string
   name: string
   color: string
-  glyph: 'flask' | 'masks' | 'stack' | 'bolt' | 'orb'
   skills: DiscoveredSkill[]
 }
 export type SkillsDiscoverResult = {
@@ -125,4 +165,18 @@ export type TelemetrySample = {
   io: TelemetryIo | null
   net: TelemetryNet | null
   gpu: number | null
+  processes?: TelemetryProcess[]
+}
+
+export type TelemetryProcess = {
+  pid: number
+  name: string
+  cpuPercent: number | null
+  residentBytes: number | null
+}
+
+export type TelemetryPoint = {
+  at: number
+  sample: TelemetrySample
+  failures: string[]
 }

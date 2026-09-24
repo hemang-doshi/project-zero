@@ -117,7 +117,7 @@ void display_init(void) {
   vTaskDelay(pdMS_TO_TICKS(150));
   cmd(0x11, NULL, 0);
   vTaskDelay(pdMS_TO_TICKS(500));
-  // Match the display controller initialization timing and power sequence.
+  // Match Times Gate's Adafruit initR(BLACKTAB) timing/power sequence.
   static const uint8_t frame[]={1,0x2c,0x2d},partial[]={1,0x2c,0x2d,1,0x2c,0x2d};
   static const uint8_t inversion[]={7},power1[]={0xa2,2,0x84},power2[]={0xc5},power3[]={0x0a,0},power4[]={0x8a,0x2a},power5[]={0x8a,0xee},vcom[]={0x0e};
   static const uint8_t gamma_positive[]={2,0x1c,7,0x12,0x37,0x32,0x29,0x2d,0x29,0x25,0x2b,0x39,0,1,3,0x10};

@@ -4,9 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"path/filepath"
-	"github.com/hemang-doshi/project-zero/core/api"
-	"github.com/hemang-doshi/project-zero/core/runtime"
-	"github.com/hemang-doshi/project-zero/sdk/go/client"
+	"projectzero.local/zero/core/api"
+	"projectzero.local/zero/core/runtime"
+	"projectzero.local/zero/sdk/go/client"
 	"testing"
 )
 

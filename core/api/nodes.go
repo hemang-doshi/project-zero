@@ -7,9 +7,9 @@ import (
 	"github.com/coder/websocket"
 	"log"
 	"net/http"
-	"github.com/hemang-doshi/project-zero/core/identity"
-	"github.com/hemang-doshi/project-zero/core/protocol"
-	"github.com/hemang-doshi/project-zero/core/runtime"
+	"projectzero.local/zero/core/identity"
+	"projectzero.local/zero/core/protocol"
+	"projectzero.local/zero/core/runtime"
 	"sync"
 	"time"
 )

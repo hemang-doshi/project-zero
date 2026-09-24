@@ -8,7 +8,7 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"github.com/hemang-doshi/project-zero/core/runtime"
+	"projectzero.local/zero/core/runtime"
 	"time"
 )
 

@@ -6,6 +6,7 @@ import type { BridgeDeps, HarnessId, RpcEvent } from './bridges'
 import { attachBridgePush, createDispatch, type SocketDeps } from './ipc'
 import { defaultPrefs, type Prefs } from './prefs'
 import { PrefsStore } from './prefs'
+import { createSkillLearningStore } from './skills-learning'
 import type { DevicesListResult, TelemetrySample } from '../shared/ipc'
 
 type FakeBridge = {
@@ -17,6 +18,7 @@ type FakeBridge = {
   onEvent: (cb: (ev: RpcEvent) => void) => () => void
   connect: () => Promise<'live'>
   disconnect: () => 'disconnected'
+  respond: (id: string | number, result: unknown) => void
 }
 
 function fakeBridge(state: FakeBridge['state']): FakeBridge {
@@ -40,7 +42,8 @@ function fakeBridge(state: FakeBridge['state']): FakeBridge {
       return () => {}
     },
     connect: () => Promise.resolve('live'),
-    disconnect: () => 'disconnected'
+    disconnect: () => 'disconnected',
+    respond: vi.fn()
   }
 }
 
@@ -67,6 +70,256 @@ const deps = (): SocketDeps => ({
     Promise.resolve({ devices: [], note: 'No local USB or Bluetooth devices seen.' })
   ),
   discoverSkills: vi.fn(() => Promise.resolve({ ok: true, groups: [], selfLearnt: [], note: null }))
+})
+
+describe('projects.list', () => {
+  it('reads only the registered-project endpoint and returns bounded active fields', async () => {
+    const d = deps()
+    d.fetchSnapshot = vi.fn(async () => ({
+      projects: [
+        { id: 'p1', name: 'Zero', path: '/code/zero', aliases: ['secret'] },
+        { id: 'p2', name: 'Old', path: '/code/old', removed: true }
+      ]
+    }))
+    const invoke = createDispatch(d)
+    await expect(invoke('projects.list')).resolves.toEqual([
+      { id: 'p1', name: 'Zero', path: '/code/zero' }
+    ])
+    expect(d.fetchSnapshot).toHaveBeenCalledWith(d.socketPath, { path: '/v0.1/projects' })
+  })
+
+  it('rejects malformed responses rather than inventing an empty list', async () => {
+    const d = deps()
+    d.fetchSnapshot = vi.fn(async () => ({ projects: [{ id: 'p1', name: 'Zero' }] }))
+    await expect(createDispatch(d)('projects.list')).rejects.toThrow('Malformed project row')
+  })
+
+  it('accepts a daemon nil slice as an empty registered-project list', async () => {
+    const d = deps()
+    d.fetchSnapshot = vi.fn(async () => ({ projects: null }))
+    await expect(createDispatch(d)('projects.list')).resolves.toEqual([])
+  })
+})
+
+describe('skills.search', () => {
+  it('uses a bounded, read-only catalog query and rejects extra payload fields', async () => {
+    const d = deps()
+    const candidate = {
+      id: 'owner/repo@skill',
+      source: 'owner/repo',
+      skill: 'skill',
+      url: 'https://skills.sh/owner/repo/skill',
+      installs: '10'
+    }
+    d.searchSkills = vi.fn(async () => [candidate])
+    const invoke = createDispatch(d)
+    await expect(invoke('skills.search', { query: '  react  ' })).resolves.toEqual([candidate])
+    expect(d.searchSkills).toHaveBeenCalledWith('react')
+    await expect(invoke('skills.search', { query: 'react', shell: true })).rejects.toThrow(
+      'Malformed catalog query'
+    )
+    await expect(invoke('skills.search', { query: 'x' })).rejects.toThrow('Malformed catalog query')
+    expect(d.searchSkills).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('prompt gateway IPC', () => {
+  const clean = {
+    provider: 'codex',
+    model: 'gpt-5.6-sol',
+    threadId: 't1',
+    text: 'hello Zero'
+  }
+  it('dispatches only through the gateway and rejects malformed or extra fields', async () => {
+    const d = deps()
+    const providerDispatch = vi.fn(async () => ({ turnId: 'turn-1' }))
+    d.providerDispatch = providerDispatch
+    const invoke = createDispatch(d)
+    await expect(invoke('prompt.submit', clean)).resolves.toEqual({
+      state: 'accepted',
+      turnId: 'turn-1'
+    })
+    expect(providerDispatch).toHaveBeenCalledOnce()
+    await expect(invoke('prompt.submit', { ...clean, bypass: true })).rejects.toThrow(
+      'Malformed prompt'
+    )
+    await expect(invoke('prompt.submit', { ...clean, text: 'x'.repeat(32_001) })).rejects.toThrow(
+      'Malformed prompt'
+    )
+    await expect(invoke('prompt.submit', { ...clean, provider: 'other' })).rejects.toThrow(
+      'Malformed prompt'
+    )
+    await expect(invoke('prompt.submit', { ...clean, provider: 'opencode' })).resolves.toEqual({
+      state: 'accepted',
+      turnId: 'turn-1'
+    })
+    expect(providerDispatch).toHaveBeenCalledTimes(2)
+  })
+
+  it('holds sensitive text until one exact-bound approval, and consumes the hold', async () => {
+    const d = deps()
+    const providerDispatch = vi.fn(async () => ({ turnId: 'turn-2' }))
+    d.providerDispatch = providerDispatch
+    const invoke = createDispatch(d)
+    const sensitive = { ...clean, text: 'password = synthetic-secret-123' }
+    const held = (await invoke('prompt.submit', sensitive)) as { state: string; holdId: string }
+    expect(held.state).toBe('held')
+    expect(providerDispatch).not.toHaveBeenCalled()
+    await expect(
+      invoke('prompt.decide', { ...sensitive, holdId: held.holdId, action: 'send-once' })
+    ).resolves.toEqual({ state: 'accepted', turnId: 'turn-2' })
+    await expect(
+      invoke('prompt.decide', { ...sensitive, holdId: held.holdId, action: 'send-once' })
+    ).resolves.toMatchObject({ state: 'blocked' })
+    expect(providerDispatch).toHaveBeenCalledOnce()
+  })
+})
+
+describe('conversation.new', () => {
+  it('starts a Codex thread in the explicitly selected absolute cwd', async () => {
+    const codex = fakeBridge('live')
+    codex.send = vi.fn(async () => ({ thread: { id: 'new-codex' } }))
+    const invoke = createDispatch(deps(), () => fakePair(codex, fakeBridge('disconnected')))
+    await expect(
+      invoke('conversation.new', {
+        provider: 'codex',
+        cwd: '/repo/one',
+        model: 'gpt-5.6-sol'
+      })
+    ).resolves.toEqual({ provider: 'codex', threadId: 'new-codex' })
+    expect(codex.send).toHaveBeenCalledWith(
+      'thread/start',
+      expect.objectContaining({
+        cwd: '/repo/one',
+        model: 'gpt-5.6-sol',
+        approvalPolicy: 'on-request',
+        sandbox: 'workspace-write'
+      })
+    )
+  })
+
+  it('starts an OpenCode ACP session without sending a prompt', async () => {
+    const ocp = fakeBridge('live')
+    ocp.send = vi.fn(async () => ({ sessionId: 'new-ocp' }))
+    const invoke = createDispatch(deps(), () => fakePair(fakeBridge('disconnected'), ocp))
+    await expect(
+      invoke('conversation.new', {
+        provider: 'opencode',
+        cwd: '/repo/two',
+        model: 'anthropic/claude-sonnet'
+      })
+    ).resolves.toEqual({ provider: 'opencode', threadId: 'new-ocp' })
+    expect(ocp.send).toHaveBeenCalledWith('session/new', { cwd: '/repo/two', mcpServers: [] })
+    expect(ocp.send).not.toHaveBeenCalledWith('session/prompt', expect.anything())
+  })
+})
+
+describe('draft first send', () => {
+  it('creates no provider thread for a held or cancelled draft, then sends once after approval', async () => {
+    const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'zero-draft-'))
+    const codex = fakeBridge('live')
+    codex.send = vi.fn(async (method: string) => {
+      if (method === 'thread/start') return { thread: { id: 'new-thread', cwd } }
+      if (method === 'thread/read') return { thread: { id: 'new-thread', cwd } }
+      if (method === 'turn/start') return { turn: { id: 'new-turn' } }
+      return {}
+    })
+    const invoke = createDispatch(deps(), () => fakePair(codex, fakeBridge('disconnected')))
+    const draft = {
+      provider: 'codex',
+      model: 'gpt-5.6-luna',
+      cwd,
+      draftId: 'draft-1',
+      text: 'password = synthetic-secret-123'
+    }
+    const held = (await invoke('prompt.submit', draft)) as { state: string; holdId: string }
+    expect(held.state).toBe('held')
+    expect(codex.send).not.toHaveBeenCalled()
+    await expect(
+      invoke('prompt.decide', { ...draft, holdId: held.holdId, action: 'send-once' })
+    ).resolves.toEqual({ state: 'accepted', threadId: 'new-thread', turnId: 'new-turn' })
+    expect(vi.mocked(codex.send).mock.calls.map(([method]) => method)).toEqual([
+      'thread/start',
+      'thread/read',
+      'turn/start'
+    ])
+  })
+
+  it('returns a created thread after turn rejection and reuses it on retry', async () => {
+    const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'zero-draft-retry-'))
+    const codex = fakeBridge('live')
+    let attempts = 0
+    codex.send = vi.fn(async (method: string) => {
+      if (method === 'thread/start') return { thread: { id: 'retry-thread', cwd } }
+      if (method === 'thread/read') return { thread: { id: 'retry-thread', cwd } }
+      if (method === 'turn/start') {
+        attempts += 1
+        if (attempts === 1) throw new Error('provider text must be hidden')
+        return { turn: { id: 'retry-turn' } }
+      }
+      return {}
+    })
+    const invoke = createDispatch(deps(), () => fakePair(codex, fakeBridge('disconnected')))
+    const draft = {
+      provider: 'codex',
+      model: 'gpt-5.6-luna',
+      cwd,
+      draftId: 'retry-1',
+      text: 'hello'
+    }
+    expect(await invoke('prompt.submit', draft)).toEqual({
+      state: 'blocked',
+      reason: 'dispatch-unavailable',
+      threadId: 'retry-thread'
+    })
+    expect(await invoke('prompt.submit', draft)).toEqual({
+      state: 'accepted',
+      threadId: 'retry-thread',
+      turnId: 'retry-turn'
+    })
+    expect(
+      vi.mocked(codex.send).mock.calls.filter(([method]) => method === 'thread/start')
+    ).toHaveLength(1)
+  })
+})
+
+describe('provider.permission.decide', () => {
+  it('maps an explicit OpenCode allow-once decision to its ACP request response', async () => {
+    const ocp = fakeBridge('live')
+    const invoke = createDispatch(deps(), () => fakePair(fakeBridge('disconnected'), ocp))
+    await expect(
+      invoke('provider.permission.decide', {
+        provider: 'opencode',
+        requestId: 42,
+        action: 'allow-once',
+        optionId: 'allow-tool'
+      })
+    ).resolves.toEqual({ accepted: true })
+    expect(ocp.respond).toHaveBeenCalledWith(42, {
+      outcome: { outcome: 'selected', optionId: 'allow-tool' }
+    })
+  })
+
+  it('maps a Codex rejection without allowing arbitrary response payloads', async () => {
+    const codex = fakeBridge('live')
+    const invoke = createDispatch(deps(), () => fakePair(codex, fakeBridge('disconnected')))
+    await expect(
+      invoke('provider.permission.decide', {
+        provider: 'codex',
+        requestId: 'approval-1',
+        action: 'reject'
+      })
+    ).resolves.toEqual({ accepted: true })
+    expect(codex.respond).toHaveBeenCalledWith('approval-1', { decision: 'decline' })
+    await expect(
+      invoke('provider.permission.decide', {
+        provider: 'codex',
+        requestId: 'approval-2',
+        action: 'allow-once',
+        raw: { decision: 'acceptForSession' }
+      })
+    ).rejects.toThrow('Malformed permission decision')
+  })
 })
 
 function fakePair(codex: FakeBridge, ocp: FakeBridge): BridgeDeps {
@@ -159,7 +412,9 @@ describe('discovery ops', () => {
     expect(result.folders[0]).toMatchObject({
       folder: 'alpha',
       count: 1,
-      sessions: [{ id: 's-new', title: 'New session', model: 'muse-spark-1.3', updatedAt: 300 }]
+      sessions: [
+        { id: 's-new', title: 'Untitled conversation', model: 'muse-spark-1.3', updatedAt: 300 }
+      ]
     })
     expect(result.note).toBeNull()
     expect(ocp.sends).toEqual([])
@@ -196,6 +451,53 @@ describe('discovery ops', () => {
 })
 
 describe('thread read ops', () => {
+  it('opens only a discovered OpenCode session from the bounded local store', async () => {
+    const { DatabaseSync } = await import('node:sqlite')
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'zero-ocp-export-'))
+    const dbPath = path.join(dir, 'opencode.db')
+    const db = new DatabaseSync(dbPath)
+    db.exec(`
+      CREATE TABLE session (id TEXT PRIMARY KEY, directory TEXT NOT NULL, title TEXT, agent TEXT, model TEXT, time_created INTEGER, time_updated INTEGER);
+      CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT NOT NULL, time_created INTEGER, time_updated INTEGER, data TEXT NOT NULL);
+      CREATE TABLE part (id TEXT PRIMARY KEY, message_id TEXT NOT NULL, session_id TEXT NOT NULL, time_created INTEGER, time_updated INTEGER, data TEXT NOT NULL);
+    `)
+    db.prepare('INSERT INTO session VALUES (?, ?, ?, ?, ?, ?, ?)').run(
+      's-existing',
+      '/repo',
+      'Existing',
+      null,
+      null,
+      1,
+      2
+    )
+    db.prepare('INSERT INTO message VALUES (?, ?, ?, ?, ?)').run(
+      'm1',
+      's-existing',
+      1,
+      1,
+      JSON.stringify({ role: 'user' })
+    )
+    db.prepare('INSERT INTO part VALUES (?, ?, ?, ?, ?, ?)').run(
+      'p1',
+      'm1',
+      's-existing',
+      1,
+      1,
+      JSON.stringify({ type: 'text', text: 'hello' })
+    )
+    db.close()
+    const d = deps()
+    d.openCodeDbPath = dbPath
+    const invoke = createDispatch(d)
+    await expect(invoke('ocp.thread.get', { threadId: 's-existing' })).resolves.toMatchObject({
+      harness: 'opencode',
+      session: {
+        info: { id: 's-existing', directory: '/repo' },
+        messages: [{ parts: [{ text: 'hello' }] }]
+      }
+    })
+    await expect(invoke('ocp.thread.get', { threadId: 'unknown' })).rejects.toThrow(/not found/i)
+  })
   it('codex.threads lists threads via a bounded read-only thread/list probe', async () => {
     const codex = fakeBridge('live')
     const invoke = createDispatch(deps(), () => fakePair(codex, fakeBridge('disconnected')))
@@ -204,6 +506,57 @@ describe('thread read ops', () => {
       threads: [{ id: 't1', name: 'Thread one' }]
     })
     expect(codex.sends).toEqual([{ method: 'thread/list', params: { limit: 100 } }])
+  })
+
+  it('prepares a live OpenCode session and returns only its advertised models', async () => {
+    const { DatabaseSync } = await import('node:sqlite')
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'zero-ocp-prepare-'))
+    const dbPath = path.join(dir, 'opencode.db')
+    const db = new DatabaseSync(dbPath)
+    db.exec(
+      'CREATE TABLE session (id TEXT PRIMARY KEY, directory TEXT NOT NULL, title TEXT, agent TEXT, model TEXT, time_created INTEGER, time_updated INTEGER)'
+    )
+    db.prepare('INSERT INTO session VALUES (?, ?, ?, ?, ?, ?, ?)').run(
+      's1',
+      '/repo',
+      'Existing',
+      null,
+      null,
+      1,
+      2
+    )
+    db.close()
+    const d = deps()
+    d.openCodeDbPath = dbPath
+    const ocp = fakeBridge('live')
+    ocp.send = vi.fn(async () => ({
+      sessionId: 's1',
+      configOptions: [
+        {
+          id: 'model',
+          currentValue: 'openai/gpt-5',
+          options: [
+            { value: 'openai/gpt-5', name: 'GPT-5' },
+            { value: 'anthropic/claude-sonnet', name: 'Claude Sonnet' }
+          ]
+        }
+      ]
+    }))
+    const invoke = createDispatch(d, () => fakePair(fakeBridge('disconnected'), ocp))
+    await expect(invoke('ocp.thread.prepare', { threadId: 's1' })).resolves.toEqual({
+      sessionId: 's1',
+      cwd: '/repo',
+      currentModel: 'openai/gpt-5',
+      models: [
+        { id: 'openai/gpt-5', name: 'GPT-5' },
+        { id: 'anthropic/claude-sonnet', name: 'Claude Sonnet' }
+      ]
+    })
+    expect(ocp.send).toHaveBeenCalledWith('session/load', {
+      sessionId: 's1',
+      cwd: '/repo',
+      mcpServers: []
+    })
   })
 
   it('codex.threads rejects while not connected and sends nothing', async () => {
@@ -242,6 +595,23 @@ describe('thread read ops', () => {
     ])
   })
 
+  it('codex.thread.get bounds a large saved transcript to its latest 400 items', async () => {
+    const codex = fakeBridge('live')
+    const turns = Array.from({ length: 450 }, (_, index) => ({
+      id: `turn-${index}`,
+      items: [{ id: `item-${index}`, type: 'agentMessage', text: `message ${index}` }],
+      status: 'completed'
+    }))
+    codex.send = vi.fn(async () => ({ thread: { id: 'large', turns } }))
+    const invoke = createDispatch(deps(), () => fakePair(codex, fakeBridge('disconnected')))
+    const result = (await invoke('codex.thread.get', { threadId: 'large' })) as {
+      thread: { turns: Array<{ id: string }> }
+    }
+    expect(result.thread.turns).toHaveLength(400)
+    expect(result.thread.turns[0]?.id).toBe('turn-50')
+    expect(result.thread.turns.at(-1)?.id).toBe('turn-449')
+  })
+
   it('codex.thread.get rejects a malformed or empty threadId', async () => {
     const codex = fakeBridge('live')
     const invoke = createDispatch(deps(), () => fakePair(codex, fakeBridge('disconnected')))
@@ -276,6 +646,7 @@ describe('prefs ops', () => {
     const invoke = createDispatch(d, () => fakePair(fakeBridge('live'), fakeBridge('live')))
     const p = (await invoke('prefs.get')) as Prefs
     expect(p.version).toBe(1)
+    expect(p.theme).toBe('light')
     expect(p.wallpaper).toEqual({ kind: 'cream', mode: 'cover' })
     expect(d.fetchSnapshot).not.toHaveBeenCalled()
   })
@@ -283,10 +654,12 @@ describe('prefs ops', () => {
     const d = deps()
     const invoke = createDispatch(d, () => fakePair(fakeBridge('live'), fakeBridge('live')))
     await invoke('prefs.set', {
+      theme: 'dark',
       icons: { 'icon-desk': { x: 40, y: 44 } },
       windows: { network: { x: 0, y: 0, w: 560, h: 480 } }
     })
     const p = (await invoke('prefs.get')) as Prefs
+    expect(p.theme).toBe('dark')
     expect(p.icons['icon-desk']).toEqual({ x: 40, y: 44 })
     expect(p.windows.network).toEqual({ x: 0, y: 0, w: 560, h: 480 })
     expect(p.windows.desk).toEqual(defaultPrefs().windows.desk)
@@ -327,10 +700,12 @@ describe('prefs ops', () => {
 describe('wallpaper.pick', () => {
   it('returns the picked image path from the injected dialog and touches no socket', async () => {
     const d = deps()
-    d.pickImage = vi.fn(() => Promise.resolve('/tmp/example/w.png'))
+    d.pickImage = vi.fn(() => Promise.resolve('/Users/x/w.png'))
+    d.importWallpaper = vi.fn(() => '/profile/wallpapers/managed.png')
     const invoke = createDispatch(d, () => fakePair(fakeBridge('live'), fakeBridge('live')))
-    await expect(invoke('wallpaper.pick')).resolves.toBe('/tmp/example/w.png')
+    await expect(invoke('wallpaper.pick')).resolves.toBe('/profile/wallpapers/managed.png')
     expect(d.pickImage).toHaveBeenCalledOnce()
+    expect(d.importWallpaper).toHaveBeenCalledWith('/Users/x/w.png')
     expect(d.fetchSnapshot).not.toHaveBeenCalled()
   })
   it('returns null when the dialog is canceled', async () => {
@@ -349,6 +724,16 @@ describe('telemetry.sample', () => {
     expect(d.sampleTelemetry).toHaveBeenCalledOnce()
     expect(d.fetchSnapshot).not.toHaveBeenCalled()
   })
+
+  it('returns buffered local telemetry history without daemon contact', async () => {
+    const d = deps()
+    const point = { at: 123, sample: TELEMETRY_SAMPLE, failures: [] }
+    d.telemetryHistory = vi.fn(() => [point])
+    const invoke = createDispatch(d, () => fakePair(fakeBridge('live'), fakeBridge('live')))
+    await expect(invoke('telemetry.history')).resolves.toEqual([point])
+    expect(d.telemetryHistory).toHaveBeenCalledOnce()
+    expect(d.fetchSnapshot).not.toHaveBeenCalled()
+  })
 })
 
 describe('devices.list', () => {
@@ -358,10 +743,10 @@ describe('devices.list', () => {
       devices: [
         {
           id: 'usb-1-2-3',
-          name: 'Example Keyboard',
+          name: 'Gaming Keyboard',
           transport: 'usb',
           kind: 'keyboard',
-          vendor: 'Example Devices'
+          vendor: 'BY Tech'
         }
       ],
       note: null
@@ -447,7 +832,6 @@ describe('skills.discover', () => {
         id: 'gstack',
         name: 'Gstack',
         color: '#10B981',
-        glyph: 'flask' as const,
         skills: [{ id: 'browse', name: 'Browse', source: 'installed' as const, pluginId: 'gstack' }]
       }
     ],
@@ -496,6 +880,106 @@ describe('skills.discover', () => {
     expect(result.groups).toEqual([])
     expect(result.selfLearnt).toEqual([])
     expect(typeof result.note).toBe('string')
+  })
+})
+
+describe('skills.learning IPC', () => {
+  it('persists opt-in and accepts only an explicitly selected bounded transcript', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'zero-skills-ipc-'))
+    const skillLearning = createSkillLearningStore({
+      stateFile: path.join(root, 'state.json'),
+      learnedRoot: path.join(root, 'learned')
+    })
+    const d = { ...deps(), skillLearning } as SocketDeps & { skillLearning: typeof skillLearning }
+    const codex = fakeBridge('live')
+    const opencode = fakeBridge('live')
+    const invoke = createDispatch(d, () => fakePair(codex, opencode))
+    await expect(invoke('skills.learning.get')).resolves.toMatchObject({ learningEnabled: false })
+    await expect(invoke('skills.learning.observe', {
+      provider: 'codex',
+      sourceId: 'thread-1',
+      items: [
+        { kind: 'exec', command: 'rg --files && git status && npm test' },
+        { kind: 'exec', command: 'rg --files && git status && npm test' }
+      ]
+    })).resolves.toEqual([])
+    await invoke('skills.learning.set', { enabled: true })
+    await invoke('skills.learning.observe', {
+      provider: 'codex', sourceId: 'thread-1',
+      items: [{ kind: 'exec', command: 'rg --files && git status && npm test' }]
+    })
+    const proposals = await invoke('skills.learning.observe', {
+      provider: 'opencode', sourceId: 'session-2',
+      items: [{ kind: 'exec', command: 'rg --files && git status && npm test' }]
+    })
+    expect(proposals).toMatchObject([{ status: 'proposed', steps: ['rg', 'git', 'npm'] }])
+    expect(codex.sends).toEqual([])
+    expect(opencode.sends).toEqual([])
+    fs.rmSync(root, { recursive: true, force: true })
+  })
+
+  it('learns from transcript reads already requested in Zero when opted in', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'zero-skills-observe-'))
+    const skillLearning = createSkillLearningStore({
+      stateFile: path.join(root, 'state.json'),
+      learnedRoot: path.join(root, 'learned')
+    })
+    skillLearning.setLearningEnabled(true)
+    const d = { ...deps(), skillLearning } as SocketDeps & { skillLearning: typeof skillLearning }
+    const codex = fakeBridge('live')
+    codex.send = vi.fn(async (method, params) => {
+      codex.sends.push({ method, params: params ?? {} })
+      return method === 'thread/read' ? {
+        thread: { turns: [{ items: [
+          { type: 'commandExecution', command: 'rg --files && git status && npm test' }
+        ] }] }
+      } : {}
+    })
+    const invoke = createDispatch(d, () => fakePair(codex, fakeBridge('disconnected')))
+    await invoke('codex.thread.get', { threadId: 'thread-1' })
+    await invoke('codex.thread.get', { threadId: 'thread-2' })
+    await expect(invoke('skills.learning.get')).resolves.toMatchObject({
+      learningEnabled: true,
+      proposals: [{ status: 'proposed', steps: ['rg', 'git', 'npm'] }]
+    })
+    expect(codex.sends).toHaveLength(2)
+    expect(codex.sends.every((entry) => entry.method === 'thread/read')).toBe(true)
+    fs.rmSync(root, { recursive: true, force: true })
+  })
+
+  it('observes read-only OpenCode transcripts without retaining command text', async () => {
+    const { DatabaseSync } = await import('node:sqlite')
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'zero-skills-opencode-'))
+    const dbPath = path.join(root, 'opencode.db')
+    const db = new DatabaseSync(dbPath)
+    db.exec(`
+      CREATE TABLE session (id TEXT PRIMARY KEY, directory TEXT NOT NULL, title TEXT, agent TEXT, model TEXT, time_created INTEGER, time_updated INTEGER);
+      CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT NOT NULL, time_created INTEGER, time_updated INTEGER, data TEXT NOT NULL);
+      CREATE TABLE part (id TEXT PRIMARY KEY, message_id TEXT NOT NULL, session_id TEXT NOT NULL, time_created INTEGER, time_updated INTEGER, data TEXT NOT NULL);
+    `)
+    for (const [index, id] of ['session-1', 'session-2'].entries()) {
+      db.prepare('INSERT INTO session VALUES (?, ?, ?, ?, ?, ?, ?)').run(id, '/repo', `Session ${index}`, null, null, index + 1, index + 1)
+      db.prepare('INSERT INTO message VALUES (?, ?, ?, ?, ?)').run(`message-${index}`, id, 1, 1, JSON.stringify({ role: 'assistant' }))
+      db.prepare('INSERT INTO part VALUES (?, ?, ?, ?, ?, ?)').run(
+        `part-${index}`, `message-${index}`, id, 1, 1,
+        JSON.stringify({ type: 'tool', tool: 'bash', state: { input: { command: 'rg --files && git status && npm test' } } })
+      )
+    }
+    db.close()
+    const skillLearning = createSkillLearningStore({
+      stateFile: path.join(root, 'learning.json'),
+      learnedRoot: path.join(root, 'learned')
+    })
+    skillLearning.setLearningEnabled(true)
+    const d = { ...deps(), skillLearning, openCodeDbPath: dbPath } as SocketDeps & { skillLearning: typeof skillLearning }
+    const invoke = createDispatch(d)
+    await invoke('ocp.thread.get', { threadId: 'session-1' })
+    await invoke('ocp.thread.get', { threadId: 'session-2' })
+    const state = skillLearning.get()
+    expect(state.proposals).toMatchObject([{ status: 'proposed', steps: ['rg', 'git', 'npm'] }])
+    expect(JSON.stringify(state)).not.toContain('npm test')
+    expect(JSON.stringify(state)).not.toContain('/repo')
+    fs.rmSync(root, { recursive: true, force: true })
   })
 })
 

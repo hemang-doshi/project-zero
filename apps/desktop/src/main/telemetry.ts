@@ -5,8 +5,10 @@ import type {
   TelemetryIo,
   TelemetryMemory,
   TelemetryNet,
-  TelemetrySample
+  TelemetrySample,
+  TelemetryPoint
 } from '../shared/ipc'
+import { parseProcessRows } from './process-telemetry'
 
 type CpuTimes = { user: number; nice: number; sys: number; idle: number; irq: number }
 type CpuSum = { u: number; s: number; i: number }
@@ -35,6 +37,8 @@ export type TelemetryDeps = {
 const BATCH_SCRIPT = [
   'echo ===PS===',
   'ps -A -M',
+  'echo ===PROCESS===',
+  'ps -A -o pid= -o %cpu= -o rss= -o comm=',
   'echo ===VM_STAT===',
   'vm_stat',
   'echo ===SYSCTL===',
@@ -237,12 +241,15 @@ const fallbackLevel = (pressure: number): 'low' | 'medium' | 'high' => {
 
 export function createTelemetrySampler(deps: TelemetryDeps = defaultDeps()): {
   sample: () => Promise<TelemetrySample>
+  history: () => TelemetryPoint[]
 } {
   let prevCpu: CpuSum | null = null
   let prevNet: (NetStat & { at: number }) | null = null
   let prevIo: (IoStats & { at: number }) | null = null
   let cached: TelemetrySample | null = null
   let cachedAt = -Infinity
+  let failures: string[] = []
+  const points: TelemetryPoint[] = []
 
   const cpuSplit = (prev: CpuSum | null, total: CpuSum): TelemetryCpu => {
     const base: TelemetryCpu = {
@@ -402,32 +409,47 @@ export function createTelemetrySampler(deps: TelemetryDeps = defaultDeps()): {
     let io: TelemetryIo
     let net: TelemetryNet
     let gpu: number | null
+    let processes: TelemetrySample['processes'] = []
+    failures = []
     if (out === null) {
+      failures = ['cpu', 'memory', 'disk', 'network', 'gpu', 'processes']
       memory = memoryFamily(null, { swapUsed: null, level: null })
       io = ioFamily(null, now)
       net = netFamily(null, now)
       gpu = null
     } else {
       const sections = splitSections(out)
+      if (sections['PROCESS'] !== undefined) processes = parseProcessRows(sections['PROCESS'])
+      else failures.push('processes')
       const sysctl =
         sections['SYSCTL'] !== undefined
           ? parseSysctl(sections['SYSCTL'])
           : { swapUsed: null, level: null }
       const ps = sections['PS'] !== undefined ? parsePs(sections['PS']) : null
       if (ps !== null) cpu = { ...cpu, threads: ps.threads, processes: ps.processes }
+      else failures.push('cpu')
       const vmStat = sections['VM_STAT'] !== undefined ? parseVmStat(sections['VM_STAT']) : null
+      if (vmStat === null) failures.push('memory')
       const netStat = sections['NETSTAT'] !== undefined ? parseNetstat(sections['NETSTAT']) : null
+      if (netStat === null) failures.push('network')
       const ioStat = sections['DISK'] !== undefined ? parseIoStats(sections['DISK']) : null
+      if (ioStat === null) failures.push('disk')
       memory = memoryFamily(vmStat, sysctl)
       io = ioFamily(ioStat, now)
       net = netFamily(netStat, now)
       gpu = sections['GPU'] !== undefined ? parseGpuUtilization(sections['GPU']) : null
+      if (gpu === null) failures.push('gpu')
     }
 
-    cached = { cpu, memory, io, net, gpu }
+    cached = { cpu, memory, io, net, gpu, processes }
     cachedAt = now
+    points.push({ at: now, sample: cached, failures: [...failures] })
+    if (points.length > 60) points.splice(0, points.length - 60)
     return cached
   }
 
-  return { sample }
+  return {
+    sample,
+    history: () => points.map((point) => ({ ...point, failures: [...point.failures] }))
+  }
 }

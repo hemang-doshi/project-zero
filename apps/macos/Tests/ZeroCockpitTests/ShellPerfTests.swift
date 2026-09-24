@@ -2,7 +2,11 @@ import XCTest
 @testable import ZeroCockpit
 import ZeroKit
 
-/// Performance regression checks for route-switch projections.
+/// Task 0 baseline: route-switch projection build costs.
+///
+/// The recorded averages (SDD ledger, task-0-report.md) set Task 1 budgets:
+/// each projection must build in under half its baseline or under 50 ms,
+/// whichever is larger.
 final class ShellPerfTests: XCTestCase {
     func largeSnapshotJSON(nodes: Int, invocations: Int, revision: UInt64 = 99) -> String {
         let nodeRows = (0..<nodes).map { i in
@@ -51,7 +55,11 @@ final class ShellPerfTests: XCTestCase {
         measure { _ = ZeroBotProjection(model: model) }
     }
 
-    // MARK: - Projection performance budget guards
+    // MARK: - Task 1 budget guards (regression only, not RED)
+
+    /// Task 0 means were 0.031 ms (network), 8.97 ms (flight), 0.71 ms (desk),
+    /// 0.087 ms (zero-bot): every budget is max(half baseline, 50 ms) = 50 ms.
+    /// These assert the micro-projection cost stays flat; the real RED is below.
     func testNetworkFactsWithinBudget() throws {
         let snapshot = try CockpitSnapshot.decode(Data(largeSnapshotJSON(nodes: 200, invocations: 0).utf8))
         let start = CFAbsoluteTimeGetCurrent()

@@ -121,7 +121,7 @@ export const BREADBOARD_TOP_Y = BREADBOARD.center[1] + BREADBOARD.h / 2
 // Pairwise footprint gaps were checked by hand; the model test re-pins the
 // no-overlap + desk-bounds invariants so future moves stay honest.
 export const DESK_LAYOUT = {
-  monitor: [-3.7, 0, -2.3] as [number, number, number],
+  monitor: [-4.05, 0, -2.3] as [number, number, number],
   macbook: [0.1, STAND_H, -1.1] as [number, number, number],
   esp32: [-3.9, BREADBOARD_TOP_Y, 1.0] as [number, number, number],
   keyboard: [0.1, 0, 1.55] as [number, number, number],
@@ -222,6 +222,16 @@ export function buildDeskCables(): DeskCable[] {
       radius: 0.018
     }
   ]
+}
+
+export function visibleDeskCables(graph: SceneGraph): DeskCable[] {
+  const registered = (kind: SceneNodeKind): boolean =>
+    graph.nodes.some((node) => node.kind === kind && node.status !== 'UNREGISTERED')
+  return buildDeskCables().filter((cable) => {
+    if (cable.id === 'usb-c-macbook-monitor') return registered('monitor')
+    if (cable.id === 'esp32-usb') return registered('esp32')
+    return true
+  })
 }
 
 export type JumperWire = {
@@ -464,6 +474,22 @@ export function buildSceneGraph(
         lastSeen: null
       }
   const rest = devices.filter((d) => d.kind !== 'phone')
+  const physicalPlaceholders: SceneNode[] = (['monitor', 'esp32'] as const)
+    .filter((kind) => !rest.some((node) => node.kind === kind))
+    .map((kind) => ({
+      id: kind === 'monitor' ? 'desk-monitor-unregistered' : 'desk-display-unregistered',
+      kind,
+      label: kind === 'monitor' ? 'Desk Monitor' : 'Desk Display · ESP32',
+      sublabel: 'physical desk model · no enrolled node',
+      status: 'UNREGISTERED',
+      tone: 'neutral' as Tone,
+      gated: false,
+      dimmed: true,
+      selectable: true,
+      position: [...DESK_LAYOUT[kind]],
+      caps: [],
+      lastSeen: null
+    }))
   // Canonical photo order left→right: monitor, ESP32, MacBook, keyboard,
   // mousepad, iPhone gated aside, peripheral markers along the back edge.
   const order: Record<SceneNodeKind, number> = {
@@ -478,6 +504,7 @@ export function buildSceneGraph(
   const nodes = [
     host,
     ...rest.filter((d) => d.id !== HOST_NODE_ID),
+    ...physicalPlaceholders,
     keyboard,
     mousepad,
     phone,
@@ -518,6 +545,52 @@ export const FOCUS_TWEEN_MS = 900
 export const OVERVIEW_CAMERA = {
   position: [0, 3.6, 13.2] as [number, number, number],
   target: [0, 0.1, -0.2] as [number, number, number]
+}
+
+export type DeskBounds = {
+  min: [number, number, number]
+  max: [number, number, number]
+}
+
+// Furniture, devices and overview labels, with a small physical margin.
+export const DESK_OVERVIEW_BOUNDS: DeskBounds = {
+  min: [-7.4, -0.5, -4.0],
+  max: [7.4, 4.8, 3.8]
+}
+
+export function fitDeskCamera(
+  bounds: DeskBounds,
+  aspect: number
+): { position: [number, number, number]; target: [number, number, number] } {
+  const target = OVERVIEW_CAMERA.target
+  const dy = OVERVIEW_CAMERA.position[1] - target[1]
+  const dz = OVERVIEW_CAMERA.position[2] - target[2]
+  const len = Math.hypot(dy, dz)
+  const upY = dz / len
+  const upZ = -dy / len
+  const forwardY = dy / len
+  const forwardZ = dz / len
+  const tanV = Math.tan((42 * Math.PI) / 360)
+  const tanH = tanV * (aspect > 0 ? aspect : 1)
+  let distance = 0
+  for (const x of [bounds.min[0], bounds.max[0]]) {
+    for (const y of [bounds.min[1], bounds.max[1]]) {
+      for (const z of [bounds.min[2], bounds.max[2]]) {
+        const localY = (y - target[1]) * upY + (z - target[2]) * upZ
+        const localZ = (y - target[1]) * forwardY + (z - target[2]) * forwardZ
+        distance = Math.max(
+          distance,
+          localZ + Math.abs(x - target[0]) / tanH,
+          localZ + Math.abs(localY) / tanV
+        )
+      }
+    }
+  }
+  distance *= 1.12
+  return {
+    position: [target[0], target[1] + forwardY * distance, target[2] + forwardZ * distance],
+    target
+  }
 }
 
 export function easeInOutCubic(t: number): number {

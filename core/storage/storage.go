@@ -6,7 +6,7 @@ import (
 	_ "modernc.org/sqlite"
 	"os"
 	"path/filepath"
-	"github.com/hemang-doshi/project-zero/core/release"
+	"projectzero.local/zero/core/release"
 )
 
 func Open(path string) (*sql.DB, error) {
@@ -40,7 +40,7 @@ func Open(path string) (*sql.DB, error) {
 		}
 	}
 
-	for _, q := range []string{"PRAGMA journal_mode=WAL", "PRAGMA synchronous=FULL", "PRAGMA foreign_keys=ON", "PRAGMA busy_timeout=5000", "PRAGMA journal_size_limit=67108864", schema} {
+	for _, q := range []string{"PRAGMA journal_mode=WAL", "PRAGMA synchronous=FULL", "PRAGMA foreign_keys=ON", "PRAGMA busy_timeout=5000", schema} {
 		if _, err = db.Exec(q); err != nil {
 			db.Close()
 			return nil, err
@@ -57,10 +57,6 @@ func Open(path string) (*sql.DB, error) {
 		return nil, err
 	}
 	if err = tx.Commit(); err != nil {
-		db.Close()
-		return nil, err
-	}
-	if _, err = db.Exec("PRAGMA wal_checkpoint(TRUNCATE)"); err != nil {
 		db.Close()
 		return nil, err
 	}
