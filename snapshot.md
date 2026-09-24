@@ -1,44 +1,43 @@
 # Current working snapshot
 
-Updated: **2026-09-24 10:22 IST**. This records the approved implementation work in the isolated app worktree. Read [handoff.md](handoff.md) for architecture and recovery context.
+Updated: **2026-09-24 10:46 IST**. Read [handoff.md](handoff.md) for architecture and recovery context.
 
 ## Current worktree
 
 - Repository: `/Users/hemangdoshi/.codex/worktrees/zero-redesign/project-zero`
-- Branch `codex/zero-redesign`; Electron implementation commit `e992b04`; prior handoff commit `f62c766`; GitHub publication commits `8be5bb4` and `8839aa3`.
+- Branch `codex/zero-redesign`, latest source commit `ac89137` (`fix(runtime): skip offline display targets`). The source branch is published to `hemang-doshi/project-zero`.
 - The original checkout at `/Users/hemangdoshi/Developer/project-zero` remains untouched.
-- Only untracked files are three Playwright dark-theme review images under `apps/desktop/output/playwright/`; they contain no transcript or process names.
-- The user confirmed the tracked SwiftUI app should remain. The tracked tree contains one `ZeroMenu` executable using the `ZeroCockpit` library, with the cockpit windows and a menu-bar extra, plus Spotify helper executables. No separate old Swift app is tracked; no Swift source was removed.
-- GitHub target is `hemang-doshi/project-zero`. New branch `codex/zero-redesign` is published. `main` has unrelated history, so this version is promoted with a non-force two-parent merge commit: existing `main` is the first parent, this branch the second. Main-only tracked files are preserved; overlapping paths use this branch's current version.
-- Desktop package is 1.0.0, Electron is 39.8.10. Core release manifest remains product/build 0.2.0 / 0.2.0-7, wire protocol 0.1, schema versions 0.1/0.2, database version 2. OpenCode 1.18.30 is installed.
+- Three untracked Playwright review images remain under `apps/desktop/output/playwright/`; they are not part of the publication.
+- The user confirmed the tracked SwiftUI app should remain. The tree contains one `ZeroMenu` executable using `ZeroCockpit` for cockpit windows and a menu-bar extra, plus Spotify helper executables. There is no separately tracked legacy Swift app, and no Swift source was removed.
+- GitHub target is `hemang-doshi/project-zero:main`. Its protection requires a pull request, passing checks and linear history. PR #11 publishes a single linear snapshot based on `main`; the combined tree uses the current Electron source for overlapping paths and preserves the 28 main-only paths. `codex/zero-redesign` remains available with its implementation history.
+- Desktop package is 1.0.0, Electron 39.8.10. Core release manifest remains product/build 0.2.0 / 0.2.0-7, wire protocol 0.1, schema versions 0.1/0.2, database version 2. OpenCode 1.18.30 is installed.
 
 ## Implemented
 
 - Zero Bot combines consecutive reasoning into compact disclosures, uses a selectable command/output panel, keeps the inspector closed by default, shortens list metadata, groups conversations by project/folder and defers provider session creation until the first accepted send. Verified token usage is shown from provider data; cost is never estimated.
 - Desk centers the view on the observed Spotify session and track history; the virtual display card is removed. Playlist creation is visibly disabled until Spotify account authorization is configured.
 - Skills Lab has an opt-in, persisted deterministic learning proposal/review/install flow. Verified local brand art is mapped only for exact identities; unknown brands use an explicit neutral mark.
-- Runtime has timestamped recent history, five measured chart families including GPU when the host reports it, a machine/daemon status split and a top-process drawer limited to CPU/memory attribution.
+- Runtime has timestamped recent history, five measured chart families including GPU when the host reports it, a machine/daemon status split and a top-process drawer limited to CPU/memory attribution. Session display work is now skipped for nodes past the existing 90-second offline lease.
 - Theme switching and managed wallpaper-copy logic are implemented. Network and Flight Recorder behavior were left intact. Flight Recorder remains a bounded recent event/audit view, not durable evidence.
 
 ## Verification
 
-- Electron suite: **918/918 tests across 75 files**.
-- `npm run typecheck`, `npm run build`, `npm run build:unpack`, `go test ./core/api ./core/runtime`, and `git diff --check` passed.
-- Changed-file ESLint had **0 errors and 75 formatting warnings**.
-- Playwright drove the running Electron UI through CDP on port 9222. A user-authorized Codex turn was accepted, ran two read-only checks and returned a response. A synthetic credential-shaped prompt triggered the real Airlock hold and was cancelled before provider dispatch.
-- Playwright verified dark/light theme selection and restored dark; Runtime showed 60 recent measured points, five chart families and ten CPU/memory rows. OpenCode saved transcript and usage reads were verified. See the implementation plans for limits.
+- Combined `main` + Electron source tree: Electron **933/933 tests across 76 files**, typecheck, and `GOPROXY=off GOSUMDB=off go test ./...` passed. The Go run includes the main-only runtime tests and the offline display queue regression.
+- Playwright exercised the Electron UI for dark/light theme selection, Zero Bot send/Airlock hold, Runtime history and chart panels, OpenCode saved transcript/usage, and Desk. The last preview process has exited; the unpacked bundle remains at `apps/desktop/.runtime/desktop-build/mac-arm64/Zero Desktop.app` and was not installed.
+- GitHub PR #11 is the protected publication path for the combined tree. Its required CI checks must pass before `main` can advance.
 - Safe review images: `apps/desktop/output/playwright/zero-bot-draft-dark.png`, `zero-runtime-dark.png`, and `zero-desk-dark.png`.
 
 ## Environment limits and next step
 
-- The earlier Electron preview (PID 54622, CDP port 9222) is no longer running. Its unpacked bundle remains at `apps/desktop/.runtime/desktop-build/mac-arm64/Zero Desktop.app`; it was not installed. The isolated dev profile is under `~/Library/Application Support/ProjectZero/dev-electron`. The dev Zero socket is absent; no Zero daemon was started. Registered Projects, live Spotify state and hardware-backed Desk data therefore remain unavailable.
+- No isolated Zero socket/daemon is running. Registered Projects, live Spotify state and hardware-backed Desk data remain unavailable.
 - OpenCode saved history is readable, but no live ACP model/session was advertised for a send test. Do not claim live OpenCode dispatch.
 - Spotify playback and playlist writes were not authorized or available: there is no registered client/account flow. A client registration and explicit account connection are required to enable the playlist action.
 - The ESP32 was not connected or physically tested. The virtual/physical display path is not accepted by a software preview.
 - Learning stayed disabled in the isolated preview. No proposal was approved/installed or existing learning data changed. The interactive synthetic-proposal demo remains unverified.
-- Wallpaper import is covered by tests; native picker, source deletion and restart were not exercised in the UI. The unpacked app was built but not used for a live provider send.
-- Context7 documentation lookup failed with an invalid/expired OAuth token. Retry after `npx ctx7@latest login` or configuring `CONTEXT7_API_KEY` before making library-specific claims. SwiftPM tests remain blocked by the previously documented Command Line Tools manifest-linker error.
+- Wallpaper import is covered by tests; native picker, source deletion and restart were not exercised in the UI. No live provider send was performed in this worktree after the verification walkthrough.
+- Context7 lookup failed with an invalid/expired OAuth token. Retry after `npx ctx7@latest login` or configuring `CONTEXT7_API_KEY` before making library-specific claims. SwiftPM tests remain blocked by the previously documented local Command Line Tools manifest-linker error; the GitHub native build job is part of PR checks.
 - No signed install, production profile change, production daemon, Spotify OAuth or playlist mutation was performed.
+
 ## September 22 follow-up fixes
 
 Three focused fix commits followed the redesign preview: `df01a38` (Skills Lab compact layout/glyphs; Network scale, click-to-focus and absent-device cables; OpenCode read-only transcript export; virtual display preview; Codex executable preflight), `f919c13` (monitor-neck geometry), and `97a96e2` (compact skill-selection reveal). The isolated worktree's preview bundle at `apps/desktop/.runtime/desktop-build/mac-arm64/Zero Desktop.app` was rebuilt and launched after the last fix; the app path formerly pinned to the Dock is unchanged. The original dirty checkout was untouched. Current source manifest remains product 0.2.0/build 0.2.0-7, wire 0.1, migration 2. No production app or database was replaced.
