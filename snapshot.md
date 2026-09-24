@@ -24,7 +24,7 @@ Updated: **2026-09-24 10:53 IST**. Read [handoff.md](handoff.md) for architectur
 
 - Exact published main tree: Electron **933/933 tests across 76 files**, typecheck, `GOPROXY=off GOSUMDB=off go test ./...`, release/schema generators, Swift build, Electron lint/build, and Go race tests passed. GitHub Actions passed all three required jobs before merge. The Go suite includes main-only runtime tests and the offline display queue regression.
 - Playwright exercised the Electron UI for dark/light theme selection, Zero Bot send/Airlock hold, Runtime history and chart panels, OpenCode saved transcript/usage, and Desk. The last preview process has exited; the unpacked bundle remains at `apps/desktop/.runtime/desktop-build/mac-arm64/Zero Desktop.app` and was not installed.
-- GitHub PR #11 is the protected publication path for the combined tree. Its required CI checks must pass before `main` can advance.
+- PR #11's three required GitHub Actions jobs passed before merge: Go/Python, Native macOS and Electron.
 - Safe review images: `apps/desktop/output/playwright/zero-bot-draft-dark.png`, `zero-runtime-dark.png`, and `zero-desk-dark.png`.
 
 ## Environment limits and next step
