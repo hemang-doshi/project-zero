@@ -1,14 +1,14 @@
 # Project Zero — full project handoff
 
-Updated: **2026-09-24 10:46 IST**. Start with [AGENTS.md](AGENTS.md) and [snapshot.md](snapshot.md). The approved redesign plans are implemented in the isolated Electron worktree; this handoff records verified behavior, Git publication constraints and remaining gates.
+Updated: **2026-09-24 10:53 IST**. Start with [AGENTS.md](AGENTS.md) and [snapshot.md](snapshot.md). The approved redesign plans are implemented in the isolated Electron worktree; this handoff records verified behavior, Git publication constraints and remaining gates.
 
 ## Current source and recovery
 
-Implementation is committed on `codex/zero-redesign` in `/Users/hemangdoshi/.codex/worktrees/zero-redesign/project-zero`; latest source commit `ac89137` fixes display queuing for offline nodes. The branch is published to `hemang-doshi/project-zero`. The original checkout at `/Users/hemangdoshi/Developer/project-zero` remains untouched.
+Implementation is committed on `codex/zero-redesign` in `/Users/hemangdoshi/.codex/worktrees/zero-redesign/project-zero`; code fix `ac89137` skips display queuing for offline nodes. The branch is published to `hemang-doshi/project-zero`. The original checkout at `/Users/hemangdoshi/Developer/project-zero` remains untouched.
 
 The user confirmed that the tracked SwiftUI application should remain. The repository has one `ZeroMenu` executable that opens cockpit windows through `ZeroCockpit` and includes a menu-bar extra, plus Spotify observer/audio helper executables. It has no separate legacy Swift application; no Swift source was removed.
 
-GitHub `main` is protected: direct pushes are rejected, it requires a pull request and three CI checks, and it disallows merge commits. PR #11 (`codex/promote-electron-redesign` → `main`) therefore publishes one linear snapshot commit based on the existing `main`. The snapshot tree overlays current Electron source on shared paths and preserves 28 files that existed only on `main`; no force update is used. `codex/zero-redesign` remains published with its implementation history. Do not claim `main` has advanced until PR #11 is merged and the remote ref is verified.
+GitHub `main` is protected: direct pushes are rejected, it requires a pull request and three CI checks, and it disallows merge commits. PR #11 (`codex/promote-electron-redesign` → `main`) was merged after all three CI jobs passed, using squash to keep history linear. `main` is verified at `ebb4c866444fe61e9b69d1d7c92ada76dae32e40` with tree `c9afdb2a281afe796e0d93c24c7685a84a2160c8`. The published snapshot overlays current Electron source on shared paths and preserves all 28 main-only files. No force update was used. `codex/zero-redesign` remains published with its implementation history.
 
 The combined tree passed Electron tests **933/933 across 76 files**, Electron typecheck, and `GOPROXY=off GOSUMDB=off go test ./...`. The Go suite includes main-only tests and the offline display queue regression. GitHub Actions checks are the final protected-branch gate. Historical Playwright screenshots and the earlier UI-flow verification are documented in snapshot.md; three screenshots remain untracked and excluded from the PR.
 
