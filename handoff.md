@@ -1,14 +1,14 @@
 # Project Zero — full project handoff
 
-Updated: **2026-09-24 10:14 IST**. Start with [AGENTS.md](AGENTS.md) and [snapshot.md](snapshot.md). The approved September 23 recovery plans have been implemented in the isolated worktree; this section records verified behavior and remaining external gates.
+Updated: **2026-09-24 10:17 IST**. Start with [AGENTS.md](AGENTS.md) and [snapshot.md](snapshot.md). The approved September 23 recovery plans have been implemented in the isolated worktree; this section records verified behavior and remaining external gates.
 
 ## Current source and recovery
 
-Implementation is committed as `e992b04` on `codex/zero-redesign` in `/Users/hemangdoshi/.codex/worktrees/zero-redesign/project-zero`; the prior handoff update is `f62c766`. The initial GitHub publication commit `8be5bb4` pushed the complete source history to `hemang-doshi/project-zero:codex/zero-redesign`; the remote ref matched that local commit. The current handoff-only update is a fast-forward on the same branch. The original checkout and production profile were left untouched. The untracked Playwright artifacts are under `apps/desktop/output/playwright/`; they are excluded from commits.
+Implementation is committed as `e992b04` on `codex/zero-redesign` in `/Users/hemangdoshi/.codex/worktrees/zero-redesign/project-zero`; the prior handoff update is `f62c766`. GitHub publication commits `8be5bb4` and `8839aa3` pushed the complete source history to `hemang-doshi/project-zero:codex/zero-redesign`; GitHub's branch search, commit fetch and `git ls-remote` all confirmed the published branch. The current handoff-only update is a fast-forward on the same branch. GitHub `main` remains untouched because its history is unrelated. The original checkout and production profile were left untouched. The untracked Playwright artifacts are under `apps/desktop/output/playwright/`; they are excluded from commits.
 
 The user confirmed that the tracked SwiftUI app should remain. The source tree contains one `ZeroMenu` executable that opens `CockpitAppRoot` from `ZeroCockpit` and includes a menu-bar extra, plus the Spotify observer/audio helpers; it does not contain a separate legacy Swift app. No Swift source was removed. GitHub's `main` branch has unrelated history, so the verified publication uses a separate `codex/zero-redesign` branch and leaves `main` unchanged.
 
-The actual Electron preview is PID 54622, served from the worktree build with remote debugging on 127.0.0.1:9222. It uses the isolated `ProjectZero/dev-electron` profile. The unpacked application build exists at `apps/desktop/.runtime/desktop-build/mac-arm64/Zero Desktop.app`, but it was not installed or used for a live provider send. Stop the preview only through its owning session; do not start another production daemon.
+The earlier Electron preview (PID 54622, CDP port 9222) has exited; no matching app process was present at the latest check. Its unpacked application build remains at `apps/desktop/.runtime/desktop-build/mac-arm64/Zero Desktop.app`, but it was not installed. The preview used the isolated `ProjectZero/dev-electron` profile, and no production daemon was started.
 
 ## Results
 
